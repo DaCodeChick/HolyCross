@@ -1,5 +1,7 @@
+/// HolyC tokens
 enum Token {
     Identifier(String),
+    KWAsm,
     KWBool,
     KWBreak,
     KWCase,
