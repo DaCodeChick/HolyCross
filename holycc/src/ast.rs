@@ -32,28 +32,6 @@ pub enum BinaryOp {
     XorAssign,
 }
 
-/// Primitive type hashes
-pub enum PrimitiveTypeHash {
-    I8 = hash_identifier("I8"),
-    I16 = hash_identifier("I16"),
-    I32 = hash_identifier("I32"),
-    I64 = hash_identifier("I64"),
-    U0 = hash_identifier("U0"),
-    U8 = hash_identifier("U8"),
-    U16 = hash_identifier("U16"),
-    U32 = hash_identifier("U32"),
-    U64 = hash_identifier("U64"),
-    F64 = hash_identifier("F64"),
-    Bool = hash_identifier("Bool"),
-    Char = hash_identifier("char"),
-}
-
-impl From<PrimitiveTypeHash> for usize {
-    fn from(hash: PrimitiveTypeHash) -> Self {
-        hash as usize
-    }
-}
-
 const PTR_HASH: usize = hash_identifier("*");
 const REF_HASH: usize = hash_identifier("&");
 
@@ -419,6 +397,12 @@ impl Statement {
     }
 }
 
+pub struct Union {
+    name: String,          // Name of the union
+    hash: usize,           // Hash of the union
+    fields: Vec<Variable>, // Fields of the union
+}
+
 /// Variable representation
 #[derive(Debug, Clone)]
 pub struct Variable {
@@ -524,27 +508,9 @@ impl AbstractSyntaxTree {
     }
 
     fn check_type_duplicate(&self, type_hash: usize) -> bool {
-        let mut result = false;
-        if (type_hash == PrimitiveTypeHash::I8 as usize
-            || type_hash == PrimitiveTypeHash::I16 as usize
-            || type_hash == PrimitiveTypeHash::I32 as usize
-            || type_hash == PrimitiveTypeHash::I64 as usize
-            || type_hash == PrimitiveTypeHash::U0 as usize
-            || type_hash == PrimitiveTypeHash::U8 as usize
-            || type_hash == PrimitiveTypeHash::U16 as usize
-            || type_hash == PrimitiveTypeHash::U32 as usize
-            || type_hash == PrimitiveTypeHash::U64 as usize
-            || type_hash == PrimitiveTypeHash::F64 as usize
-            || type_hash == PrimitiveTypeHash::Bool as usize
-            || type_hash == PrimitiveTypeHash::Char as usize)
-        {
-            return true;
-        }
-        result = self
-            .classes
+        self.classes
             .iter()
             .any(|(_, class)| class.name == type_hash);
-        result
     }
 }
 
