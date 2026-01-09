@@ -80,6 +80,25 @@ union MyUnion:I64 {
 
 The syntax `TypeName:BaseType` means the type is "based on" or "inherits from" the BaseType.
 
+### Type Aliasing with Union/Class
+
+HolyC uses a unique syntax for creating type aliases with unions/classes:
+
+```c
+// Syntax: <alias> union <name> { members }
+U16i union U16 {
+    I8i i8[2];
+    U8i u8[2];
+};
+
+// This creates:
+// - A union type named "U16"
+// - An alias "U16i" that refers to it
+// Similar to: typedef union U16 {...} U16i;
+```
+
+This pattern is used extensively in TempleOS kernel code (see `KernelA.HH`) to create internal type representations with the `i` suffix (e.g., `U16i`, `I64i`, etc.).
+
 ### Anonymous Unions/Classes
 
 HolyC allows anonymous unions and classes as members:
