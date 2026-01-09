@@ -188,8 +188,14 @@ pub const Parser = struct {
         // Parse prefix expression (literals, identifiers, unary operators, grouping)
         var left = try self.parsePrefix();
 
-        // Parse infix expressions while precedence is higher
+        // Parse postfix and infix expressions
         while (true) {
+            // Check for postfix operators (highest precedence)
+            if (try self.parsePostfix(&left)) {
+                continue; // Postfix consumed, check for more
+            }
+
+            // Check for binary operators
             const op = self.currentBinaryOp() orelse break;
             const precedence = op.precedence();
 
@@ -392,6 +398,133 @@ pub const Parser = struct {
             .line = token.line,
             .column = token.column,
         };
+    }
+
+    // ============================================================================
+    // Postfix Operator Parsing
+    // ============================================================================
+
+    /// Parse postfix operators (function call, array subscript, member access, etc.)
+    /// Returns true if a postfix operator was consumed and the left expression was modified
+    fn parsePostfix(self: *Parser, left: *Expr) !bool {
+        // Function call: func(args)
+        if (try self.match(.lparen)) {
+            const args = try self.parseCallArguments();
+            const left_ptr = try self.allocator.create(Expr);
+            left_ptr.* = left.*;
+            left.* = Expr{
+                .call = .{
+                    .callee = left_ptr,
+                    .args = args,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        // Array subscript: arr[index]
+        if (try self.match(.lbracket)) {
+            const index = try self.parseExpression();
+            try self.consume(.rbracket, "Expected ']' after array subscript");
+            const array_ptr = try self.allocator.create(Expr);
+            array_ptr.* = left.*;
+            const index_ptr = try self.allocator.create(Expr);
+            index_ptr.* = index;
+            left.* = Expr{
+                .subscript = .{
+                    .array = array_ptr,
+                    .index = index_ptr,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        // Member access: obj.member
+        if (try self.match(.op_dot)) {
+            try self.consume(.identifier, "Expected member name after '.'");
+            const member_name = self.previous.lexeme;
+            const object_ptr = try self.allocator.create(Expr);
+            object_ptr.* = left.*;
+            left.* = Expr{
+                .member = .{
+                    .object = object_ptr,
+                    .member = member_name,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        // Arrow operator: ptr->member
+        if (try self.match(.op_arrow)) {
+            try self.consume(.identifier, "Expected member name after '->'");
+            const member_name = self.previous.lexeme;
+            const object_ptr = try self.allocator.create(Expr);
+            object_ptr.* = left.*;
+            left.* = Expr{
+                .arrow = .{
+                    .object = object_ptr,
+                    .member = member_name,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        // Postfix increment: x++
+        if (try self.match(.op_plus_plus)) {
+            const operand_ptr = try self.allocator.create(Expr);
+            operand_ptr.* = left.*;
+            left.* = Expr{
+                .unary = .{
+                    .op = .post_increment,
+                    .operand = operand_ptr,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        // Postfix decrement: x--
+        if (try self.match(.op_minus_minus)) {
+            const operand_ptr = try self.allocator.create(Expr);
+            operand_ptr.* = left.*;
+            left.* = Expr{
+                .unary = .{
+                    .op = .post_decrement,
+                    .operand = operand_ptr,
+                    .loc = self.locationFromToken(self.previous),
+                },
+            };
+            return true;
+        }
+
+        return false; // No postfix operator found
+    }
+
+    /// Parse function call arguments: (arg1, arg2, ...)
+    /// Assumes '(' has already been consumed
+    fn parseCallArguments(self: *Parser) ![]Expr {
+        var args = std.ArrayList(Expr).init(self.allocator);
+        errdefer args.deinit();
+
+        // Empty argument list: ()
+        if (self.check(.rparen)) {
+            try self.advance();
+            return args.toOwnedSlice();
+        }
+
+        // Parse arguments
+        while (true) {
+            const arg = try self.parseExpression();
+            try args.append(arg);
+
+            if (!try self.match(.comma)) break;
+        }
+
+        try self.consume(.rparen, "Expected ')' after function arguments");
+        return args.toOwnedSlice();
     }
 };
 
@@ -638,4 +771,243 @@ test "Parse complex expression: -a + b * c" {
     try testing.expectEqual(BinaryOp.multiply, expr.binary.right.binary.op);
     try testing.expectEqualStrings("b", expr.binary.right.binary.left.identifier.name);
     try testing.expectEqualStrings("c", expr.binary.right.binary.right.identifier.name);
+}
+
+// ============================================================================
+// Postfix Operator Tests
+// ============================================================================
+
+test "Parse function call with no arguments" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "func()";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    // Should be a call expression
+    try testing.expectEqualStrings("func", expr.call.callee.identifier.name);
+    try testing.expectEqual(@as(usize, 0), expr.call.args.len);
+}
+
+test "Parse function call with single argument" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "func(42)";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("func", expr.call.callee.identifier.name);
+    try testing.expectEqual(@as(usize, 1), expr.call.args.len);
+    try testing.expectEqual(@as(i64, 42), expr.call.args[0].integer.value);
+}
+
+test "Parse function call with multiple arguments" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "func(1, 2, 3)";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("func", expr.call.callee.identifier.name);
+    try testing.expectEqual(@as(usize, 3), expr.call.args.len);
+    try testing.expectEqual(@as(i64, 1), expr.call.args[0].integer.value);
+    try testing.expectEqual(@as(i64, 2), expr.call.args[1].integer.value);
+    try testing.expectEqual(@as(i64, 3), expr.call.args[2].integer.value);
+}
+
+test "Parse array subscript" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "arr[0]";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("arr", expr.subscript.array.identifier.name);
+    try testing.expectEqual(@as(i64, 0), expr.subscript.index.integer.value);
+}
+
+test "Parse multi-dimensional array subscript" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "matrix[i][j]";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    // Root: second subscript [j]
+    try testing.expectEqualStrings("j", expr.subscript.index.identifier.name);
+
+    // Left: first subscript matrix[i]
+    try testing.expectEqualStrings("i", expr.subscript.array.subscript.index.identifier.name);
+    try testing.expectEqualStrings("matrix", expr.subscript.array.subscript.array.identifier.name);
+}
+
+test "Parse member access" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "obj.field";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("obj", expr.member.object.identifier.name);
+    try testing.expectEqualStrings("field", expr.member.member);
+}
+
+test "Parse chained member access" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "obj.inner.field";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    // Root: .field
+    try testing.expectEqualStrings("field", expr.member.member);
+
+    // Left: obj.inner
+    try testing.expectEqualStrings("inner", expr.member.object.member.member);
+    try testing.expectEqualStrings("obj", expr.member.object.member.object.identifier.name);
+}
+
+test "Parse arrow operator" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "ptr->field";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("ptr", expr.arrow.object.identifier.name);
+    try testing.expectEqualStrings("field", expr.arrow.member);
+}
+
+test "Parse postfix increment" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "x++";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqual(UnaryOp.post_increment, expr.unary.op);
+    try testing.expectEqualStrings("x", expr.unary.operand.identifier.name);
+}
+
+test "Parse postfix decrement" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "x--";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqual(UnaryOp.post_decrement, expr.unary.op);
+    try testing.expectEqualStrings("x", expr.unary.operand.identifier.name);
+}
+
+test "Parse complex postfix expression: obj.array[i].method()" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "obj.array[i].method()";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    // Root: function call to method()
+    try testing.expectEqual(@as(usize, 0), expr.call.args.len);
+
+    // Callee: .method (member access)
+    try testing.expectEqualStrings("method", expr.call.callee.member.member);
+
+    // Object: obj.array[i] (subscript of member)
+    try testing.expectEqualStrings("i", expr.call.callee.member.object.subscript.index.identifier.name);
+    try testing.expectEqualStrings("array", expr.call.callee.member.object.subscript.array.member.member);
+    try testing.expectEqualStrings("obj", expr.call.callee.member.object.subscript.array.member.object.identifier.name);
+}
+
+test "Parse mixed prefix and postfix: ++x--" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "++x--";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    // Root: postfix decrement
+    try testing.expectEqual(UnaryOp.post_decrement, expr.unary.op);
+
+    // Operand: prefix increment
+    try testing.expectEqual(UnaryOp.pre_increment, expr.unary.operand.unary.op);
+    try testing.expectEqualStrings("x", expr.unary.operand.unary.operand.identifier.name);
+}
+
+test "Parse array subscript with expression: arr[i + 1]" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "arr[i + 1]";
+    var lex = Lexer.init(source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+
+    try testing.expectEqualStrings("arr", expr.subscript.array.identifier.name);
+    try testing.expectEqual(BinaryOp.add, expr.subscript.index.binary.op);
+    try testing.expectEqualStrings("i", expr.subscript.index.binary.left.identifier.name);
+    try testing.expectEqual(@as(i64, 1), expr.subscript.index.binary.right.integer.value);
 }
