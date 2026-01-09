@@ -236,9 +236,11 @@ HolyC preprocessor directives follow these rules:
 **Macro Definitions**:
 ```c
 #define PI 3.14159
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define ASSERT(x) if (!(x)) throw;
+#define MAX_SIZE 1024
+#define TRUE 1
 ```
+
+**Note on Macro Complexity**: HolyC's preprocessor may be simpler than C/C++. Simple constant definitions like `#define PI 3.14159` are definitely supported. Function-like macros (e.g., `#define MAX(a,b) ...`) are common in C but their support in HolyC is uncertain. The lexer will tokenize them, but macro expansion behavior needs verification against actual TempleOS source code.
 
 See `examples/preprocessor_example.hc` for a complete working example.
 

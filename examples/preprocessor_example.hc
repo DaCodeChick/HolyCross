@@ -1,36 +1,37 @@
 // Example demonstrating HolyC preprocessor directives
+// Note: HolyC preprocessor is simpler than C/C++
+// Function-like macros may not be supported - using simple defines only
 
 #define PI 3.14159
 #define MAX_SIZE 1024
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-
-// Conditional compilation
-#ifdef DEBUG
-    #define LOG(msg) Print("DEBUG: %s\n", msg)
-#else
-    #define LOG(msg) // No-op in release mode
-#endif
 
 // Platform-specific compilation
 #ifaot
     // Code for ahead-of-time compilation
-    #define COMPILE_MODE "AOT"
+    #define COMPILE_MODE "AOT Mode"
 #endif
 
 #ifjit
     // Code for just-in-time compilation
-    #define COMPILE_MODE "JIT"
+    #define COMPILE_MODE "JIT Mode"
 #endif
 
-// Type definitions using preprocessor
+// Type definitions using preprocessor (standard library pattern)
 #define Bool U8
 #define TRUE 1
 #define FALSE 0
 #define NULL 0
 
-// Compile-time execution
+// Conditional compilation
+#ifdef DEBUG
+    #define DEBUG_MSG "Debug build enabled"
+#else
+    #define DEBUG_MSG "Release build"
+#endif
+
+// Compile-time execution - unique HolyC feature
 #exe {
-    // This code runs at compile time
+    // This code runs during compilation
     Print("Compiling at: %s\n", Now);
 }
 
@@ -41,7 +42,7 @@ U0 CalculateArea(F64 radius) {
 
 U0 Main() {
     #ifdef DEBUG
-        LOG("Starting program");
+        Print("DEBUG: Starting program\n");
     #endif
     
     CalculateArea(5.0);
@@ -55,9 +56,13 @@ U0 Main() {
     
     U64 buffer[MAX_SIZE];
     
-    Print("Compilation mode: %s\n", COMPILE_MODE);
+    #ifdef COMPILE_MODE
+        Print("Compilation mode: %s\n", COMPILE_MODE);
+    #endif
+    
+    Print("Build type: %s\n", DEBUG_MSG);
     
     #ifdef DEBUG
-        LOG("Program complete");
+        Print("DEBUG: Program complete\n");
     #endif
 }
