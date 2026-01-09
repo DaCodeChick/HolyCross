@@ -335,203 +335,20 @@ pub const Lexer = struct {
 
         // Operators and delimiters
         switch (c) {
-            '+' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '+') {
-                        self.advance();
-                        return self.makeToken(.op_plus_plus, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_plus_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_plus, self.position - 1, token_line, token_column);
-            },
-            '-' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '-') {
-                        self.advance();
-                        return self.makeToken(.op_minus_minus, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_minus_equal, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '>') {
-                        self.advance();
-                        return self.makeToken(.op_arrow, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_minus, self.position - 1, token_line, token_column);
-            },
-            '*' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_star_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_star, self.position - 1, token_line, token_column);
-            },
-            '/' => {
-                // Check for comments before treating as division operator
-                if (self.position + 1 < self.source.len) {
-                    const next = self.source[self.position + 1];
-                    if (next == '/') {
-                        // Line comment - skip until end of line
-                        self.skipLineComment();
-                        return self.nextToken(); // Recursively get next token
-                    } else if (next == '*') {
-                        // Block comment - skip until */
-                        self.skipBlockComment();
-                        return self.nextToken(); // Recursively get next token
-                    }
-                }
-
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_slash_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_slash, self.position - 1, token_line, token_column);
-            },
-            '%' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_percent_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_percent, self.position - 1, token_line, token_column);
-            },
-            '&' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '&') {
-                        self.advance();
-                        return self.makeToken(.op_ampersand_ampersand, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_ampersand_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_ampersand, self.position - 1, token_line, token_column);
-            },
-            '|' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '|') {
-                        self.advance();
-                        return self.makeToken(.op_pipe_pipe, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_pipe_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_pipe, self.position - 1, token_line, token_column);
-            },
-            '^' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '^') {
-                        self.advance();
-                        return self.makeToken(.op_caret_caret, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_caret_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_caret, self.position - 1, token_line, token_column);
-            },
+            '+' => return self.scanOperatorVariants(token_line, token_column, .op_plus, '+', .op_plus_plus, .op_plus_equal),
+            '-' => return self.scanMinusOperator(token_line, token_column),
+            '*' => return self.scanOperatorVariants(token_line, token_column, .op_star, null, null, .op_star_equal),
+            '/' => return self.scanSlashOperator(token_line, token_column),
+            '%' => return self.scanOperatorVariants(token_line, token_column, .op_percent, null, null, .op_percent_equal),
+            '&' => return self.scanOperatorVariants(token_line, token_column, .op_ampersand, '&', .op_ampersand_ampersand, .op_ampersand_equal),
+            '|' => return self.scanOperatorVariants(token_line, token_column, .op_pipe, '|', .op_pipe_pipe, .op_pipe_equal),
+            '^' => return self.scanOperatorVariants(token_line, token_column, .op_caret, '^', .op_caret_caret, .op_caret_equal),
             '~' => return self.makeSingleCharToken(.op_tilde, token_line, token_column),
-            '!' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_not_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_exclamation, self.position - 1, token_line, token_column);
-            },
-            '<' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_less_equal, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '<') {
-                        self.advance();
-                        // Check for <<=
-                        if (self.peek()) |next2| {
-                            if (next2 == '=') {
-                                self.advance();
-                                return self.makeToken(.op_less_less_equal, self.position - 3, token_line, token_column);
-                            }
-                        }
-                        return self.makeToken(.op_less_less, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_less, self.position - 1, token_line, token_column);
-            },
-            '>' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_greater_equal, self.position - 2, token_line, token_column);
-                    }
-                    if (next == '>') {
-                        self.advance();
-                        // Check for >>=
-                        if (self.peek()) |next2| {
-                            if (next2 == '=') {
-                                self.advance();
-                                return self.makeToken(.op_greater_greater_equal, self.position - 3, token_line, token_column);
-                            }
-                        }
-                        return self.makeToken(.op_greater_greater, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_greater, self.position - 1, token_line, token_column);
-            },
-            '=' => {
-                self.advance();
-                if (self.peek()) |next| {
-                    if (next == '=') {
-                        self.advance();
-                        return self.makeToken(.op_equal_equal, self.position - 2, token_line, token_column);
-                    }
-                }
-                return self.makeToken(.op_equal, self.position - 1, token_line, token_column);
-            },
-            '.' => {
-                self.advance();
-                // Check for ... (ellipsis)
-                if (self.peek()) |next| {
-                    if (next == '.') {
-                        if (self.peekAhead(1)) |next2| {
-                            if (next2 == '.') {
-                                self.advance();
-                                self.advance();
-                                return self.makeToken(.op_ellipsis, self.position - 3, token_line, token_column);
-                            }
-                        }
-                    }
-                }
-                return self.makeToken(.op_dot, self.position - 1, token_line, token_column);
-            },
+            '!' => return self.scanOperatorVariants(token_line, token_column, .op_exclamation, null, null, .op_not_equal),
+            '<' => return self.scanShiftOperator(token_line, token_column, .op_less, .op_less_equal, .op_less_less, .op_less_less_equal, '<'),
+            '>' => return self.scanShiftOperator(token_line, token_column, .op_greater, .op_greater_equal, .op_greater_greater, .op_greater_greater_equal, '>'),
+            '=' => return self.scanOperatorVariants(token_line, token_column, .op_equal, '=', .op_equal_equal, null),
+            '.' => return self.scanDotOperator(token_line, token_column),
             '`' => return self.makeSingleCharToken(.op_backtick, token_line, token_column),
             '?' => return self.makeSingleCharToken(.op_question, token_line, token_column),
             // Delimiters
@@ -547,8 +364,6 @@ pub const Lexer = struct {
             '#' => return self.scanPreprocessorDirective(token_line, token_column),
             else => {},
         }
-
-        // TODO: Literals
 
         // Invalid character
         self.advance();
@@ -673,6 +488,157 @@ pub const Lexer = struct {
         self.advance();
         self.advance();
         return self.makeToken(token_type, start, token_line, token_column);
+    }
+
+    /// Helper for scanning operators that can be single, double, or have compound assignment
+    /// Returns the appropriate token based on what follows the initial operator character
+    /// Examples: + (op_plus), ++ (op_plus_plus), += (op_plus_equal)
+    fn scanOperatorVariants(
+        self: *Lexer,
+        token_line: usize,
+        token_column: usize,
+        single_op: TokenType,
+        double_char: ?u8,
+        double_op: ?TokenType,
+        compound_op: ?TokenType,
+    ) Token {
+        const start = self.position;
+        self.advance(); // consume first character
+
+        if (self.peek()) |next| {
+            // Check for compound assignment (e.g., +=)
+            if (compound_op != null and next == '=') {
+                self.advance();
+                return self.makeToken(compound_op.?, start, token_line, token_column);
+            }
+            // Check for double character operator (e.g., ++)
+            if (double_char != null and double_op != null and next == double_char.?) {
+                self.advance();
+                return self.makeToken(double_op.?, start, token_line, token_column);
+            }
+        }
+
+        // Just the single character operator
+        return self.makeToken(single_op, start, token_line, token_column);
+    }
+
+    /// Helper for scanning shift operators (< and >) with their variants
+    /// Handles: <, <=, <<, <<=, >, >=, >>, >>=
+    fn scanShiftOperator(
+        self: *Lexer,
+        token_line: usize,
+        token_column: usize,
+        single_op: TokenType,
+        equal_op: TokenType,
+        shift_op: TokenType,
+        shift_equal_op: TokenType,
+        shift_char: u8,
+    ) Token {
+        const start = self.position;
+        self.advance(); // consume < or >
+
+        if (self.peek()) |next| {
+            if (next == '=') {
+                // <= or >=
+                self.advance();
+                return self.makeToken(equal_op, start, token_line, token_column);
+            }
+            if (next == shift_char) {
+                // << or >>
+                self.advance();
+                // Check for <<= or >>=
+                if (self.peek()) |next2| {
+                    if (next2 == '=') {
+                        self.advance();
+                        return self.makeToken(shift_equal_op, start, token_line, token_column);
+                    }
+                }
+                return self.makeToken(shift_op, start, token_line, token_column);
+            }
+        }
+
+        // Just < or >
+        return self.makeToken(single_op, start, token_line, token_column);
+    }
+
+    /// Helper for scanning minus operator with its variants
+    /// Handles: -, --, -=, ->
+    fn scanMinusOperator(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance(); // consume -
+
+        if (self.peek()) |next| {
+            switch (next) {
+                '-' => {
+                    self.advance();
+                    return self.makeToken(.op_minus_minus, start, token_line, token_column);
+                },
+                '=' => {
+                    self.advance();
+                    return self.makeToken(.op_minus_equal, start, token_line, token_column);
+                },
+                '>' => {
+                    self.advance();
+                    return self.makeToken(.op_arrow, start, token_line, token_column);
+                },
+                else => {},
+            }
+        }
+
+        return self.makeToken(.op_minus, start, token_line, token_column);
+    }
+
+    /// Helper for scanning slash operator with comment handling
+    /// Handles: /, /=, //, /* */
+    fn scanSlashOperator(self: *Lexer, token_line: usize, token_column: usize) !Token {
+        // Check for comments first
+        if (self.position + 1 < self.source.len) {
+            const next = self.source[self.position + 1];
+            if (next == '/') {
+                // Line comment - skip and get next token
+                self.skipLineComment();
+                return self.nextToken();
+            } else if (next == '*') {
+                // Block comment - skip and get next token
+                self.skipBlockComment();
+                return self.nextToken();
+            }
+        }
+
+        // Not a comment, handle as operator
+        const start = self.position;
+        self.advance();
+
+        if (self.peek()) |next| {
+            if (next == '=') {
+                self.advance();
+                return self.makeToken(.op_slash_equal, start, token_line, token_column);
+            }
+        }
+
+        return self.makeToken(.op_slash, start, token_line, token_column);
+    }
+
+    /// Helper for scanning dot operator with ellipsis handling
+    /// Handles: ., ...
+    fn scanDotOperator(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance(); // consume first .
+
+        // Check for ... (ellipsis)
+        if (self.peek()) |next| {
+            if (next == '.') {
+                if (self.peekAhead(1)) |next2| {
+                    if (next2 == '.') {
+                        self.advance();
+                        self.advance();
+                        return self.makeToken(.op_ellipsis, start, token_line, token_column);
+                    }
+                }
+            }
+        }
+
+        return self.makeToken(.op_dot, start, token_line, token_column);
     }
 
     fn skipWhitespace(self: *Lexer) void {
