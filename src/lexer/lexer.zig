@@ -36,7 +36,7 @@ pub const Lexer = struct {
         };
     }
 
-    pub fn nextToken(self: *Lexer) !Token {
+    pub fn nextToken(self: *Lexer) error{}!Token {
         // Skip whitespace
         self.skipWhitespace();
 
@@ -61,7 +61,7 @@ pub const Lexer = struct {
         }
 
         // Number literals
-        if (helpers.helpers.isDigit(c)) {
+        if (helpers.isDigit(c)) {
             return self.scanNumber(token_line, token_column);
         }
 
@@ -348,7 +348,7 @@ pub const Lexer = struct {
 
     /// Helper for scanning slash operator with comment handling
     /// Handles: /, /=, //, /* */
-    fn scanSlashOperator(self: *Lexer, token_line: usize, token_column: usize) !Token {
+    fn scanSlashOperator(self: *Lexer, token_line: usize, token_column: usize) error{}!Token {
         // Check for comments first
         if (self.position + 1 < self.source.len) {
             const next = self.source[self.position + 1];
@@ -655,4 +655,6 @@ test "lexer EOF" {
 // ============================================================================
 // Tests (in separate file)
 // ============================================================================
-test { _ = @import("tests.zig"); }
+test {
+    _ = @import("tests.zig");
+}

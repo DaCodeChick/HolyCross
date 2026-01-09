@@ -40,3 +40,37 @@ _internal
 // Mixed literals
 42 + 3.14
 100 * 2.5
+
+// Function calls
+func()
+add(1, 2)
+calculate(x, y, z)
+
+// Array subscript
+arr[0]
+matrix[i][j]
+data[x + 1]
+
+// Member access
+obj.field
+person.name
+point.x
+
+// Arrow operator
+ptr->field
+node->next
+obj->value
+
+// Postfix increment/decrement
+x++
+y--
+counter++
+
+// Complex postfix expressions
+obj.array[i]
+func(a, b).result
+arr[i].field
+ptr->array[0]
+obj.method()
+data[i].process()
+list.items[index].name

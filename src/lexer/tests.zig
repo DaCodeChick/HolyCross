@@ -3,7 +3,6 @@ const Lexer = @import("lexer.zig").Lexer;
 const TokenType = @import("token.zig").TokenType;
 const helpers = @import("helpers.zig");
 
-
 test "keyword lookup" {
     const testing = std.testing;
 

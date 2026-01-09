@@ -1,4 +1,7 @@
 const std = @import("std");
+const lexer = @import("lexer/lexer.zig");
+const parser = @import("parser/parser.zig");
+const ast = @import("parser/ast.zig");
 
 pub fn main() !void {
     // Get allocator
@@ -62,4 +65,11 @@ test "main module" {
     // Basic test to ensure module compiles
     const testing = std.testing;
     try testing.expect(true);
+}
+
+// Import all tests from sub-modules
+test {
+    _ = lexer;
+    _ = parser;
+    _ = ast;
 }

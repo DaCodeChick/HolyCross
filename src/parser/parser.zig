@@ -14,6 +14,14 @@ const UnaryOp = ast.UnaryOp;
 const SourceLocation = ast.SourceLocation;
 const Program = ast.Program;
 
+/// Parser errors
+pub const ParserError = error{
+    ParseError,
+    OutOfMemory,
+    InvalidCharacter,
+    Overflow,
+};
+
 /// Parser for HolyC source code
 /// Uses recursive descent parsing with Pratt parsing for expressions
 pub const Parser = struct {
@@ -25,7 +33,7 @@ pub const Parser = struct {
     panic_mode: bool = false,
 
     /// Initialize parser with a lexer
-    pub fn init(allocator: std.mem.Allocator, lex: *Lexer) !Parser {
+    pub fn init(allocator: std.mem.Allocator, lex: *Lexer) ParserError!Parser {
         const initial_token = Token{
             .type = .eof,
             .lexeme = "",
@@ -46,13 +54,14 @@ pub const Parser = struct {
     }
 
     /// Parse a complete program
-    pub fn parse(self: *Parser) !Program {
-        var decls = std.ArrayList(Decl).init(self.allocator);
-        errdefer decls.deinit();
+    pub fn parse(self: *Parser) ParserError!Program {
+        const empty_slice = try self.allocator.alloc(Decl, 0);
+        var decls = std.ArrayList(Decl).fromOwnedSlice(empty_slice);
+        errdefer decls.deinit(self.allocator);
 
         while (!self.check(.eof)) {
             if (self.parseDeclaration()) |decl| {
-                try decls.append(decl);
+                try decls.append(self.allocator, decl);
             } else |err| {
                 if (err == error.ParseError) {
                     self.synchronize();
@@ -63,7 +72,7 @@ pub const Parser = struct {
         }
 
         return Program{
-            .decls = try decls.toOwnedSlice(),
+            .decls = try decls.toOwnedSlice(self.allocator),
             .allocator = self.allocator,
         };
     }
@@ -73,7 +82,7 @@ pub const Parser = struct {
     // ============================================================================
 
     /// Advance to the next token
-    fn advance(self: *Parser) !void {
+    fn advance(self: *Parser) ParserError!void {
         self.previous = self.current;
 
         while (true) {
@@ -92,7 +101,7 @@ pub const Parser = struct {
     }
 
     /// Consume current token if it matches, otherwise error
-    fn consume(self: *Parser, token_type: TokenType, message: []const u8) !void {
+    fn consume(self: *Parser, token_type: TokenType, message: []const u8) ParserError!void {
         if (self.current.type == token_type) {
             try self.advance();
             return;
@@ -103,7 +112,7 @@ pub const Parser = struct {
     }
 
     /// Consume current token if it matches, otherwise return false
-    fn match(self: *Parser, token_type: TokenType) !bool {
+    fn match(self: *Parser, token_type: TokenType) ParserError!bool {
         if (!self.check(token_type)) return false;
         try self.advance();
         return true;
@@ -162,7 +171,7 @@ pub const Parser = struct {
     // Declaration Parsing
     // ============================================================================
 
-    fn parseDeclaration(self: *Parser) !Decl {
+    fn parseDeclaration(self: *Parser) ParserError!Decl {
         // For now, just parse expressions as statements
         // TODO: Implement proper declaration parsing
         const expr = try self.parseExpression();
@@ -179,12 +188,12 @@ pub const Parser = struct {
     // ============================================================================
 
     /// Parse an expression
-    pub fn parseExpression(self: *Parser) !Expr {
+    pub fn parseExpression(self: *Parser) ParserError!Expr {
         return self.parsePrecedence(1); // Lowest precedence
     }
 
     /// Parse expression with minimum precedence (Pratt parsing)
-    fn parsePrecedence(self: *Parser, min_precedence: u8) !Expr {
+    fn parsePrecedence(self: *Parser, min_precedence: u8) ParserError!Expr {
         // Parse prefix expression (literals, identifiers, unary operators, grouping)
         var left = try self.parsePrefix();
 
@@ -230,7 +239,7 @@ pub const Parser = struct {
     }
 
     /// Parse prefix expression (primary, unary, grouping)
-    fn parsePrefix(self: *Parser) !Expr {
+    fn parsePrefix(self: *Parser) ParserError!Expr {
         // Unary operators
         if (try self.parseUnaryOperator()) |unary_op| {
             const op_token = self.previous;
@@ -260,7 +269,7 @@ pub const Parser = struct {
     }
 
     /// Parse primary expression (literals, identifiers)
-    fn parsePrimary(self: *Parser) !Expr {
+    fn parsePrimary(self: *Parser) ParserError!Expr {
         _ = self.current;
 
         // Integer literal
@@ -379,7 +388,7 @@ pub const Parser = struct {
     }
 
     /// Parse unary operator if present
-    fn parseUnaryOperator(self: *Parser) !?UnaryOp {
+    fn parseUnaryOperator(self: *Parser) ParserError!?UnaryOp {
         if (try self.match(.op_minus)) return .negate;
         if (try self.match(.op_plus)) return .plus;
         if (try self.match(.op_exclamation)) return .logical_not;
@@ -406,7 +415,7 @@ pub const Parser = struct {
 
     /// Parse postfix operators (function call, array subscript, member access, etc.)
     /// Returns true if a postfix operator was consumed and the left expression was modified
-    fn parsePostfix(self: *Parser, left: *Expr) !bool {
+    fn parsePostfix(self: *Parser, left: *Expr) ParserError!bool {
         // Function call: func(args)
         if (try self.match(.lparen)) {
             const args = try self.parseCallArguments();
@@ -505,26 +514,27 @@ pub const Parser = struct {
 
     /// Parse function call arguments: (arg1, arg2, ...)
     /// Assumes '(' has already been consumed
-    fn parseCallArguments(self: *Parser) ![]Expr {
-        var args = std.ArrayList(Expr).init(self.allocator);
-        errdefer args.deinit();
+    fn parseCallArguments(self: *Parser) ParserError![]Expr {
+        const empty_slice = try self.allocator.alloc(Expr, 0);
+        var args_list = std.ArrayList(Expr).fromOwnedSlice(empty_slice);
+        errdefer args_list.deinit(self.allocator);
 
         // Empty argument list: ()
         if (self.check(.rparen)) {
             try self.advance();
-            return args.toOwnedSlice();
+            return args_list.toOwnedSlice(self.allocator);
         }
 
         // Parse arguments
         while (true) {
             const arg = try self.parseExpression();
-            try args.append(arg);
+            try args_list.append(self.allocator, arg);
 
             if (!try self.match(.comma)) break;
         }
 
         try self.consume(.rparen, "Expected ')' after function arguments");
-        return args.toOwnedSlice();
+        return args_list.toOwnedSlice(self.allocator);
     }
 };
 
@@ -539,7 +549,7 @@ test "Parser initialization" {
     const allocator = arena.allocator();
 
     const source = "42";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     const parser = try Parser.init(allocator, &lex);
 
     try testing.expectEqual(TokenType.integer_literal, parser.current.type);
@@ -552,7 +562,7 @@ test "Parse integer literal" {
     const allocator = arena.allocator();
 
     const source = "42";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -566,7 +576,7 @@ test "Parse float literal" {
     const allocator = arena.allocator();
 
     const source = "3.14";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -580,7 +590,7 @@ test "Parse string literal" {
     const allocator = arena.allocator();
 
     const source = "\"hello\"";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -594,7 +604,7 @@ test "Parse identifier" {
     const allocator = arena.allocator();
 
     const source = "my_var";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -608,7 +618,7 @@ test "Parse binary addition" {
     const allocator = arena.allocator();
 
     const source = "1 + 2";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -624,7 +634,7 @@ test "Parse binary multiplication" {
     const allocator = arena.allocator();
 
     const source = "3 * 4";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -641,7 +651,7 @@ test "Parse with correct precedence: 1 + 2 * 3" {
 
     // Should parse as: 1 + (2 * 3)
     const source = "1 + 2 * 3";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -664,7 +674,7 @@ test "Parse with correct precedence: 2 * 3 + 4" {
 
     // Should parse as: (2 * 3) + 4
     const source = "2 * 3 + 4";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -686,7 +696,7 @@ test "Parse parenthesized expression: (1 + 2) * 3" {
     const allocator = arena.allocator();
 
     const source = "(1 + 2) * 3";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -708,7 +718,7 @@ test "Parse unary negation" {
     const allocator = arena.allocator();
 
     const source = "-42";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -723,7 +733,7 @@ test "Parse power operator: 2`8" {
     const allocator = arena.allocator();
 
     const source = "2`8";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -739,7 +749,7 @@ test "Parse HolyC logical XOR: a ^^ b" {
     const allocator = arena.allocator();
 
     const source = "a ^^ b";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -755,7 +765,7 @@ test "Parse complex expression: -a + b * c" {
     const allocator = arena.allocator();
 
     const source = "-a + b * c";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -784,7 +794,7 @@ test "Parse function call with no arguments" {
     const allocator = arena.allocator();
 
     const source = "func()";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -801,7 +811,7 @@ test "Parse function call with single argument" {
     const allocator = arena.allocator();
 
     const source = "func(42)";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -818,7 +828,7 @@ test "Parse function call with multiple arguments" {
     const allocator = arena.allocator();
 
     const source = "func(1, 2, 3)";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -837,7 +847,7 @@ test "Parse array subscript" {
     const allocator = arena.allocator();
 
     const source = "arr[0]";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -853,7 +863,7 @@ test "Parse multi-dimensional array subscript" {
     const allocator = arena.allocator();
 
     const source = "matrix[i][j]";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -873,7 +883,7 @@ test "Parse member access" {
     const allocator = arena.allocator();
 
     const source = "obj.field";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -889,7 +899,7 @@ test "Parse chained member access" {
     const allocator = arena.allocator();
 
     const source = "obj.inner.field";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -909,7 +919,7 @@ test "Parse arrow operator" {
     const allocator = arena.allocator();
 
     const source = "ptr->field";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -925,7 +935,7 @@ test "Parse postfix increment" {
     const allocator = arena.allocator();
 
     const source = "x++";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -941,7 +951,7 @@ test "Parse postfix decrement" {
     const allocator = arena.allocator();
 
     const source = "x--";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -957,7 +967,7 @@ test "Parse complex postfix expression: obj.array[i].method()" {
     const allocator = arena.allocator();
 
     const source = "obj.array[i].method()";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
@@ -981,16 +991,16 @@ test "Parse mixed prefix and postfix: ++x--" {
     const allocator = arena.allocator();
 
     const source = "++x--";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
 
-    // Root: postfix decrement
-    try testing.expectEqual(UnaryOp.post_decrement, expr.unary.op);
+    // Root: prefix increment (prefix operators are parsed first)
+    try testing.expectEqual(UnaryOp.pre_increment, expr.unary.op);
 
-    // Operand: prefix increment
-    try testing.expectEqual(UnaryOp.pre_increment, expr.unary.operand.unary.op);
+    // Operand: postfix decrement on x
+    try testing.expectEqual(UnaryOp.post_decrement, expr.unary.operand.unary.op);
     try testing.expectEqualStrings("x", expr.unary.operand.unary.operand.identifier.name);
 }
 
@@ -1001,7 +1011,7 @@ test "Parse array subscript with expression: arr[i + 1]" {
     const allocator = arena.allocator();
 
     const source = "arr[i + 1]";
-    var lex = Lexer.init(source);
+    var lex = Lexer.init(allocator, source);
     var parser = try Parser.init(allocator, &lex);
 
     const expr = try parser.parseExpression();
