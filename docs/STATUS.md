@@ -1,6 +1,6 @@
 # HolyCross Development Status
 
-Last Updated: 2026-01-09
+Last Updated: 2026-01-09 (Updated: Complete keyword list added)
 
 ## Current Phase: Phase 0 - Foundation ✅
 
@@ -11,7 +11,8 @@ Last Updated: 2026-01-09
 - [x] Project documentation (PLAN.md, README.md, GETTING_STARTED.md)
 - [x] Complete directory structure
 - [x] Working CLI with argument parsing
-- [x] Token types enumeration defined (60+ types)
+- [x] Token types enumeration defined (120+ types)
+- [x] Complete HolyC keyword list (71 keywords from TempleOS source)
 - [x] Lexer struct framework
 - [x] Test infrastructure
 - [x] Example HolyC file (hello.hc)
@@ -19,7 +20,7 @@ Last Updated: 2026-01-09
 - [x] .gitignore configured
 
 ### Statistics
-- **Lines of Code**: ~300 (foundation)
+- **Lines of Code**: ~450 (foundation + complete keyword list)
 - **Test Coverage**: Framework in place
 - **Documentation**: 500+ lines across multiple files
 
