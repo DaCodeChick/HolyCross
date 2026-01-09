@@ -233,3 +233,74 @@ const keywords = std.StaticStringMap(TokenType).initComptime(.{
 **Last Updated**: 2026-01-09
 **Source**: TempleOS Compiler (commit: latest)
 **Implementation**: HolyCross `src/lexer/lexer.zig`
+
+---
+
+## Lexer Implementation Notes
+
+### What the Lexer Needs to Handle
+
+1. **Keywords (71 total)**: 
+   - Reserved identifiers that have special meaning
+   - Must be recognized and returned as keyword tokens
+   - Case-sensitive matching required
+
+2. **Special Identifiers (3 total)**:
+   - `pad`, `reserved`, `_anon_` 
+   - NOT keywords - just regular identifiers
+   - Special treatment only in **semantic analysis** (duplicate checking)
+   - Lexer treats them as normal identifiers
+
+### Implementation Strategy
+
+```zig
+// In lexer:
+fn scanIdentifier(self: *Lexer) Token {
+    // 1. Scan identifier characters
+    const start = self.position;
+    while (isIdentifierContinue(self.peek())) {
+        self.advance();
+    }
+    const lexeme = self.source[start..self.position];
+    
+    // 2. Check if it's a keyword
+    if (Lexer.getKeyword(lexeme)) |keyword_type| {
+        return Token{ .type = keyword_type, .lexeme = lexeme, ... };
+    }
+    
+    // 3. Otherwise, it's an identifier (including 'pad', 'reserved', '_anon_')
+    return Token{ .type = .identifier, .lexeme = lexeme, ... };
+}
+```
+
+### Semantic Phase Handling
+
+The special identifiers are only special in the **parser/semantic analysis**:
+
+```zig
+// In semantic analyzer (later):
+fn addMember(class: *Class, member: Member) !void {
+    // Check for duplicate members
+    if (class.hasMember(member.name)) {
+        // EXCEPT for these special names:
+        if (!std.mem.eql(u8, member.name, "pad") and
+            !std.mem.eql(u8, member.name, "reserved") and
+            !std.mem.eql(u8, member.name, "_anon_")) {
+            return error.DuplicateMember;
+        }
+    }
+    try class.members.append(member);
+}
+```
+
+### Summary
+
+- **Lexer**: Recognizes 71 keywords + all identifiers (including special ones)
+- **Parser**: Understands structure and syntax
+- **Semantic Analyzer**: Applies special duplicate-checking rules for `pad`, `reserved`, `_anon_`
+
+---
+
+**Version**: 1.1
+**Last Updated**: 2026-01-09
+**Contributors**: Research from TempleOS Compiler source analysis
