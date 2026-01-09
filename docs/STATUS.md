@@ -1,8 +1,8 @@
 # HolyCross Development Status
 
-Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
+Last Updated: 2026-01-09 (Phase 2 - Parser: IN PROGRESS 🚧)
 
-## Current Phase: Phase 1 - Lexer ✅ COMPLETE
+## Current Phase: Phase 2 - Parser 🚧 IN PROGRESS (25% Complete)
 
 ### Completed
 - [x] Complete lexer implementation (1,900+ lines)
@@ -18,11 +18,83 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 - [x] Code refactoring to eliminate duplication
 - [x] Complete documentation (KEYWORDS.md)
 
-### Statistics
+## Phase 2 - Parser (AST Construction) 🚧 IN PROGRESS
+
+### Completed (25%)
+- [x] Define AST node structures (src/parser/ast.zig - 548 lines)
+  - Expression nodes: literals, binary/unary ops, identifiers, calls
+  - Statement nodes: blocks, control flow, declarations
+  - Declaration nodes: functions, classes, unions, globals
+  - Type system: primitives, pointers, arrays, named types
+  - Binary operator precedence table with associativity
+  - Helper functions for AST node creation
+  - 3 AST tests passing
+
+- [x] Implement expression parser (src/parser/parser.zig - 641 lines)
+  - Pratt parsing for expressions with correct precedence
+  - Recursive descent parser framework
+  - Error handling with panic mode and synchronization
+  - 16 comprehensive parser tests - all passing
+
+- [x] Parse literals and identifiers ✅
+  - Integer literals (decimal, hex, binary)
+  - Float literals (including scientific notation)
+  - String literals (with quote removal)
+  - Character literals (including multi-char constants)
+  - Identifiers
+
+- [x] Parse binary operators with precedence ✅
+  - Arithmetic: +, -, *, /, %
+  - Bitwise: &, |, ^, <<, >>
+  - Logical: &&, ||, ^^ (HolyC logical XOR)
+  - Comparison: ==, !=, <, <=, >, >=
+  - Assignment: =, +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+  - Power: ` (backtick - HolyC specific)
+  - Correct precedence and associativity
+
+- [x] Parse unary operators ✅
+  - Arithmetic: -, +
+  - Logical: !
+  - Bitwise: ~
+  - Pointer: *, &
+  - Increment/decrement: ++, -- (prefix only for now)
+
+- [x] Parse grouping expressions ✅
+  - Parentheses for precedence override
+  - Nested expressions
+
+### In Progress
+- [ ] Parse function calls
+- [ ] Parse postfix operators (++, --, [], ., ->)
+- [ ] Parse ternary operator (?:)
+- [ ] Parse sizeof and offset expressions
+- [ ] Parse type casts
+
+### Planned Tasks (Remaining 75%)
+- [ ] Parse type declarations
+- [ ] Parse variable declarations
+- [ ] Parse function definitions
+- [ ] Parse class/union definitions (including "U16i union U16" syntax)
+- [ ] Parse control flow statements (if, while, for, switch)
+- [ ] Parse assembly blocks
+- [ ] Error recovery improvements
+- [ ] More comprehensive parser tests
+
+### Statistics (Phase 2 Current)
+- **AST Lines**: 548 lines (src/parser/ast.zig)
+- **Parser Lines**: 641 lines (src/parser/parser.zig)
+- **Total Phase 2**: ~1,200 lines
+- **Test Coverage**: 19 tests (3 AST + 16 parser)
+- **Test Execution Time**: ~576μs (all phases)
+- **Examples**: expressions.hc demonstrating parser capabilities
+
+### Statistics (Phase 1 Complete)
 - **Lines of Code**: ~2,100 (lexer + tests)
 - **Test Coverage**: 50+ test cases covering all features
 - **Test Execution Time**: ~440μs
 - **Documentation**: 300+ lines in KEYWORDS.md
+
+## Previous Phase: Phase 1 - Lexer ✅ COMPLETE
 
 ### Key Implementation Details
 
@@ -49,8 +121,11 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 - `examples/hello.hc` - Basic "Hello World"
 - `examples/bool_example.hc` - Bool/TRUE/FALSE/NULL usage
 - `examples/preprocessor_example.hc` - Complete preprocessor demo
+- `examples/expressions.hc` - Parser test expressions
 
-## Previous Phase: Phase 0 - Foundation ✅
+## Previous Phases
+
+### Phase 0 - Foundation ✅ COMPLETE
 
 ### Completed
 - [x] Project renamed to HolyCross
@@ -66,57 +141,38 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 - [x] LGPL v3 license
 - [x] .gitignore configured
 
-## Next Phase: Phase 2 - Parser (AST Construction)
+## Next Steps
 
-### Goals
-- Parse tokens into Abstract Syntax Tree (AST)
-- Handle expressions with operator precedence
-- Parse declarations (variables, functions, classes)
-- Parse statements (if, while, for, switch, etc.)
-- Build complete program AST
+### Phase 2 Continuation - Parser
+1. **Add postfix operators and function calls**
+   - Array subscript: `arr[index]`
+   - Member access: `obj.member`
+   - Arrow operator: `ptr->member`
+   - Function calls: `func(args)`
+   - Postfix increment/decrement: `x++`, `x--`
 
-### Planned Tasks
-- [ ] Define AST node structures
-- [ ] Implement expression parser (Pratt parser or precedence climbing)
-- [ ] Parse literals and identifiers
-- [ ] Parse binary operators with precedence
-- [ ] Parse unary operators (!, ~, -, +, ++, --, *, &)
-- [ ] Parse function calls
-- [ ] Parse type declarations
-- [ ] Parse variable declarations
-- [ ] Parse function definitions
-- [ ] Parse class/union definitions
-- [ ] Parse control flow statements
-- [ ] Parse assembly blocks
-- [ ] Error recovery and reporting
-- [ ] Comprehensive parser tests
+2. **Ternary operator**
+   - Conditional: `condition ? true_expr : false_expr`
+
+3. **Type parsing**
+   - Basic types: `I64`, `U32`, `F64`
+   - Pointers: `I64*`, `U8**`
+   - Arrays: `I64[10]`, `U8[]`
+   - Named types: class/union names
+
+4. **Statement parsing**
+   - Variable declarations: `I64 x = 42;`
+   - Expression statements
+   - Blocks: `{ stmt1; stmt2; }`
+   - Control flow: `if`, `while`, `for`, `switch`
+
+5. **Declaration parsing**
+   - Function definitions
+   - Class/union definitions
+   - Global variables
 
 ### Estimated Timeline
-3-4 weeks hobby pace
-
-### Implementation Approach
-1. **AST Design** (`src/ast/ast.zig`):
-   - Node types for all syntax constructs
-   - Visitor pattern support for tree traversal
-   - Source location tracking
-
-2. **Parser Implementation** (`src/parser/parser.zig`):
-   - Recursive descent parser
-   - Operator precedence handling
-   - Error synchronization points
-   - Lookahead for ambiguous constructs
-
-3. **Testing Strategy**:
-   - Unit tests for each parsing function
-   - Integration tests with complete programs
-   - Error case testing
-
-### Key Challenges
-- HolyC allows statements at file scope (not just declarations)
-- Class member access and method calls
-- Inline assembly parsing
-- Preprocessor directive handling in context
-- Multi-character constants in expressions
+2-3 more weeks to complete Phase 2
 
 ## Technical Stack
 
@@ -132,7 +188,7 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 
 1. ✅ Project foundation complete (Phase 0)
 2. ✅ Lexer implementation complete (Phase 1)
-3. ⏳ Parser implementation (Phase 2 - Next)
+3. 🚧 Parser implementation (Phase 2 - In Progress, 25% complete)
 4. ⏳ Hello World compilation
 5. ⏳ TempleOS binary generation
 
@@ -146,21 +202,24 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 - [x] Token design patterns
 - [x] Finite automata
 - [x] Test-driven development workflow
+- [x] AST design patterns
+- [x] Pratt parsing for expressions
+- [x] Operator precedence handling
 
 ### Concepts In Progress
-- 🚧 Syntax analysis and parsing
-- 🚧 AST design patterns
-- 🚧 Operator precedence handling
-- 🚧 Compiler architecture patterns
+- 🚧 Full parser implementation
+- 🚧 Statement and declaration parsing
+- 🚧 Type system design
 
 ## Files Changed
 
 ### Core Implementation
 - `src/main.zig` - CLI entry point (✅ Complete)
-- `src/lexer/lexer.zig` - Tokenization (✅ Complete - 1,900+ lines)
-- `src/parser/` - Not started (Phase 2)
-- `src/ast/` - Not started (Phase 2)
+- `src/lexer/lexer.zig` - Tokenization (✅ Complete - 2,091 lines)
+- `src/parser/ast.zig` - AST nodes (🚧 In Progress - 548 lines)
+- `src/parser/parser.zig` - Parser (🚧 In Progress - 641 lines)
 - `src/codegen/` - Not started (Phase 5+)
+- `src/semantic/` - Not started (Phase 3)
 
 ### Documentation
 - `PLAN.md` - Complete roadmap (✅ 400+ lines)
@@ -173,46 +232,47 @@ Last Updated: 2026-01-09 (Phase 1 - Lexer: COMPLETE ✅)
 - `examples/hello.hc` - Basic Hello World (✅)
 - `examples/bool_example.hc` - Bool type usage (✅)
 - `examples/preprocessor_example.hc` - Preprocessor directives (✅)
+- `examples/expressions.hc` - Parser expression tests (✅)
 
 ## Commit History (Recent)
 
 ```
-[Current] Complete Phase 1: Preprocessor directive scanning + tests + documentation
-b862596 Revert: Remove Bool/TRUE/FALSE/NULL from keywords - they are library identifiers
-481c6d3 Refactor lexer to eliminate code duplication and improve readability
-28f9c65 Implement complete lexer with operators, literals, and comments
-ee68f4c Add getting started guide for contributors
-9c427a0 Complete rewrite: HolyCross - HolyC cross-compiler in Zig
+a15b039 Begin Phase 2: Add AST and expression parser with Pratt parsing
+9a9fd8f Refactor: De-spaghettify lexer operator scanning
+6b5203a Docs: Add HolyC type aliasing syntax example (U16i union U16)
+b575a46 Fix: Remove uncertain function-like macros from preprocessor example
+a1022ef Complete Phase 1: Add preprocessor directive scanning with comprehensive tests
 ```
 
-## Next Session Goals
+## Current Session Goals
 
-1. **Begin Phase 2: Parser Implementation**
-   - Design AST node structures in `src/ast/ast.zig`
-   - Create parser framework in `src/parser/parser.zig`
-   - Implement expression parsing with operator precedence
-   - Start with simple literals and binary operators
+1. **Continue Phase 2: Parser Implementation** ✅ STARTED
+   - ✅ Designed AST node structures in `src/parser/ast.zig`
+   - ✅ Created parser framework in `src/parser/parser.zig`
+   - ✅ Implemented expression parsing with Pratt parsing
+   - ✅ Added comprehensive tests for expressions
+   - ⏳ Next: Postfix operators and function calls
 
-2. **Maintain Test-Driven Development**
-   - Write tests for each AST node type
-   - Test parser with simple expressions first
-   - Gradually add complexity (unary ops, function calls, etc.)
+2. **Maintain Test-Driven Development** ✅
+   - ✅ 19 tests total (3 AST + 16 parser)
+   - ✅ All tests passing
+   - ✅ Example file created for testing
 
-3. **Study Parsing Techniques**
-   - Research Pratt parsing for expression precedence
-   - Review recursive descent parser patterns
-   - Study TempleOS Compiler/CompilerA.HH for grammar insights
+3. **Documentation** ✅
+   - ✅ Updated STATUS.md with Phase 2 progress
+   - ✅ Created examples/expressions.hc
 
 ## Questions / Blockers
 
-None currently! Phase 1 complete, ready to start Phase 2.
+None currently! Phase 2 progressing well - expression parsing complete.
 
 ## Notes
 
 - **Phase 1 (Lexer) completed**: All 71 keywords, all operators, all literals, preprocessor directives
-- **Test coverage**: 50+ tests, all passing in ~440μs
-- **Code quality**: Refactored to eliminate duplication, clean helper functions
-- **Documentation**: Complete keyword reference with examples
-- **Next milestone**: Begin parser (AST construction) in Phase 2
+- **Phase 2 (Parser) started**: AST structure complete, expression parsing with Pratt parsing complete (25%)
+- **Test coverage**: 69+ tests total (50+ lexer, 19 parser), all passing in ~576μs
+- **Code quality**: Clean AST design, Pratt parsing for correct precedence, comprehensive tests
+- **Documentation**: Complete keyword reference, updated status tracking
+- **Next milestone**: Continue parser - add postfix operators, function calls, statements, declarations
 - Development style: Test-driven, incremental, "vibe coding"
 - Focus remains on learning while building solid foundations
