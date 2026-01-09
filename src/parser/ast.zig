@@ -409,28 +409,34 @@ pub const Decl = union(enum) {
     },
 
     // Class definition
-    // HolyC syntax: [public] [I64] class Name { members };
+    // HolyC syntax: [visibility] [repr_type] [alias] class Name [: Base] { members };
     // Examples:
     //   class MyClass { ... };
-    //   public I64 class CDate { ... };
+    //   public I64 class CDate { ... };  (I64 is representation type, not inheritance)
     //   U16i union U16 { ... };  (alias syntax)
+    //   class Derived : Base { ... };  (inheritance uses colon)
     class: struct {
         name: []const u8,
-        alias: ?[]const u8, // For "U16i union U16" syntax
-        base_type: ?Type, // For "I64 class CDate" syntax (inheritance/base)
+        alias: ?[]const u8, // For "U16i union U16" typedef-like syntax
+        repr_type: ?Type, // For "I64 class CDate" (representation type, allows casting)
+        base_class: ?[]const u8, // For "class Derived : Base" (true inheritance)
         is_public: bool,
+        is_static: bool,
+        is_extern: bool,
         members: []ClassMember,
         loc: SourceLocation,
     },
 
     // Union definition
-    // HolyC syntax: [public] [I64] union Name { members };
-    // Can also have alias: U16i union U16 { ... };
+    // HolyC syntax: [visibility] [repr_type] [alias] union Name { members };
+    // Example: I64 union TimeUnion { ... } (can be represented as I64)
     union_decl: struct {
         name: []const u8,
         alias: ?[]const u8, // For "U16i union U16" syntax
-        base_type: ?Type, // For consistency with class
+        repr_type: ?Type, // Representation type (e.g., I64)
         is_public: bool,
+        is_static: bool,
+        is_extern: bool,
         members: []ClassMember,
         loc: SourceLocation,
     },

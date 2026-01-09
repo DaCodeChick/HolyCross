@@ -476,7 +476,7 @@ public class CTask {
 };
 ```
 
-### With Base Type (Inheritance/Extension)
+### With Representation Type
 Found in TempleOS `Kernel/KernelA.HH:186`:
 ```c
 public I64 class CDate {
@@ -487,9 +487,36 @@ public I64 class CDate {
 
 **Interpretation**: 
 - `public` = visibility modifier
-- `I64` = base type (class extends/inherits from I64)
+- `I64` = representation type (CDate can be represented/cast as I64)
 - `class` = keyword
 - `CDate` = class name
+
+**Semantic Meaning**:
+- The class has the same size as I64 (8 bytes)
+- Allows implicit or explicit casting between CDate and I64
+- Common for type-safe wrappers around primitives
+- NOT inheritance (true inheritance uses `:` syntax)
+
+**Example with Union**:
+```c
+I64 union TimeUnion {
+    U32 parts[2];
+    I64 combined;
+};
+```
+Here, the union can be represented as I64, which makes sense since it's 8 bytes.
+
+### Class Inheritance (Different Syntax)
+True inheritance in HolyC uses colon syntax:
+```c
+class Base {
+    I64 value;
+};
+
+class Derived : Base {
+    U8 extra;  // Inherits value from Base
+};
+```
 
 ### Type Alias Syntax
 Found in TempleOS `Kernel/KernelA.HH` (multiple instances):
@@ -530,21 +557,41 @@ public I64i class I64 {
 
 The parser must handle:
 1. Optional visibility: `public`, `static`, `extern`
-2. Optional alias identifier (comes before `class`/`union` keyword)
-3. Optional base type identifier (comes before `class`/`union` keyword)
+2. Optional representation type (primitive or existing class/union)
+3. Optional alias identifier (for typedef-like syntax)
 4. `class` or `union` keyword
 5. Class/union name
-6. Member declarations in braces
+6. Optional inheritance (`: BaseClass`)
+7. Member declarations in braces
 
-**Parsing ambiguity**: When we see `identifier identifier class Name`, we need to determine:
-- Is it `alias class Name` (e.g., `U16i union U16`)?
-- Is it `base class Name` (e.g., `I64 class CDate`)?
-- Or both: `alias base class Name`?
+**Parsing order for class/union declarations**:
+```
+[visibility] [repr_type] [alias] class/union Name [: Base] { members }
+```
 
-**Solution**: Look at the identifier type:
-- If it's a known type (I64, U8, existing class), it's a base type
-- Otherwise, treat it as an alias
-- May need semantic analysis to fully resolve
+**Examples**:
+- `class Foo { }` - Simple class
+- `public class Foo { }` - Public class
+- `I64 class Foo { }` - Class with I64 representation
+- `public I64 class Foo { }` - Public class with I64 representation
+- `FooPtr class Foo { }` - Class with alias (typedef-like)
+- `class Derived : Base { }` - Inheritance
+- `public I64 FooAlias class Foo : Base { }` - Everything combined
+
+**Parsing ambiguity resolution**:
+When we see `identifier identifier class Name`:
+- First identifier could be: visibility keyword, representation type, or alias
+- Second identifier could be: representation type or alias
+- Need lookahead to disambiguate
+
+**Strategy**:
+1. Check for visibility keywords first (`public`, `static`, `extern`)
+2. Check if next identifier is a known type → representation type
+3. Otherwise, treat as potential alias
+4. Parse `class`/`union` keyword
+5. Parse name
+6. Check for `:` → inheritance
+7. Parse body
 
 ---
 
