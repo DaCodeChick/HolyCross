@@ -2,9 +2,9 @@
 
 Complete list of all HolyC keywords as defined in TempleOS Compiler source.
 
-**Total: 71 keywords (48 regular + 11 types + 12 assembly directives)**
+**Total: 75 keywords (51 regular + 12 types + 12 assembly directives)**
 
-## Type Keywords (11)
+## Type Keywords (12)
 
 | Keyword | Description | Size |
 |---------|-------------|------|
@@ -19,8 +19,17 @@ Complete list of all HolyC keywords as defined in TempleOS Compiler source.
 | `U32` | Unsigned 32-bit integer | 4 bytes |
 | `U64` | Unsigned 64-bit integer | 8 bytes |
 | `F64` | 64-bit floating point (double) | 8 bytes |
+| `Bool` | Boolean type (typedef for U8) | 1 byte |
 
 **Note**: HolyC has no `F32` (float) type - only `F64` (double).
+
+## Constants (3)
+
+| Keyword | Description | Value |
+|---------|-------------|-------|
+| `TRUE` | Boolean true constant | 1 |
+| `FALSE` | Boolean false constant | 0 |
+| `NULL` | Null pointer constant | 0 |
 
 ## Control Flow Keywords (11)
 

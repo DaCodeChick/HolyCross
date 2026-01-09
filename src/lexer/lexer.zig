@@ -9,7 +9,7 @@ pub const TokenType = enum {
     string_literal,
     char_literal,
 
-    // Type Keywords (I0-I64, U0-U64, F64)
+    // Type Keywords (I0-I64, U0-U64, F64, Bool)
     keyword_i0, // void signed (zero-sized)
     keyword_i8,
     keyword_i16,
@@ -21,6 +21,12 @@ pub const TokenType = enum {
     keyword_u32,
     keyword_u64,
     keyword_f64,
+    keyword_bool, // Boolean type (U8)
+
+    // Constants
+    keyword_true,
+    keyword_false,
+    keyword_null,
 
     // Control Flow Keywords
     keyword_if,
@@ -191,6 +197,12 @@ const keywords = KeywordMap.initComptime(.{
     .{ "U32", .keyword_u32 },
     .{ "U64", .keyword_u64 },
     .{ "F64", .keyword_f64 },
+    .{ "Bool", .keyword_bool },
+
+    // Constants
+    .{ "TRUE", .keyword_true },
+    .{ "FALSE", .keyword_false },
+    .{ "NULL", .keyword_null },
 
     // Control flow
     .{ "if", .keyword_if },
@@ -903,6 +915,12 @@ test "keyword lookup" {
     try testing.expect(Lexer.getKeyword("I64").? == .keyword_i64);
     try testing.expect(Lexer.getKeyword("U8").? == .keyword_u8);
     try testing.expect(Lexer.getKeyword("F64").? == .keyword_f64);
+    try testing.expect(Lexer.getKeyword("Bool").? == .keyword_bool);
+
+    // Test constants
+    try testing.expect(Lexer.getKeyword("TRUE").? == .keyword_true);
+    try testing.expect(Lexer.getKeyword("FALSE").? == .keyword_false);
+    try testing.expect(Lexer.getKeyword("NULL").? == .keyword_null);
 
     // Test control flow keywords
     try testing.expect(Lexer.getKeyword("if").? == .keyword_if);
@@ -1804,4 +1822,119 @@ test "complex expression with all features" {
     try testing.expectEqualStrings("n", tok5.lexeme);
 
     // We could continue, but this validates the key features
+}
+
+test "Bool type keyword" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "Bool flag";
+    var lexer = Lexer.init(allocator, source);
+
+    // Bool
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_bool);
+    try testing.expectEqualStrings("Bool", tok1.lexeme);
+
+    // flag
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("flag", tok2.lexeme);
+}
+
+test "TRUE, FALSE, NULL constants" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "TRUE", TokenType.keyword_true },
+        .{ "FALSE", TokenType.keyword_false },
+        .{ "NULL", TokenType.keyword_null },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "Bool with TRUE and FALSE" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "Bool x = TRUE; Bool y = FALSE;";
+    var lexer = Lexer.init(allocator, source);
+
+    // Bool
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_bool);
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+
+    // =
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .op_equal);
+
+    // TRUE
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .keyword_true);
+    try testing.expectEqualStrings("TRUE", tok4.lexeme);
+
+    // ;
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .semicolon);
+
+    // Bool
+    const tok6 = try lexer.nextToken();
+    try testing.expect(tok6.type == .keyword_bool);
+
+    // y
+    const tok7 = try lexer.nextToken();
+    try testing.expect(tok7.type == .identifier);
+
+    // =
+    const tok8 = try lexer.nextToken();
+    try testing.expect(tok8.type == .op_equal);
+
+    // FALSE
+    const tok9 = try lexer.nextToken();
+    try testing.expect(tok9.type == .keyword_false);
+    try testing.expectEqualStrings("FALSE", tok9.lexeme);
+
+    // ;
+    const tok10 = try lexer.nextToken();
+    try testing.expect(tok10.type == .semicolon);
+}
+
+test "NULL pointer constant" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "U8 *ptr = NULL;";
+    var lexer = Lexer.init(allocator, source);
+
+    // U8
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_u8);
+
+    // *
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_star);
+
+    // ptr
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .identifier);
+
+    // =
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .op_equal);
+
+    // NULL
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .keyword_null);
+    try testing.expectEqualStrings("NULL", tok5.lexeme);
 }
