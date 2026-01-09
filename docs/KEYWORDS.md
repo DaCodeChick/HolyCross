@@ -451,6 +451,103 @@ fn addMember(class: *Class, member: Member) !void {
 
 ---
 
-**Version**: 1.1
+## HolyC Class and Union Declaration Syntax
+
+HolyC has unique syntax for class and union declarations that differs from C/C++:
+
+### Standard Syntax
+```c
+class MyClass {
+    I64 value;
+    U8 flags;
+};
+
+union MyUnion {
+    I64 as_int;
+    F64 as_float;
+};
+```
+
+### With Visibility Modifier
+```c
+public class CTask {
+    U64 task_id;
+    I64 priority;
+};
+```
+
+### With Base Type (Inheritance/Extension)
+Found in TempleOS `Kernel/KernelA.HH:186`:
+```c
+public I64 class CDate {
+    U32 time;
+    I32 date;
+};
+```
+
+**Interpretation**: 
+- `public` = visibility modifier
+- `I64` = base type (class extends/inherits from I64)
+- `class` = keyword
+- `CDate` = class name
+
+### Type Alias Syntax
+Found in TempleOS `Kernel/KernelA.HH` (multiple instances):
+```c
+U16i union U16 {
+    I8i i8[2];
+    U8i u8[2];
+};
+```
+
+**Interpretation**:
+- `U16i` = type alias name
+- `union` = keyword
+- `U16` = union name
+- Creates both the union `U16` and an alias `U16i` referring to it
+
+**C/C++ Equivalent**:
+```c
+typedef union U16 {
+    char i8[2];
+    unsigned char u8[2];
+} U16i;
+```
+
+### Combined Syntax (Possible)
+Based on the patterns, this should be valid:
+```c
+public I64i class I64 {
+    // members
+};
+```
+- `public` = visibility
+- `I64i` = alias
+- `class` = keyword  
+- `I64` = class name
+
+### Parser Implementation Notes
+
+The parser must handle:
+1. Optional visibility: `public`, `static`, `extern`
+2. Optional alias identifier (comes before `class`/`union` keyword)
+3. Optional base type identifier (comes before `class`/`union` keyword)
+4. `class` or `union` keyword
+5. Class/union name
+6. Member declarations in braces
+
+**Parsing ambiguity**: When we see `identifier identifier class Name`, we need to determine:
+- Is it `alias class Name` (e.g., `U16i union U16`)?
+- Is it `base class Name` (e.g., `I64 class CDate`)?
+- Or both: `alias base class Name`?
+
+**Solution**: Look at the identifier type:
+- If it's a known type (I64, U8, existing class), it's a base type
+- Otherwise, treat it as an alias
+- May need semantic analysis to fully resolve
+
+---
+
+**Version**: 1.2
 **Last Updated**: 2026-01-09
 **Contributors**: Research from TempleOS Compiler source analysis

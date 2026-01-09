@@ -88,6 +88,7 @@ pub const Expr = union(enum) {
     },
 
     // Ternary (conditional) operator: condition ? true_expr : false_expr
+    // TODO: Verify if HolyC supports ternary operator - may need to remove
     ternary: struct {
         condition: *Expr,
         true_expr: *Expr,
@@ -408,17 +409,28 @@ pub const Decl = union(enum) {
     },
 
     // Class definition
+    // HolyC syntax: [public] [I64] class Name { members };
+    // Examples:
+    //   class MyClass { ... };
+    //   public I64 class CDate { ... };
+    //   U16i union U16 { ... };  (alias syntax)
     class: struct {
         name: []const u8,
         alias: ?[]const u8, // For "U16i union U16" syntax
+        base_type: ?Type, // For "I64 class CDate" syntax (inheritance/base)
+        is_public: bool,
         members: []ClassMember,
         loc: SourceLocation,
     },
 
     // Union definition
+    // HolyC syntax: [public] [I64] union Name { members };
+    // Can also have alias: U16i union U16 { ... };
     union_decl: struct {
         name: []const u8,
         alias: ?[]const u8, // For "U16i union U16" syntax
+        base_type: ?Type, // For consistency with class
+        is_public: bool,
         members: []ClassMember,
         loc: SourceLocation,
     },
