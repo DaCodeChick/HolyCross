@@ -340,42 +340,42 @@ pub const Lexer = struct {
                 if (self.peek()) |next| {
                     if (next == '+') {
                         self.advance();
-                        return Token{ .type = .op_plus_plus, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_plus_plus, self.position - 2, token_line, token_column);
                     }
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_plus_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_plus_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_plus, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_plus, self.position - 1, token_line, token_column);
             },
             '-' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '-') {
                         self.advance();
-                        return Token{ .type = .op_minus_minus, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_minus_minus, self.position - 2, token_line, token_column);
                     }
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_minus_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_minus_equal, self.position - 2, token_line, token_column);
                     }
                     if (next == '>') {
                         self.advance();
-                        return Token{ .type = .op_arrow, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_arrow, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_minus, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_minus, self.position - 1, token_line, token_column);
             },
             '*' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_star_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_star_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_star, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_star, self.position - 1, token_line, token_column);
             },
             '/' => {
                 // Check for comments before treating as division operator
@@ -396,83 +396,80 @@ pub const Lexer = struct {
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_slash_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_slash_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_slash, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_slash, self.position - 1, token_line, token_column);
             },
             '%' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_percent_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_percent_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_percent, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_percent, self.position - 1, token_line, token_column);
             },
             '&' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '&') {
                         self.advance();
-                        return Token{ .type = .op_ampersand_ampersand, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_ampersand_ampersand, self.position - 2, token_line, token_column);
                     }
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_ampersand_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_ampersand_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_ampersand, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_ampersand, self.position - 1, token_line, token_column);
             },
             '|' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '|') {
                         self.advance();
-                        return Token{ .type = .op_pipe_pipe, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_pipe_pipe, self.position - 2, token_line, token_column);
                     }
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_pipe_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_pipe_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_pipe, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_pipe, self.position - 1, token_line, token_column);
             },
             '^' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '^') {
                         self.advance();
-                        return Token{ .type = .op_caret_caret, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_caret_caret, self.position - 2, token_line, token_column);
                     }
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_caret_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_caret_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_caret, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_caret, self.position - 1, token_line, token_column);
             },
-            '~' => {
-                self.advance();
-                return Token{ .type = .op_tilde, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
+            '~' => return self.makeSingleCharToken(.op_tilde, token_line, token_column),
             '!' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_not_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_not_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_exclamation, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_exclamation, self.position - 1, token_line, token_column);
             },
             '<' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_less_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_less_equal, self.position - 2, token_line, token_column);
                     }
                     if (next == '<') {
                         self.advance();
@@ -480,20 +477,20 @@ pub const Lexer = struct {
                         if (self.peek()) |next2| {
                             if (next2 == '=') {
                                 self.advance();
-                                return Token{ .type = .op_less_less_equal, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                                return self.makeToken(.op_less_less_equal, self.position - 3, token_line, token_column);
                             }
                         }
-                        return Token{ .type = .op_less_less, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_less_less, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_less, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_less, self.position - 1, token_line, token_column);
             },
             '>' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_greater_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_greater_equal, self.position - 2, token_line, token_column);
                     }
                     if (next == '>') {
                         self.advance();
@@ -501,23 +498,23 @@ pub const Lexer = struct {
                         if (self.peek()) |next2| {
                             if (next2 == '=') {
                                 self.advance();
-                                return Token{ .type = .op_greater_greater_equal, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                                return self.makeToken(.op_greater_greater_equal, self.position - 3, token_line, token_column);
                             }
                         }
-                        return Token{ .type = .op_greater_greater, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_greater_greater, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_greater, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_greater, self.position - 1, token_line, token_column);
             },
             '=' => {
                 self.advance();
                 if (self.peek()) |next| {
                     if (next == '=') {
                         self.advance();
-                        return Token{ .type = .op_equal_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                        return self.makeToken(.op_equal_equal, self.position - 2, token_line, token_column);
                     }
                 }
-                return Token{ .type = .op_equal, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_equal, self.position - 1, token_line, token_column);
             },
             '.' => {
                 self.advance();
@@ -528,62 +525,26 @@ pub const Lexer = struct {
                             if (next2 == '.') {
                                 self.advance();
                                 self.advance();
-                                return Token{ .type = .op_ellipsis, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                                return self.makeToken(.op_ellipsis, self.position - 3, token_line, token_column);
                             }
                         }
                     }
                 }
-                return Token{ .type = .op_dot, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+                return self.makeToken(.op_dot, self.position - 1, token_line, token_column);
             },
-            '`' => {
-                self.advance();
-                return Token{ .type = .op_backtick, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            '?' => {
-                self.advance();
-                return Token{ .type = .op_question, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
+            '`' => return self.makeSingleCharToken(.op_backtick, token_line, token_column),
+            '?' => return self.makeSingleCharToken(.op_question, token_line, token_column),
             // Delimiters
-            '(' => {
-                self.advance();
-                return Token{ .type = .lparen, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            ')' => {
-                self.advance();
-                return Token{ .type = .rparen, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            '{' => {
-                self.advance();
-                return Token{ .type = .lbrace, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            '}' => {
-                self.advance();
-                return Token{ .type = .rbrace, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            '[' => {
-                self.advance();
-                return Token{ .type = .lbracket, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            ']' => {
-                self.advance();
-                return Token{ .type = .rbracket, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            ';' => {
-                self.advance();
-                return Token{ .type = .semicolon, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            ',' => {
-                self.advance();
-                return Token{ .type = .comma, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            ':' => {
-                self.advance();
-                return Token{ .type = .colon, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
-            '#' => {
-                self.advance();
-                return Token{ .type = .hash, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
-            },
+            '(' => return self.makeSingleCharToken(.lparen, token_line, token_column),
+            ')' => return self.makeSingleCharToken(.rparen, token_line, token_column),
+            '{' => return self.makeSingleCharToken(.lbrace, token_line, token_column),
+            '}' => return self.makeSingleCharToken(.rbrace, token_line, token_column),
+            '[' => return self.makeSingleCharToken(.lbracket, token_line, token_column),
+            ']' => return self.makeSingleCharToken(.rbracket, token_line, token_column),
+            ';' => return self.makeSingleCharToken(.semicolon, token_line, token_column),
+            ',' => return self.makeSingleCharToken(.comma, token_line, token_column),
+            ':' => return self.makeSingleCharToken(.colon, token_line, token_column),
+            '#' => return self.makeSingleCharToken(.hash, token_line, token_column),
             else => {},
         }
 
@@ -611,22 +572,8 @@ pub const Lexer = struct {
         const lexeme = self.source[start..self.position];
 
         // Check if it's a keyword
-        if (getKeyword(lexeme)) |keyword_type| {
-            return Token{
-                .type = keyword_type,
-                .lexeme = lexeme,
-                .line = token_line,
-                .column = token_column,
-            };
-        }
-
-        // Otherwise it's an identifier
-        return Token{
-            .type = .identifier,
-            .lexeme = lexeme,
-            .line = token_line,
-            .column = token_column,
-        };
+        const token_type = getKeyword(lexeme) orelse .identifier;
+        return self.makeToken(token_type, start, token_line, token_column);
     }
 
     /// Advance position and update column
@@ -651,6 +598,40 @@ pub const Lexer = struct {
             return self.source[self.position + n];
         }
         return null;
+    }
+
+    /// Create a token from a starting position
+    fn makeToken(self: *Lexer, token_type: TokenType, start: usize, token_line: usize, token_column: usize) Token {
+        return Token{
+            .type = token_type,
+            .lexeme = self.source[start..self.position],
+            .line = token_line,
+            .column = token_column,
+        };
+    }
+
+    /// Create a single-character token and advance
+    fn makeSingleCharToken(self: *Lexer, token_type: TokenType, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance();
+        return self.makeToken(token_type, start, token_line, token_column);
+    }
+
+    /// Create a two-character token and advance twice
+    fn makeTwoCharToken(self: *Lexer, token_type: TokenType, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance();
+        self.advance();
+        return self.makeToken(token_type, start, token_line, token_column);
+    }
+
+    /// Create a three-character token and advance three times
+    fn makeThreeCharToken(self: *Lexer, token_type: TokenType, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance();
+        self.advance();
+        self.advance();
+        return self.makeToken(token_type, start, token_line, token_column);
     }
 
     fn skipWhitespace(self: *Lexer) void {
@@ -762,12 +743,7 @@ pub const Lexer = struct {
                         break;
                     }
                 }
-                return Token{
-                    .type = .integer_literal,
-                    .lexeme = self.source[start..self.position],
-                    .line = token_line,
-                    .column = token_column,
-                };
+                return self.makeToken(.integer_literal, start, token_line, token_column);
             } else if (next == 'b' or next == 'B') {
                 // Binary
                 self.advance(); // '0'
@@ -780,12 +756,7 @@ pub const Lexer = struct {
                         break;
                     }
                 }
-                return Token{
-                    .type = .integer_literal,
-                    .lexeme = self.source[start..self.position],
-                    .line = token_line,
-                    .column = token_column,
-                };
+                return self.makeToken(.integer_literal, start, token_line, token_column);
             }
         }
 
@@ -841,12 +812,7 @@ pub const Lexer = struct {
         }
 
         const token_type = if (has_dot) TokenType.float_literal else TokenType.integer_literal;
-        return Token{
-            .type = token_type,
-            .lexeme = self.source[start..self.position],
-            .line = token_line,
-            .column = token_column,
-        };
+        return self.makeToken(token_type, start, token_line, token_column);
     }
 
     /// Scan a string literal
@@ -877,12 +843,7 @@ pub const Lexer = struct {
             self.advance();
         }
 
-        return Token{
-            .type = .string_literal,
-            .lexeme = self.source[start..self.position],
-            .line = token_line,
-            .column = token_column,
-        };
+        return self.makeToken(.string_literal, start, token_line, token_column);
     }
 
     /// Scan a character literal (including multi-character constants in HolyC)
@@ -908,12 +869,7 @@ pub const Lexer = struct {
             self.advance();
         }
 
-        return Token{
-            .type = .char_literal,
-            .lexeme = self.source[start..self.position],
-            .line = token_line,
-            .column = token_column,
-        };
+        return self.makeToken(.char_literal, start, token_line, token_column);
     }
 };
 
