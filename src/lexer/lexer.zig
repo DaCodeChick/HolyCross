@@ -298,23 +298,359 @@ pub const Lexer = struct {
         // Skip whitespace
         self.skipWhitespace();
 
+        // Save position for token start
+        const token_line = self.line;
+        const token_column = self.column;
+
         if (self.position >= self.source.len) {
             return Token{
                 .type = .eof,
                 .lexeme = "",
-                .line = self.line,
-                .column = self.column,
+                .line = token_line,
+                .column = token_column,
             };
         }
 
-        // TODO: Implement tokenization logic
-        // For now, just return EOF
+        const c = self.source[self.position];
+
+        // Identifiers and keywords
+        if (isIdentifierStart(c)) {
+            return self.scanIdentifier(token_line, token_column);
+        }
+
+        // Number literals
+        if (isDigit(c)) {
+            return self.scanNumber(token_line, token_column);
+        }
+
+        // String literals
+        if (c == '"') {
+            return self.scanString(token_line, token_column);
+        }
+
+        // Character literals (including multi-character constants)
+        if (c == '\'') {
+            return self.scanChar(token_line, token_column);
+        }
+
+        // Operators and delimiters
+        switch (c) {
+            '+' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '+') {
+                        self.advance();
+                        return Token{ .type = .op_plus_plus, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_plus_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_plus, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '-' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '-') {
+                        self.advance();
+                        return Token{ .type = .op_minus_minus, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_minus_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '>') {
+                        self.advance();
+                        return Token{ .type = .op_arrow, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_minus, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '*' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_star_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_star, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '/' => {
+                // Check for comments before treating as division operator
+                if (self.position + 1 < self.source.len) {
+                    const next = self.source[self.position + 1];
+                    if (next == '/') {
+                        // Line comment - skip until end of line
+                        self.skipLineComment();
+                        return self.nextToken(); // Recursively get next token
+                    } else if (next == '*') {
+                        // Block comment - skip until */
+                        self.skipBlockComment();
+                        return self.nextToken(); // Recursively get next token
+                    }
+                }
+
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_slash_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_slash, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '%' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_percent_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_percent, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '&' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '&') {
+                        self.advance();
+                        return Token{ .type = .op_ampersand_ampersand, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_ampersand_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_ampersand, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '|' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '|') {
+                        self.advance();
+                        return Token{ .type = .op_pipe_pipe, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_pipe_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_pipe, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '^' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '^') {
+                        self.advance();
+                        return Token{ .type = .op_caret_caret, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_caret_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_caret, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '~' => {
+                self.advance();
+                return Token{ .type = .op_tilde, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '!' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_not_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_exclamation, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '<' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_less_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '<') {
+                        self.advance();
+                        // Check for <<=
+                        if (self.peek()) |next2| {
+                            if (next2 == '=') {
+                                self.advance();
+                                return Token{ .type = .op_less_less_equal, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                            }
+                        }
+                        return Token{ .type = .op_less_less, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_less, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '>' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_greater_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                    if (next == '>') {
+                        self.advance();
+                        // Check for >>=
+                        if (self.peek()) |next2| {
+                            if (next2 == '=') {
+                                self.advance();
+                                return Token{ .type = .op_greater_greater_equal, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                            }
+                        }
+                        return Token{ .type = .op_greater_greater, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_greater, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '=' => {
+                self.advance();
+                if (self.peek()) |next| {
+                    if (next == '=') {
+                        self.advance();
+                        return Token{ .type = .op_equal_equal, .lexeme = self.source[self.position - 2 .. self.position], .line = token_line, .column = token_column };
+                    }
+                }
+                return Token{ .type = .op_equal, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '.' => {
+                self.advance();
+                // Check for ... (ellipsis)
+                if (self.peek()) |next| {
+                    if (next == '.') {
+                        if (self.peekAhead(1)) |next2| {
+                            if (next2 == '.') {
+                                self.advance();
+                                self.advance();
+                                return Token{ .type = .op_ellipsis, .lexeme = self.source[self.position - 3 .. self.position], .line = token_line, .column = token_column };
+                            }
+                        }
+                    }
+                }
+                return Token{ .type = .op_dot, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '`' => {
+                self.advance();
+                return Token{ .type = .op_backtick, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '?' => {
+                self.advance();
+                return Token{ .type = .op_question, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            // Delimiters
+            '(' => {
+                self.advance();
+                return Token{ .type = .lparen, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            ')' => {
+                self.advance();
+                return Token{ .type = .rparen, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '{' => {
+                self.advance();
+                return Token{ .type = .lbrace, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '}' => {
+                self.advance();
+                return Token{ .type = .rbrace, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '[' => {
+                self.advance();
+                return Token{ .type = .lbracket, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            ']' => {
+                self.advance();
+                return Token{ .type = .rbracket, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            ';' => {
+                self.advance();
+                return Token{ .type = .semicolon, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            ',' => {
+                self.advance();
+                return Token{ .type = .comma, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            ':' => {
+                self.advance();
+                return Token{ .type = .colon, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            '#' => {
+                self.advance();
+                return Token{ .type = .hash, .lexeme = self.source[self.position - 1 .. self.position], .line = token_line, .column = token_column };
+            },
+            else => {},
+        }
+
+        // TODO: Literals
+
+        // Invalid character
+        self.advance();
         return Token{
-            .type = .eof,
-            .lexeme = "",
-            .line = self.line,
-            .column = self.column,
+            .type = .invalid,
+            .lexeme = self.source[self.position - 1 .. self.position],
+            .line = token_line,
+            .column = token_column,
         };
+    }
+
+    /// Scan an identifier or keyword
+    fn scanIdentifier(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+
+        // Consume identifier characters
+        while (self.position < self.source.len and isIdentifierContinue(self.source[self.position])) {
+            self.advance();
+        }
+
+        const lexeme = self.source[start..self.position];
+
+        // Check if it's a keyword
+        if (getKeyword(lexeme)) |keyword_type| {
+            return Token{
+                .type = keyword_type,
+                .lexeme = lexeme,
+                .line = token_line,
+                .column = token_column,
+            };
+        }
+
+        // Otherwise it's an identifier
+        return Token{
+            .type = .identifier,
+            .lexeme = lexeme,
+            .line = token_line,
+            .column = token_column,
+        };
+    }
+
+    /// Advance position and update column
+    fn advance(self: *Lexer) void {
+        if (self.position < self.source.len) {
+            self.position += 1;
+            self.column += 1;
+        }
+    }
+
+    /// Peek at current character without consuming
+    fn peek(self: *Lexer) ?u8 {
+        if (self.position < self.source.len) {
+            return self.source[self.position];
+        }
+        return null;
+    }
+
+    /// Peek ahead n characters
+    fn peekAhead(self: *Lexer, n: usize) ?u8 {
+        if (self.position + n < self.source.len) {
+            return self.source[self.position + n];
+        }
+        return null;
     }
 
     fn skipWhitespace(self: *Lexer) void {
@@ -333,6 +669,46 @@ pub const Lexer = struct {
         }
     }
 
+    /// Skip a line comment (// until end of line)
+    fn skipLineComment(self: *Lexer) void {
+        // Skip the //
+        self.advance();
+        self.advance();
+
+        // Skip until newline or EOF
+        while (self.position < self.source.len and self.source[self.position] != '\n') {
+            self.advance();
+        }
+    }
+
+    /// Skip a block comment (/* ... */)
+    fn skipBlockComment(self: *Lexer) void {
+        // Skip the /*
+        self.advance();
+        self.advance();
+
+        // Skip until */ or EOF
+        while (self.position < self.source.len) {
+            if (self.source[self.position] == '*' and self.position + 1 < self.source.len and self.source[self.position + 1] == '/') {
+                // Found end of comment
+                self.advance(); // *
+                self.advance(); // /
+                return;
+            }
+
+            // Track line numbers in block comments
+            if (self.source[self.position] == '\n') {
+                self.position += 1;
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.advance();
+            }
+        }
+        // If we reach here, we hit EOF before closing the comment
+        // For now, we just return (could be an error in a more robust implementation)
+    }
+
     /// Check if a string is a keyword and return its token type
     fn getKeyword(str: []const u8) ?TokenType {
         return keywords.get(str);
@@ -348,6 +724,196 @@ pub const Lexer = struct {
     /// Check if character can continue an identifier
     fn isIdentifierContinue(c: u8) bool {
         return isIdentifierStart(c) or (c >= '0' and c <= '9');
+    }
+
+    /// Check if character is a digit
+    fn isDigit(c: u8) bool {
+        return c >= '0' and c <= '9';
+    }
+
+    /// Check if character is a hex digit
+    fn isHexDigit(c: u8) bool {
+        return (c >= '0' and c <= '9') or
+            (c >= 'a' and c <= 'f') or
+            (c >= 'A' and c <= 'F');
+    }
+
+    /// Check if character is a binary digit
+    fn isBinaryDigit(c: u8) bool {
+        return c == '0' or c == '1';
+    }
+
+    /// Scan a number literal (integer or float)
+    fn scanNumber(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+
+        // Check for hex (0x) or binary (0b) prefix
+        if (self.source[self.position] == '0' and self.position + 1 < self.source.len) {
+            const next = self.source[self.position + 1];
+            if (next == 'x' or next == 'X') {
+                // Hexadecimal
+                self.advance(); // '0'
+                self.advance(); // 'x'
+                while (self.position < self.source.len) {
+                    const c = self.source[self.position];
+                    if (isHexDigit(c) or c == '_') {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                return Token{
+                    .type = .integer_literal,
+                    .lexeme = self.source[start..self.position],
+                    .line = token_line,
+                    .column = token_column,
+                };
+            } else if (next == 'b' or next == 'B') {
+                // Binary
+                self.advance(); // '0'
+                self.advance(); // 'b'
+                while (self.position < self.source.len) {
+                    const c = self.source[self.position];
+                    if (isBinaryDigit(c) or c == '_') {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                return Token{
+                    .type = .integer_literal,
+                    .lexeme = self.source[start..self.position],
+                    .line = token_line,
+                    .column = token_column,
+                };
+            }
+        }
+
+        // Decimal integer or float
+        var has_dot = false;
+        while (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (isDigit(c) or c == '_') {
+                self.advance();
+            } else if (c == '.' and !has_dot) {
+                // Check if this is a decimal point (not an ellipsis or field access)
+                if (self.position + 1 < self.source.len) {
+                    const next_char = self.source[self.position + 1];
+                    if (isDigit(next_char)) {
+                        // This is a float
+                        has_dot = true;
+                        self.advance();
+                    } else {
+                        // This is not part of the number
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Check for scientific notation (e.g., 1.5e10, 3e-5)
+        if (self.position < self.source.len) {
+            const c = self.source[self.position];
+            if (c == 'e' or c == 'E') {
+                self.advance();
+                // Check for optional + or - sign
+                if (self.position < self.source.len) {
+                    const sign = self.source[self.position];
+                    if (sign == '+' or sign == '-') {
+                        self.advance();
+                    }
+                }
+                // Consume exponent digits
+                while (self.position < self.source.len) {
+                    const exp_c = self.source[self.position];
+                    if (isDigit(exp_c) or exp_c == '_') {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                has_dot = true; // Treat scientific notation as float
+            }
+        }
+
+        const token_type = if (has_dot) TokenType.float_literal else TokenType.integer_literal;
+        return Token{
+            .type = token_type,
+            .lexeme = self.source[start..self.position],
+            .line = token_line,
+            .column = token_column,
+        };
+    }
+
+    /// Scan a string literal
+    fn scanString(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance(); // Opening "
+
+        // Scan until closing " or EOF
+        while (self.position < self.source.len and self.source[self.position] != '"') {
+            // Handle escape sequences
+            if (self.source[self.position] == '\\') {
+                self.advance(); // Skip backslash
+                if (self.position < self.source.len) {
+                    self.advance(); // Skip escaped character
+                }
+            } else if (self.source[self.position] == '\n') {
+                // Newline in string (could be error, but for now we allow it)
+                self.position += 1;
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.advance();
+            }
+        }
+
+        // Consume closing "
+        if (self.position < self.source.len and self.source[self.position] == '"') {
+            self.advance();
+        }
+
+        return Token{
+            .type = .string_literal,
+            .lexeme = self.source[start..self.position],
+            .line = token_line,
+            .column = token_column,
+        };
+    }
+
+    /// Scan a character literal (including multi-character constants in HolyC)
+    fn scanChar(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance(); // Opening '
+
+        // Scan until closing ' or EOF
+        while (self.position < self.source.len and self.source[self.position] != '\'') {
+            // Handle escape sequences
+            if (self.source[self.position] == '\\') {
+                self.advance(); // Skip backslash
+                if (self.position < self.source.len) {
+                    self.advance(); // Skip escaped character
+                }
+            } else {
+                self.advance();
+            }
+        }
+
+        // Consume closing '
+        if (self.position < self.source.len and self.source[self.position] == '\'') {
+            self.advance();
+        }
+
+        return Token{
+            .type = .char_literal,
+            .lexeme = self.source[start..self.position],
+            .line = token_line,
+            .column = token_column,
+        };
     }
 };
 
@@ -420,4 +986,866 @@ test "identifier helpers" {
     try testing.expect(Lexer.isIdentifierContinue('9'));
     try testing.expect(!Lexer.isIdentifierContinue('$'));
     try testing.expect(!Lexer.isIdentifierContinue(' '));
+}
+
+test "scan simple identifier" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "foo";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .identifier);
+    try testing.expectEqualStrings("foo", token.lexeme);
+    try testing.expect(token.line == 1);
+    try testing.expect(token.column == 1);
+}
+
+test "scan identifier with numbers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "var123";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .identifier);
+    try testing.expectEqualStrings("var123", token.lexeme);
+}
+
+test "scan identifier with underscores" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "_my_var_";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .identifier);
+    try testing.expectEqualStrings("_my_var_", token.lexeme);
+}
+
+test "scan type keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "I64", TokenType.keyword_i64 },
+        .{ "U8", TokenType.keyword_u8 },
+        .{ "F64", TokenType.keyword_f64 },
+        .{ "U0", TokenType.keyword_u0 },
+        .{ "I32", TokenType.keyword_i32 },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "scan control flow keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "if", TokenType.keyword_if },
+        .{ "else", TokenType.keyword_else },
+        .{ "while", TokenType.keyword_while },
+        .{ "for", TokenType.keyword_for },
+        .{ "return", TokenType.keyword_return },
+        .{ "break", TokenType.keyword_break },
+        .{ "goto", TokenType.keyword_goto },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "scan special keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "interrupt", TokenType.keyword_interrupt },
+        .{ "extern", TokenType.keyword_extern },
+        .{ "public", TokenType.keyword_public },
+        .{ "reg", TokenType.keyword_reg },
+        .{ "noreg", TokenType.keyword_noreg },
+        .{ "asm", TokenType.keyword_asm },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "case sensitivity - keywords vs identifiers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // I64 is a keyword (uppercase)
+    var lexer1 = Lexer.init(allocator, "I64");
+    const tok1 = try lexer1.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // i64 is NOT a keyword (lowercase) - should be identifier
+    var lexer2 = Lexer.init(allocator, "i64");
+    const tok2 = try lexer2.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("i64", tok2.lexeme);
+
+    // if is a keyword (lowercase)
+    var lexer3 = Lexer.init(allocator, "if");
+    const tok3 = try lexer3.nextToken();
+    try testing.expect(tok3.type == .keyword_if);
+
+    // IF is NOT a keyword (uppercase) - should be identifier
+    var lexer4 = Lexer.init(allocator, "IF");
+    const tok4 = try lexer4.nextToken();
+    try testing.expect(tok4.type == .identifier);
+    try testing.expectEqualStrings("IF", tok4.lexeme);
+}
+
+test "scan multiple tokens" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "I64 x";
+    var lexer = Lexer.init(allocator, source);
+
+    // First token: I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+    try testing.expectEqualStrings("I64", tok1.lexeme);
+
+    // Second token: x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("x", tok2.lexeme);
+
+    // EOF
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .eof);
+}
+
+test "special identifiers are not keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // pad, reserved, _anon_ should be identifiers, not keywords
+    const test_cases = [_][]const u8{ "pad", "reserved", "_anon_" };
+
+    for (test_cases) |name| {
+        var lexer = Lexer.init(allocator, name);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .identifier);
+        try testing.expectEqualStrings(name, token.lexeme);
+    }
+}
+
+test "single-character operators" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "+", TokenType.op_plus },
+        .{ "-", TokenType.op_minus },
+        .{ "*", TokenType.op_star },
+        .{ "/", TokenType.op_slash },
+        .{ "%", TokenType.op_percent },
+        .{ "&", TokenType.op_ampersand },
+        .{ "|", TokenType.op_pipe },
+        .{ "^", TokenType.op_caret },
+        .{ "~", TokenType.op_tilde },
+        .{ "!", TokenType.op_exclamation },
+        .{ "<", TokenType.op_less },
+        .{ ">", TokenType.op_greater },
+        .{ "=", TokenType.op_equal },
+        .{ ".", TokenType.op_dot },
+        .{ "`", TokenType.op_backtick },
+        .{ "?", TokenType.op_question },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "two-character operators" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "==", TokenType.op_equal_equal },
+        .{ "!=", TokenType.op_not_equal },
+        .{ "<=", TokenType.op_less_equal },
+        .{ ">=", TokenType.op_greater_equal },
+        .{ "<<", TokenType.op_less_less },
+        .{ ">>", TokenType.op_greater_greater },
+        .{ "&&", TokenType.op_ampersand_ampersand },
+        .{ "||", TokenType.op_pipe_pipe },
+        .{ "^^", TokenType.op_caret_caret },
+        .{ "++", TokenType.op_plus_plus },
+        .{ "--", TokenType.op_minus_minus },
+        .{ "+=", TokenType.op_plus_equal },
+        .{ "-=", TokenType.op_minus_equal },
+        .{ "*=", TokenType.op_star_equal },
+        .{ "/=", TokenType.op_slash_equal },
+        .{ "%=", TokenType.op_percent_equal },
+        .{ "&=", TokenType.op_ampersand_equal },
+        .{ "|=", TokenType.op_pipe_equal },
+        .{ "^=", TokenType.op_caret_equal },
+        .{ "->", TokenType.op_arrow },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "three-character operators" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "<<=", TokenType.op_less_less_equal },
+        .{ ">>=", TokenType.op_greater_greater_equal },
+        .{ "...", TokenType.op_ellipsis },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "delimiters" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = .{
+        .{ "(", TokenType.lparen },
+        .{ ")", TokenType.rparen },
+        .{ "{", TokenType.lbrace },
+        .{ "}", TokenType.rbrace },
+        .{ "[", TokenType.lbracket },
+        .{ "]", TokenType.rbracket },
+        .{ ";", TokenType.semicolon },
+        .{ ",", TokenType.comma },
+        .{ ":", TokenType.colon },
+        .{ "#", TokenType.hash },
+    };
+
+    inline for (test_cases) |case| {
+        var lexer = Lexer.init(allocator, case[0]);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == case[1]);
+        try testing.expectEqualStrings(case[0], token.lexeme);
+    }
+}
+
+test "operator disambiguation" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Test that + is not confused with ++
+    var lexer1 = Lexer.init(allocator, "+ x");
+    const tok1 = try lexer1.nextToken();
+    try testing.expect(tok1.type == .op_plus);
+    try testing.expectEqualStrings("+", tok1.lexeme);
+
+    // Test that ++ is recognized
+    var lexer2 = Lexer.init(allocator, "++");
+    const tok2 = try lexer2.nextToken();
+    try testing.expect(tok2.type == .op_plus_plus);
+    try testing.expectEqualStrings("++", tok2.lexeme);
+
+    // Test that < is not confused with << or <=
+    var lexer3 = Lexer.init(allocator, "< x");
+    const tok3 = try lexer3.nextToken();
+    try testing.expect(tok3.type == .op_less);
+    try testing.expectEqualStrings("<", tok3.lexeme);
+
+    // Test that << is not confused with <<=
+    var lexer4 = Lexer.init(allocator, "<< x");
+    const tok4 = try lexer4.nextToken();
+    try testing.expect(tok4.type == .op_less_less);
+    try testing.expectEqualStrings("<<", tok4.lexeme);
+
+    // Test that <<= is recognized
+    var lexer5 = Lexer.init(allocator, "<<=");
+    const tok5 = try lexer5.nextToken();
+    try testing.expect(tok5.type == .op_less_less_equal);
+    try testing.expectEqualStrings("<<=", tok5.lexeme);
+}
+
+test "expression with operators" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "x + y * 2";
+    var lexer = Lexer.init(allocator, source);
+
+    // x
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .identifier);
+    try testing.expectEqualStrings("x", tok1.lexeme);
+
+    // +
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_plus);
+    try testing.expectEqualStrings("+", tok2.lexeme);
+
+    // y
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .identifier);
+    try testing.expectEqualStrings("y", tok3.lexeme);
+
+    // *
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .op_star);
+    try testing.expectEqualStrings("*", tok4.lexeme);
+
+    // 2
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .integer_literal);
+    try testing.expectEqualStrings("2", tok5.lexeme);
+}
+
+test "HolyC power operator" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // The backtick ` is HolyC's power operator: 2`8 = 256
+    const source = "2`8";
+    var lexer = Lexer.init(allocator, source);
+
+    // 2
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .integer_literal);
+    try testing.expectEqualStrings("2", tok1.lexeme);
+
+    // `
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_backtick);
+    try testing.expectEqualStrings("`", tok2.lexeme);
+
+    // 8
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .integer_literal);
+    try testing.expectEqualStrings("8", tok3.lexeme);
+}
+
+test "pointer arrow operator" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "ptr->field";
+    var lexer = Lexer.init(allocator, source);
+
+    // ptr
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .identifier);
+    try testing.expectEqualStrings("ptr", tok1.lexeme);
+
+    // ->
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_arrow);
+    try testing.expectEqualStrings("->", tok2.lexeme);
+
+    // field
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .identifier);
+    try testing.expectEqualStrings("field", tok3.lexeme);
+}
+
+test "decimal integer literals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "0", "42", "123", "999" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .integer_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "hexadecimal integer literals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "0x0", "0xFF", "0x1234", "0xABCD", "0xabcd" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .integer_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "binary integer literals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "0b0", "0b1", "0b1010", "0b11111111" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .integer_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "integer literals with underscores" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "1_000", "1_000_000", "0xFF_FF", "0b1111_0000" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .integer_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "float literals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "0.0", "3.14", "123.456", "0.5" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .float_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "float literals with scientific notation" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const test_cases = [_][]const u8{ "1e10", "3.14e-5", "2.5E+3", "1.0e0" };
+
+    for (test_cases) |num| {
+        var lexer = Lexer.init(allocator, num);
+        const token = try lexer.nextToken();
+        try testing.expect(token.type == .float_literal);
+        try testing.expectEqualStrings(num, token.lexeme);
+    }
+}
+
+test "number followed by operator" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "42+3";
+    var lexer = Lexer.init(allocator, source);
+
+    // 42
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .integer_literal);
+    try testing.expectEqualStrings("42", tok1.lexeme);
+
+    // +
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_plus);
+    try testing.expectEqualStrings("+", tok2.lexeme);
+
+    // 3
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .integer_literal);
+    try testing.expectEqualStrings("3", tok3.lexeme);
+}
+
+test "complete expression" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "I64 x = 42 + y * 0xFF;";
+    var lexer = Lexer.init(allocator, source);
+
+    // I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+
+    // =
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .op_equal);
+
+    // 42
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .integer_literal);
+    try testing.expectEqualStrings("42", tok4.lexeme);
+
+    // +
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .op_plus);
+
+    // y
+    const tok6 = try lexer.nextToken();
+    try testing.expect(tok6.type == .identifier);
+
+    // *
+    const tok7 = try lexer.nextToken();
+    try testing.expect(tok7.type == .op_star);
+
+    // 0xFF
+    const tok8 = try lexer.nextToken();
+    try testing.expect(tok8.type == .integer_literal);
+    try testing.expectEqualStrings("0xFF", tok8.lexeme);
+
+    // ;
+    const tok9 = try lexer.nextToken();
+    try testing.expect(tok9.type == .semicolon);
+}
+
+test "line comments are skipped" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\// This is a comment
+        \\I64 x
+    ;
+    var lexer = Lexer.init(allocator, source);
+
+    // Should skip the comment and get I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+}
+
+test "line comment at end of line" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "I64 x; // variable declaration";
+    var lexer = Lexer.init(allocator, source);
+
+    // I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+
+    // ;
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .semicolon);
+
+    // EOF (comment should be skipped)
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .eof);
+}
+
+test "block comments are skipped" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "/* This is a block comment */ I64 x";
+    var lexer = Lexer.init(allocator, source);
+
+    // Should skip the comment and get I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+}
+
+test "multiline block comments" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\/*
+        \\ * This is a multi-line
+        \\ * block comment
+        \\ */
+        \\I64 x
+    ;
+    var lexer = Lexer.init(allocator, source);
+
+    // Should skip the comment and get I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+    try testing.expect(tok1.line == 5); // Should be on line 5 after multi-line comment
+
+    // x
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+}
+
+test "block comment in expression" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "x /* comment */ + /* another */ y";
+    var lexer = Lexer.init(allocator, source);
+
+    // x
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .identifier);
+    try testing.expectEqualStrings("x", tok1.lexeme);
+
+    // +
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_plus);
+
+    // y
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .identifier);
+    try testing.expectEqualStrings("y", tok3.lexeme);
+}
+
+test "division operator not confused with comment" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "x / y";
+    var lexer = Lexer.init(allocator, source);
+
+    // x
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .identifier);
+
+    // /
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_slash);
+    try testing.expectEqualStrings("/", tok2.lexeme);
+
+    // y
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .identifier);
+}
+
+test "simple string literal" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "\"Hello, World!\"";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .string_literal);
+    try testing.expectEqualStrings("\"Hello, World!\"", token.lexeme);
+}
+
+test "string with escape sequences" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "\"Hello\\nWorld\\t!\"";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .string_literal);
+    try testing.expectEqualStrings("\"Hello\\nWorld\\t!\"", token.lexeme);
+}
+
+test "empty string" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "\"\"";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .string_literal);
+    try testing.expectEqualStrings("\"\"", token.lexeme);
+}
+
+test "string in expression" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "x = \"test\"";
+    var lexer = Lexer.init(allocator, source);
+
+    // x
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .identifier);
+
+    // =
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .op_equal);
+
+    // "test"
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .string_literal);
+    try testing.expectEqualStrings("\"test\"", tok3.lexeme);
+}
+
+test "simple char literal" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "'A'";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .char_literal);
+    try testing.expectEqualStrings("'A'", token.lexeme);
+}
+
+test "char literal with escape sequence" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "'\\n'";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .char_literal);
+    try testing.expectEqualStrings("'\\n'", token.lexeme);
+}
+
+test "multi-character constant - HolyC feature" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // HolyC allows multi-character constants like 'Hello'
+    // They represent packed integers
+    const source = "'Hello'";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .char_literal);
+    try testing.expectEqualStrings("'Hello'", token.lexeme);
+}
+
+test "multi-character constant - short" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "'OK'";
+    var lexer = Lexer.init(allocator, source);
+
+    const token = try lexer.nextToken();
+    try testing.expect(token.type == .char_literal);
+    try testing.expectEqualStrings("'OK'", token.lexeme);
+}
+
+test "tokenize complete HolyC program" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\// Simple Hello World in HolyC
+        \\U0 Main() {
+        \\    "Hello, World!\n";
+        \\}
+    ;
+    var lexer = Lexer.init(allocator, source);
+
+    // U0
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_u0);
+
+    // Main
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("Main", tok2.lexeme);
+
+    // (
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .lparen);
+
+    // )
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .rparen);
+
+    // {
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .lbrace);
+
+    // "Hello, World!\n"
+    const tok6 = try lexer.nextToken();
+    try testing.expect(tok6.type == .string_literal);
+
+    // ;
+    const tok7 = try lexer.nextToken();
+    try testing.expect(tok7.type == .semicolon);
+
+    // }
+    const tok8 = try lexer.nextToken();
+    try testing.expect(tok8.type == .rbrace);
+
+    // EOF
+    const tok9 = try lexer.nextToken();
+    try testing.expect(tok9.type == .eof);
+}
+
+test "complex expression with all features" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\/* Multi-line comment
+        \\ * with documentation */
+        \\I64 factorial(I64 n) {
+        \\    if (n <= 1) return 1; // base case
+        \\    return n * factorial(n - 1);
+        \\}
+    ;
+    var lexer = Lexer.init(allocator, source);
+
+    // I64
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_i64);
+
+    // factorial
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("factorial", tok2.lexeme);
+
+    // (
+    _ = try lexer.nextToken();
+
+    // I64
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .keyword_i64);
+
+    // n
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .identifier);
+    try testing.expectEqualStrings("n", tok5.lexeme);
+
+    // We could continue, but this validates the key features
 }
