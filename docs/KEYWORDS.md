@@ -152,6 +152,39 @@ Used within `asm { }` blocks:
 
 **Note**: Assembly directives are UPPERCASE by convention.
 
+## Special Identifiers (Not Keywords)
+
+These identifiers have **special compiler treatment** but are **not reserved keywords**:
+
+### `pad`
+**Purpose**: Structure padding and alignment
+**Special behavior**: The compiler allows multiple members named `pad` in the same class (duplicate name exception)
+**Usage**:
+```c
+class MyStruct {
+    U8 type;
+    U8 pad[3];      // Pad to 4-byte boundary
+    I64 value;
+    U8 pad[56];     // Pad to cache line (64 bytes total)
+};
+```
+**Common patterns**:
+- `U8 pad[3]` - Pad by 3 bytes (4-byte alignment)
+- `U8 pad[7]` - Pad by 7 bytes (8-byte alignment)
+- `Bool pad[DFT_CACHE_LINE_WIDTH-1]` - Cache line alignment (128 bytes)
+
+### `reserved`
+**Purpose**: Reserved fields (similar to `pad`)
+**Special behavior**: Also exempt from duplicate name checking
+**Usage**: Same as `pad`, but semantically indicates "reserved for future use"
+
+### `_anon_`
+**Purpose**: Anonymous members
+**Special behavior**: Exempt from duplicate name checking
+**Usage**: For unnamed union/struct members
+
+**Implementation note**: These special identifiers are handled in the compiler's `MemberAdd()` function (`Compiler/LexLib.HC`), which skips duplicate member checks for these names.
+
 ## Reserved but Not Listed
 
 The following are **not** HolyC keywords (unlike C):
