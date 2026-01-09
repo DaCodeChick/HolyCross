@@ -544,7 +544,7 @@ pub const Lexer = struct {
             ';' => return self.makeSingleCharToken(.semicolon, token_line, token_column),
             ',' => return self.makeSingleCharToken(.comma, token_line, token_column),
             ':' => return self.makeSingleCharToken(.colon, token_line, token_column),
-            '#' => return self.makeSingleCharToken(.hash, token_line, token_column),
+            '#' => return self.scanPreprocessorDirective(token_line, token_column),
             else => {},
         }
 
@@ -574,6 +574,47 @@ pub const Lexer = struct {
         // Check if it's a keyword
         const token_type = getKeyword(lexeme) orelse .identifier;
         return self.makeToken(token_type, start, token_line, token_column);
+    }
+
+    /// Scan a preprocessor directive (#define, #include, etc.)
+    fn scanPreprocessorDirective(self: *Lexer, token_line: usize, token_column: usize) Token {
+        const start = self.position;
+        self.advance(); // consume '#'
+
+        // Skip whitespace after '#' (allowed in C/HolyC: "# define" is valid)
+        while (self.peek()) |c| {
+            if (c == ' ' or c == '\t') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Check if there's a directive name following
+        if (self.peek()) |c| {
+            if (isIdentifierStart(c)) {
+                const directive_start = self.position;
+
+                // Consume directive name
+                while (self.position < self.source.len and isIdentifierContinue(self.source[self.position])) {
+                    self.advance();
+                }
+
+                const directive_name = self.source[directive_start..self.position];
+
+                // Check if it's a recognized preprocessor keyword
+                if (getKeyword(directive_name)) |keyword_type| {
+                    // Return the full lexeme including '#' and the directive name
+                    return self.makeToken(keyword_type, start, token_line, token_column);
+                }
+
+                // Not a recognized directive, return hash token with the full content
+                return self.makeToken(.hash, start, token_line, token_column);
+            }
+        }
+
+        // Just '#' alone - return hash token
+        return self.makeToken(.hash, start, token_line, token_column);
     }
 
     /// Advance position and update column
@@ -1853,4 +1894,232 @@ test "Bool declaration treated as regular identifier" {
     // ;
     const tok5 = try lexer.nextToken();
     try testing.expect(tok5.type == .semicolon);
+}
+
+test "preprocessor directive #define" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#define MAX 100";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_define);
+    try testing.expectEqualStrings("#define", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("MAX", tok2.lexeme);
+
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .integer_literal);
+    try testing.expectEqualStrings("100", tok3.lexeme);
+}
+
+test "preprocessor directive #include" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#include \"stdio.h\"";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_include);
+    try testing.expectEqualStrings("#include", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .string_literal);
+    try testing.expectEqualStrings("\"stdio.h\"", tok2.lexeme);
+}
+
+test "preprocessor directive with space after #" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // C/HolyC allows space after '#': "# define" is valid
+    const source = "# define VALUE 42";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_define);
+    // Lexeme includes the '#', space(s), and directive name
+    try testing.expectEqualStrings("# define", tok1.lexeme);
+}
+
+test "preprocessor directives #ifdef #endif" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#ifdef DEBUG\n#endif";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_ifdef);
+    try testing.expectEqualStrings("#ifdef", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("DEBUG", tok2.lexeme);
+
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .keyword_endif);
+    try testing.expectEqualStrings("#endif", tok3.lexeme);
+}
+
+test "preprocessor directive #ifndef" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#ifndef GUARD_H";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_ifndef);
+    try testing.expectEqualStrings("#ifndef", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("GUARD_H", tok2.lexeme);
+}
+
+test "preprocessor directives #ifaot #ifjit" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#ifaot\n#ifjit";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_ifaot);
+    try testing.expectEqualStrings("#ifaot", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .keyword_ifjit);
+    try testing.expectEqualStrings("#ifjit", tok2.lexeme);
+}
+
+test "preprocessor directive #assert" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#assert x > 0";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_assert);
+    try testing.expectEqualStrings("#assert", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("x", tok2.lexeme);
+}
+
+test "preprocessor directive #exe - compile-time execution" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "#exe { Print(\"Hello\"); }";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_exe);
+    try testing.expectEqualStrings("#exe", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .lbrace);
+}
+
+test "preprocessor keyword 'defined' in expression" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // 'defined' is used in #if expressions: #if defined(FOO)
+    const source = "defined(FOO)";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_defined);
+    try testing.expectEqualStrings("defined", tok1.lexeme);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .lparen);
+}
+
+test "hash alone without directive" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // Just '#' without a directive name
+    const source = "# ";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .hash);
+    try testing.expectEqualStrings("# ", tok1.lexeme);
+}
+
+test "hash with unknown directive" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // '#' with an unrecognized directive
+    const source = "#unknown";
+    var lexer = Lexer.init(allocator, source);
+
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .hash);
+    try testing.expectEqualStrings("#unknown", tok1.lexeme);
+}
+
+test "complete preprocessor example" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\#define TRUE 1
+        \\#define FALSE 0
+        \\#ifdef DEBUG
+        \\  Print("Debug mode\n");
+        \\#endif
+    ;
+    var lexer = Lexer.init(allocator, source);
+
+    // #define TRUE 1
+    const tok1 = try lexer.nextToken();
+    try testing.expect(tok1.type == .keyword_define);
+
+    const tok2 = try lexer.nextToken();
+    try testing.expect(tok2.type == .identifier);
+    try testing.expectEqualStrings("TRUE", tok2.lexeme);
+
+    const tok3 = try lexer.nextToken();
+    try testing.expect(tok3.type == .integer_literal);
+    try testing.expectEqualStrings("1", tok3.lexeme);
+
+    // #define FALSE 0
+    const tok4 = try lexer.nextToken();
+    try testing.expect(tok4.type == .keyword_define);
+
+    const tok5 = try lexer.nextToken();
+    try testing.expect(tok5.type == .identifier);
+    try testing.expectEqualStrings("FALSE", tok5.lexeme);
+
+    const tok6 = try lexer.nextToken();
+    try testing.expect(tok6.type == .integer_literal);
+    try testing.expectEqualStrings("0", tok6.lexeme);
+
+    // #ifdef DEBUG
+    const tok7 = try lexer.nextToken();
+    try testing.expect(tok7.type == .keyword_ifdef);
+
+    const tok8 = try lexer.nextToken();
+    try testing.expect(tok8.type == .identifier);
+    try testing.expectEqualStrings("DEBUG", tok8.lexeme);
+
+    // Print
+    const tok9 = try lexer.nextToken();
+    try testing.expect(tok9.type == .identifier);
+    try testing.expectEqualStrings("Print", tok9.lexeme);
+
+    // ... we could continue but this validates the preprocessor handling
 }

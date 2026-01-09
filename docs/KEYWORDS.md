@@ -61,6 +61,42 @@ These are **NOT** language keywords but are defined in the HolyC standard librar
 | `offset` | Offset of member | `offset(Point.x)` |
 | `lastclass` | Reference to last class | Used in declarations |
 
+### Class/Union Inheritance Syntax
+
+HolyC supports a colon syntax for base types:
+
+```c
+class Derived:Base {
+    // Derived inherits/extends Base
+    I64 extra_field;
+};
+
+union MyUnion:I64 {
+    // First member is implicitly I64
+    I64 as_int;
+    F64 as_float;
+};
+```
+
+The syntax `TypeName:BaseType` means the type is "based on" or "inherits from" the BaseType.
+
+### Anonymous Unions/Classes
+
+HolyC allows anonymous unions and classes as members:
+
+```c
+class Example {
+    union {  // Anonymous union
+        I64 as_int;
+        U64 as_uint;
+    };
+    
+    I64 x;  // Regular member
+};
+```
+
+In this case, `as_int` and `as_uint` are directly accessible as members of `Example`.
+
 ## Exception Handling (2)
 
 | Keyword | Description | Example |
@@ -125,6 +161,86 @@ These are **NOT** language keywords but are defined in the HolyC standard librar
 | `exe` | Execute at compile time | `#exe { PrintVersion; }` |
 
 **Note**: `#exe` is a unique HolyC feature that executes code during compilation.
+
+### Preprocessor Directive Syntax
+
+HolyC preprocessor directives follow these rules:
+
+1. **Hash with or without space**: Both `#define` and `# define` are valid
+   ```c
+   #define MAX 100      // Standard form
+   # define MIN 0       // Space after # is allowed (C standard compatible)
+   ```
+
+2. **Directive must follow #**: The directive keyword immediately follows `#` (with optional whitespace)
+   ```c
+   #ifdef DEBUG         // Valid
+   # ifdef DEBUG        // Valid (space allowed)
+   #  ifdef DEBUG       // Valid (multiple spaces allowed)
+   ```
+
+3. **Full lexeme includes #**: The lexer returns the full directive as one token
+   - `#define` → Lexeme: `"#define"`, Token type: `keyword_define`
+   - `# define` → Lexeme: `"# define"`, Token type: `keyword_define`
+
+4. **Case sensitive**: Preprocessor keywords are lowercase (unlike type keywords)
+   ```c
+   #define   // Correct
+   #DEFINE   // Invalid - treated as unknown directive
+   ```
+
+5. **Unknown directives**: If `#` is followed by an unrecognized identifier, the entire construct is tokenized as `.hash`
+   ```c
+   #unknown  // Lexeme: "#unknown", Token type: .hash (not a keyword)
+   ```
+
+6. **Standalone hash**: A `#` without a following identifier is tokenized as `.hash`
+   ```c
+   #         // Token type: .hash
+   ```
+
+### Common Preprocessor Patterns
+
+**Conditional Compilation**:
+```c
+#ifdef DEBUG
+    Print("Debug build\n");
+#endif
+
+#ifndef RELEASE
+    #define ENABLE_LOGGING 1
+#endif
+```
+
+**Platform-Specific Code**:
+```c
+#ifaot
+    // Ahead-of-time compilation code
+    #define COMPILE_MODE "AOT"
+#endif
+
+#ifjit
+    // Just-in-time compilation code  
+    #define COMPILE_MODE "JIT"
+#endif
+```
+
+**Compile-Time Execution**:
+```c
+#exe {
+    // This runs during compilation
+    Print("Building on: %s\n", Now);
+}
+```
+
+**Macro Definitions**:
+```c
+#define PI 3.14159
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define ASSERT(x) if (!(x)) throw;
+```
+
+See `examples/preprocessor_example.hc` for a complete working example.
 
 ## Block Markers (2)
 
