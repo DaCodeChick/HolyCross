@@ -956,12 +956,11 @@ pub const Analyzer = struct {
     // Error Management
     // ========================================================================
 
-    /// Add a semantic error
+    /// Add a semantic error (takes ownership of the message)
     fn addError(self: *Analyzer, kind: ErrorKind, message: []const u8, loc: ast.SourceLocation) AnalyzerError!void {
-        const owned_message = try self.allocator.dupe(u8, message);
         try self.errors.append(self.allocator, .{
             .kind = kind,
-            .message = owned_message,
+            .message = message, // Take ownership - caller must allocate
             .loc = loc,
         });
     }
