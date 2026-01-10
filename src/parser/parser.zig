@@ -1,3 +1,19 @@
+//! HolyC Parser Implementation
+//!
+//! This module implements a recursive descent parser for the HolyC language.
+//! Expression parsing uses Pratt parsing for handling operator precedence.
+//!
+//! Structure:
+//! - Token Management: Token consumption and lookahead
+//! - Error Handling: Error reporting and synchronization
+//! - Declaration Parsing: Functions, classes, unions, globals
+//! - Expression Parsing: Pratt parser with proper precedence
+//! - Type Parsing: Primitives, pointers, arrays, named types
+//! - Statement Parsing: Control flow, variable declarations
+//! - Postfix Parsing: Function calls, subscripts, member access
+//!
+//! Tests are located in parser_test.zig (68 tests covering all features)
+
 const std = @import("std");
 const lexer = @import("../lexer/lexer.zig");
 const ast = @import("ast.zig");
