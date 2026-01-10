@@ -17,6 +17,7 @@
 const std = @import("std");
 const lexer = @import("../lexer/lexer.zig");
 const ast = @import("ast.zig");
+const ops = @import("precedence.zig");
 
 const Token = lexer.Token;
 const TokenType = lexer.TokenType;
@@ -187,45 +188,56 @@ pub const Parser = struct {
     // Declaration Parsing
     // ============================================================================
 
-    fn parseDeclaration(self: *Parser) ParserError!Decl {
-        // Check for function attributes and visibility modifiers
-        var func_attrs = ast.FunctionAttributes{};
-        var is_public = false;
-        var is_static = false;
-        var is_extern = false;
+    /// Holds parsed declaration attributes
+    const DeclAttributes = struct {
+        func_attrs: ast.FunctionAttributes = .{},
+        is_public: bool = false,
+        is_static: bool = false,
+        is_extern: bool = false,
+    };
 
-        // Parse visibility/storage class specifiers
+    /// Parse declaration attributes (public, static, extern, interrupt, etc.)
+    fn parseAttributes(self: *Parser) ParserError!DeclAttributes {
+        var attrs = DeclAttributes{};
+
         while (true) {
             if (try self.match(.keyword_public)) {
-                is_public = true;
-                func_attrs.is_public = true;
+                attrs.is_public = true;
+                attrs.func_attrs.is_public = true;
             } else if (try self.match(.keyword_static)) {
-                is_static = true;
-                func_attrs.is_static = true;
+                attrs.is_static = true;
+                attrs.func_attrs.is_static = true;
             } else if (try self.match(.keyword_extern) or try self.match(.keyword__extern)) {
-                is_extern = true;
-                func_attrs.is_extern = true;
+                attrs.is_extern = true;
+                attrs.func_attrs.is_extern = true;
             } else if (try self.match(.keyword_interrupt)) {
-                func_attrs.is_interrupt = true;
+                attrs.func_attrs.is_interrupt = true;
             } else if (try self.match(.keyword_haserrcode)) {
-                func_attrs.has_err_code = true;
+                attrs.func_attrs.has_err_code = true;
             } else if (try self.match(.keyword_argpop)) {
-                func_attrs.is_argpop = true;
+                attrs.func_attrs.is_argpop = true;
             } else if (try self.match(.keyword_noargpop)) {
-                func_attrs.is_noargpop = true;
+                attrs.func_attrs.is_noargpop = true;
             } else if (try self.match(.keyword_lock)) {
-                func_attrs.is_lock = true;
+                attrs.func_attrs.is_lock = true;
             } else {
                 break;
             }
         }
 
+        return attrs;
+    }
+
+    fn parseDeclaration(self: *Parser) ParserError!Decl {
+        // Parse declaration attributes
+        const attrs = try self.parseAttributes();
+
         // Check for class/union declaration
         if (try self.match(.keyword_class)) {
-            return try self.parseClassDeclaration(is_public, is_static, is_extern, null, null);
+            return try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
         }
         if (try self.match(.keyword_union)) {
-            return try self.parseUnionDeclaration(is_public, is_static, is_extern, null, null);
+            return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
         }
 
         // Try to parse type (for function/variable declaration)
@@ -243,10 +255,10 @@ pub const Parser = struct {
 
         // Check if this is a class/union with representation type
         if (try self.match(.keyword_class)) {
-            return try self.parseClassDeclaration(is_public, is_static, is_extern, decl_type, null);
+            return try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
         }
         if (try self.match(.keyword_union)) {
-            return try self.parseUnionDeclaration(is_public, is_static, is_extern, decl_type, null);
+            return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
         }
 
         // Must be function or global variable - need identifier
@@ -279,7 +291,7 @@ pub const Parser = struct {
                     .name = name,
                     .params = params,
                     .body = body,
-                    .attributes = func_attrs,
+                    .attributes = attrs.func_attrs,
                     .loc = name_loc,
                 },
             };
@@ -342,6 +354,36 @@ pub const Parser = struct {
         return try params.toOwnedSlice(self.allocator);
     }
 
+    /// Parse class or union members: Type name; Type name; ...
+    fn parseMembers(self: *Parser) ParserError![]ast.ClassMember {
+        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
+        var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
+        errdefer members.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            const member_type = try self.parseType();
+
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected member name");
+                return error.ParseError;
+            }
+
+            const member_name = self.current.lexeme;
+            const member_loc = self.locationFromToken(self.current);
+            try self.advance();
+
+            try self.consume(.semicolon, "Expected ';' after member declaration");
+
+            try members.append(self.allocator, ast.ClassMember{
+                .type = member_type,
+                .name = member_name,
+                .loc = member_loc,
+            });
+        }
+
+        return try members.toOwnedSlice(self.allocator);
+    }
+
     /// Parse class declaration
     /// Syntax: [visibility] [repr_type] [alias] class Name [: Base] { members }
     fn parseClassDeclaration(
@@ -401,30 +443,7 @@ pub const Parser = struct {
         // Parse class body
         try self.consume(.lbrace, "Expected '{' before class body");
 
-        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
-        var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
-        errdefer members.deinit(self.allocator);
-
-        while (!self.check(.rbrace) and !self.check(.eof)) {
-            const member_type = try self.parseType();
-
-            if (!self.check(.identifier)) {
-                self.reportErrorAtCurrent("Expected member name");
-                return error.ParseError;
-            }
-
-            const member_name = self.current.lexeme;
-            const member_loc = self.locationFromToken(self.current);
-            try self.advance();
-
-            try self.consume(.semicolon, "Expected ';' after member declaration");
-
-            try members.append(self.allocator, ast.ClassMember{
-                .type = member_type,
-                .name = member_name,
-                .loc = member_loc,
-            });
-        }
+        const members = try self.parseMembers();
 
         try self.consume(.rbrace, "Expected '}' after class body");
         try self.consume(.semicolon, "Expected ';' after class declaration");
@@ -438,7 +457,7 @@ pub const Parser = struct {
                 .is_public = is_public,
                 .is_static = is_static,
                 .is_extern = is_extern,
-                .members = try members.toOwnedSlice(self.allocator),
+                .members = members,
                 .loc = class_loc,
             },
         };
@@ -471,30 +490,7 @@ pub const Parser = struct {
         // Parse union body
         try self.consume(.lbrace, "Expected '{' before union body");
 
-        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
-        var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
-        errdefer members.deinit(self.allocator);
-
-        while (!self.check(.rbrace) and !self.check(.eof)) {
-            const member_type = try self.parseType();
-
-            if (!self.check(.identifier)) {
-                self.reportErrorAtCurrent("Expected member name");
-                return error.ParseError;
-            }
-
-            const member_name = self.current.lexeme;
-            const member_loc = self.locationFromToken(self.current);
-            try self.advance();
-
-            try self.consume(.semicolon, "Expected ';' after member declaration");
-
-            try members.append(self.allocator, ast.ClassMember{
-                .type = member_type,
-                .name = member_name,
-                .loc = member_loc,
-            });
-        }
+        const members = try self.parseMembers();
 
         try self.consume(.rbrace, "Expected '}' after union body");
         try self.consume(.semicolon, "Expected ';' after union declaration");
@@ -507,7 +503,7 @@ pub const Parser = struct {
                 .is_public = is_public,
                 .is_static = is_static,
                 .is_extern = is_extern,
-                .members = try members.toOwnedSlice(self.allocator),
+                .members = members,
                 .loc = union_loc,
             },
         };
@@ -732,53 +728,14 @@ pub const Parser = struct {
 
     /// Get current binary operator if present
     fn currentBinaryOp(self: *Parser) ?BinaryOp {
-        return switch (self.current.type) {
-            .op_plus => .add,
-            .op_minus => .subtract,
-            .op_star => .multiply,
-            .op_slash => .divide,
-            .op_percent => .modulo,
-            .op_ampersand => .bitwise_and,
-            .op_pipe => .bitwise_or,
-            .op_caret => .bitwise_xor,
-            .op_less_less => .shift_left,
-            .op_greater_greater => .shift_right,
-            .op_ampersand_ampersand => .logical_and,
-            .op_pipe_pipe => .logical_or,
-            .op_caret_caret => .logical_xor,
-            .op_equal_equal => .equal,
-            .op_not_equal => .not_equal,
-            .op_less => .less,
-            .op_less_equal => .less_equal,
-            .op_greater => .greater,
-            .op_greater_equal => .greater_equal,
-            .op_equal => .assign,
-            .op_plus_equal => .add_assign,
-            .op_minus_equal => .sub_assign,
-            .op_star_equal => .mul_assign,
-            .op_slash_equal => .div_assign,
-            .op_percent_equal => .mod_assign,
-            .op_ampersand_equal => .and_assign,
-            .op_pipe_equal => .or_assign,
-            .op_caret_equal => .xor_assign,
-            .op_less_less_equal => .shl_assign,
-            .op_greater_greater_equal => .shr_assign,
-            .op_backtick => .power,
-            else => null,
-        };
+        return ops.tokenToBinaryOp(self.current.type);
     }
 
     /// Parse unary operator if present
     fn parseUnaryOperator(self: *Parser) ParserError!?UnaryOp {
-        if (try self.match(.op_minus)) return .negate;
-        if (try self.match(.op_plus)) return .plus;
-        if (try self.match(.op_exclamation)) return .logical_not;
-        if (try self.match(.op_tilde)) return .bitwise_not;
-        if (try self.match(.op_star)) return .dereference;
-        if (try self.match(.op_ampersand)) return .address_of;
-        if (try self.match(.op_plus_plus)) return .pre_increment;
-        if (try self.match(.op_minus_minus)) return .pre_decrement;
-        return null;
+        const op = ops.tokenToUnaryOp(self.current.type) orelse return null;
+        try self.advance();
+        return op;
     }
 
     /// Parse sizeof expression: sizeof(expr) or sizeof(Type)
@@ -1016,24 +973,7 @@ pub const Parser = struct {
 
     /// Check if current token can start a type
     fn isTypeStart(self: *Parser) bool {
-        return switch (self.current.type) {
-            .keyword_i0,
-            .keyword_i8,
-            .keyword_i16,
-            .keyword_i32,
-            .keyword_i64,
-            .keyword_u0,
-            .keyword_u8,
-            .keyword_u16,
-            .keyword_u32,
-            .keyword_u64,
-            .keyword_f64,
-            => true,
-            // For identifiers, we conservatively treat them as expressions
-            // Named type declarations will need better disambiguation in the future
-            // For now, require explicit primitive types for declarations
-            else => false,
-        };
+        return ops.isTypeStartToken(self.current.type);
     }
 
     /// Parse variable declaration: Type name = expr;
