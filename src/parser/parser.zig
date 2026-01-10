@@ -172,15 +172,329 @@ pub const Parser = struct {
     // ============================================================================
 
     fn parseDeclaration(self: *Parser) ParserError!Decl {
-        // For now, just parse expressions as statements
-        // TODO: Implement proper declaration parsing
-        const expr = try self.parseExpression();
-        try self.consume(.semicolon, "Expected ';' after expression");
+        // Check for function attributes and visibility modifiers
+        var func_attrs = ast.FunctionAttributes{};
+        var is_public = false;
+        var is_static = false;
+        var is_extern = false;
 
-        // Wrap expression in a statement-like structure
-        // This is temporary until we implement full declaration parsing
-        _ = expr;
-        return error.ParseError; // Placeholder
+        // Parse visibility/storage class specifiers
+        while (true) {
+            if (try self.match(.keyword_public)) {
+                is_public = true;
+                func_attrs.is_public = true;
+            } else if (try self.match(.keyword_static)) {
+                is_static = true;
+                func_attrs.is_static = true;
+            } else if (try self.match(.keyword_extern) or try self.match(.keyword__extern)) {
+                is_extern = true;
+                func_attrs.is_extern = true;
+            } else if (try self.match(.keyword_interrupt)) {
+                func_attrs.is_interrupt = true;
+            } else if (try self.match(.keyword_haserrcode)) {
+                func_attrs.has_err_code = true;
+            } else if (try self.match(.keyword_argpop)) {
+                func_attrs.is_argpop = true;
+            } else if (try self.match(.keyword_noargpop)) {
+                func_attrs.is_noargpop = true;
+            } else if (try self.match(.keyword_lock)) {
+                func_attrs.is_lock = true;
+            } else {
+                break;
+            }
+        }
+
+        // Check for class/union declaration
+        if (try self.match(.keyword_class)) {
+            return try self.parseClassDeclaration(is_public, is_static, is_extern, null, null);
+        }
+        if (try self.match(.keyword_union)) {
+            return try self.parseUnionDeclaration(is_public, is_static, is_extern, null, null);
+        }
+
+        // Try to parse type (for function/variable declaration)
+        // This could be:
+        // 1. Return type for function
+        // 2. Type for global variable
+        // 3. Representation type for class/union (e.g., "I64 class CDate")
+
+        if (!self.isTypeStart()) {
+            self.reportErrorAtCurrent("Expected declaration");
+            return error.ParseError;
+        }
+
+        const decl_type = try self.parseType();
+
+        // Check if this is a class/union with representation type
+        if (try self.match(.keyword_class)) {
+            return try self.parseClassDeclaration(is_public, is_static, is_extern, decl_type, null);
+        }
+        if (try self.match(.keyword_union)) {
+            return try self.parseUnionDeclaration(is_public, is_static, is_extern, decl_type, null);
+        }
+
+        // Must be function or global variable - need identifier
+        if (!self.check(.identifier)) {
+            self.reportErrorAtCurrent("Expected identifier after type");
+            return error.ParseError;
+        }
+
+        const name = self.current.lexeme;
+        const name_loc = self.locationFromToken(self.current);
+        try self.advance();
+
+        // Check if this is a function (has parenthesis) or variable (has semicolon/assignment)
+        if (try self.match(.lparen)) {
+            // Function declaration
+            const params = try self.parseParameterList();
+
+            // Function body is optional (forward declaration)
+            const body: ?Stmt = if (try self.match(.lbrace)) blk: {
+                // We've consumed the '{', parseBlock expects it in previous
+                break :blk try self.parseBlock();
+            } else blk: {
+                try self.consume(.semicolon, "Expected ';' or function body");
+                break :blk null;
+            };
+
+            return Decl{
+                .function = .{
+                    .return_type = decl_type,
+                    .name = name,
+                    .params = params,
+                    .body = body,
+                    .attributes = func_attrs,
+                    .loc = name_loc,
+                },
+            };
+        } else {
+            // Global variable declaration
+            const init_expr: ?Expr = if (try self.match(.op_equal))
+                try self.parseExpression()
+            else
+                null;
+
+            try self.consume(.semicolon, "Expected ';' after variable declaration");
+
+            return Decl{
+                .global_var = .{
+                    .type = decl_type,
+                    .name = name,
+                    .init = init_expr,
+                    .loc = name_loc,
+                },
+            };
+        }
+    }
+
+    /// Parse parameter list for function: (Type name, Type name, ...)
+    fn parseParameterList(self: *Parser) ParserError![]ast.Param {
+        const empty_slice = try self.allocator.alloc(ast.Param, 0);
+        var params = std.ArrayList(ast.Param).fromOwnedSlice(empty_slice);
+        errdefer params.deinit(self.allocator);
+
+        // Empty parameter list
+        if (try self.match(.rparen)) {
+            return try params.toOwnedSlice(self.allocator);
+        }
+
+        // Parse parameters
+        while (true) {
+            const param_type = try self.parseType();
+
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected parameter name");
+                return error.ParseError;
+            }
+
+            const param_name = self.current.lexeme;
+            const param_loc = self.locationFromToken(self.current);
+            try self.advance();
+
+            try params.append(self.allocator, ast.Param{
+                .type = param_type,
+                .name = param_name,
+                .loc = param_loc,
+            });
+
+            if (!try self.match(.comma)) {
+                break;
+            }
+        }
+
+        try self.consume(.rparen, "Expected ')' after parameter list");
+        return try params.toOwnedSlice(self.allocator);
+    }
+
+    /// Parse class declaration
+    /// Syntax: [visibility] [repr_type] [alias] class Name [: Base] { members }
+    fn parseClassDeclaration(
+        self: *Parser,
+        is_public: bool,
+        is_static: bool,
+        is_extern: bool,
+        repr_type: ?Type,
+        alias: ?[]const u8,
+    ) ParserError!Decl {
+        // The alias parameter is passed when we've already seen "Type alias class"
+        // If alias is null, we need to parse the class name
+        // If alias is not null, the next identifier is the class name
+
+        const class_alias = alias;
+        var class_name: []const u8 = undefined;
+
+        // Parse: [alias] class Name
+        // OR: Name (if repr_type is provided)
+        if (repr_type != null and alias == null) {
+            // Syntax: "I64 class CDate" - next token is class name
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected class name");
+                return error.ParseError;
+            }
+            class_name = self.current.lexeme;
+        } else if (alias != null) {
+            // Syntax: "I64 CDateAlias class CDate" - alias already parsed, get name
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected class name");
+                return error.ParseError;
+            }
+            class_name = self.current.lexeme;
+        } else {
+            // Syntax: "class CDate" - next token is class name
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected class name");
+                return error.ParseError;
+            }
+            class_name = self.current.lexeme;
+        }
+
+        const class_loc = self.locationFromToken(self.current);
+        try self.advance();
+
+        // Check for inheritance: class Derived : Base
+        var base_class: ?[]const u8 = null;
+        if (try self.match(.colon)) {
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected base class name");
+                return error.ParseError;
+            }
+            base_class = self.current.lexeme;
+            try self.advance();
+        }
+
+        // Parse class body
+        try self.consume(.lbrace, "Expected '{' before class body");
+
+        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
+        var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
+        errdefer members.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            const member_type = try self.parseType();
+
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected member name");
+                return error.ParseError;
+            }
+
+            const member_name = self.current.lexeme;
+            const member_loc = self.locationFromToken(self.current);
+            try self.advance();
+
+            try self.consume(.semicolon, "Expected ';' after member declaration");
+
+            try members.append(self.allocator, ast.ClassMember{
+                .type = member_type,
+                .name = member_name,
+                .loc = member_loc,
+            });
+        }
+
+        try self.consume(.rbrace, "Expected '}' after class body");
+        try self.consume(.semicolon, "Expected ';' after class declaration");
+
+        return Decl{
+            .class = .{
+                .name = class_name,
+                .alias = class_alias,
+                .repr_type = repr_type,
+                .base_class = base_class,
+                .is_public = is_public,
+                .is_static = is_static,
+                .is_extern = is_extern,
+                .members = try members.toOwnedSlice(self.allocator),
+                .loc = class_loc,
+            },
+        };
+    }
+
+    /// Parse union declaration
+    /// Syntax: [visibility] [repr_type] [alias] union Name { members }
+    fn parseUnionDeclaration(
+        self: *Parser,
+        is_public: bool,
+        is_static: bool,
+        is_extern: bool,
+        repr_type: ?Type,
+        alias: ?[]const u8,
+    ) ParserError!Decl {
+        // Same logic as class: alias is only used in special syntax like "U16i union U16"
+        const union_alias = alias;
+        var union_name: []const u8 = undefined;
+
+        // Just parse the union name - it's always the next identifier
+        if (!self.check(.identifier)) {
+            self.reportErrorAtCurrent("Expected union name");
+            return error.ParseError;
+        }
+
+        union_name = self.current.lexeme;
+        const union_loc = self.locationFromToken(self.current);
+        try self.advance();
+
+        // Parse union body
+        try self.consume(.lbrace, "Expected '{' before union body");
+
+        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
+        var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
+        errdefer members.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            const member_type = try self.parseType();
+
+            if (!self.check(.identifier)) {
+                self.reportErrorAtCurrent("Expected member name");
+                return error.ParseError;
+            }
+
+            const member_name = self.current.lexeme;
+            const member_loc = self.locationFromToken(self.current);
+            try self.advance();
+
+            try self.consume(.semicolon, "Expected ';' after member declaration");
+
+            try members.append(self.allocator, ast.ClassMember{
+                .type = member_type,
+                .name = member_name,
+                .loc = member_loc,
+            });
+        }
+
+        try self.consume(.rbrace, "Expected '}' after union body");
+        try self.consume(.semicolon, "Expected ';' after union declaration");
+
+        return Decl{
+            .union_decl = .{
+                .name = union_name,
+                .alias = union_alias,
+                .repr_type = repr_type,
+                .is_public = is_public,
+                .is_static = is_static,
+                .is_extern = is_extern,
+                .members = try members.toOwnedSlice(self.allocator),
+                .loc = union_loc,
+            },
+        };
     }
 
     // ============================================================================
@@ -240,6 +554,16 @@ pub const Parser = struct {
 
     /// Parse prefix expression (primary, unary, grouping)
     fn parsePrefix(self: *Parser) ParserError!Expr {
+        // sizeof expression: sizeof(expr) or sizeof(Type)
+        if (try self.match(.keyword_sizeof)) {
+            return try self.parseSizeofExpression();
+        }
+
+        // offset expression: offset(Type, member)
+        if (try self.match(.keyword_offset)) {
+            return try self.parseOffsetExpression();
+        }
+
         // Unary operators
         if (try self.parseUnaryOperator()) |unary_op| {
             const op_token = self.previous;
@@ -257,8 +581,49 @@ pub const Parser = struct {
             };
         }
 
-        // Grouping: (expr)
+        // Grouping or Type cast: (expr) or (Type)expr
         if (try self.match(.lparen)) {
+            // Look ahead to determine if this is a cast or grouping
+            // Save state for potential backtrack
+            const saved_current = self.current;
+            const saved_previous = self.previous;
+
+            // Try to parse as type
+            const is_type = self.isTypeStart();
+
+            if (is_type) {
+                // Try parsing type for cast
+                if (self.parseType()) |cast_type| {
+                    if (try self.match(.rparen)) {
+                        // It's a cast: (Type)expr
+                        const cast_loc = self.locationFromToken(saved_previous);
+                        const expr = try self.parsePrecedence(14); // High precedence for cast
+
+                        const expr_ptr = try self.allocator.create(Expr);
+                        expr_ptr.* = expr;
+
+                        return Expr{
+                            .cast = .{
+                                .type = cast_type,
+                                .expr = expr_ptr,
+                                .loc = cast_loc,
+                            },
+                        };
+                    }
+                } else |_| {
+                    // Failed to parse as type, restore and parse as grouping
+                    self.current = saved_current;
+                    self.previous = saved_previous;
+                }
+
+                // If we got here and didn't return, restore state and parse as grouping
+                if (self.current.type != saved_current.type) {
+                    self.current = saved_current;
+                    self.previous = saved_previous;
+                }
+            }
+
+            // Parse as grouping expression
             const expr = try self.parseExpression();
             try self.consume(.rparen, "Expected ')' after expression");
             return expr;
@@ -400,6 +765,77 @@ pub const Parser = struct {
         return null;
     }
 
+    /// Parse sizeof expression: sizeof(expr) or sizeof(Type)
+    fn parseSizeofExpression(self: *Parser) ParserError!Expr {
+        const sizeof_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'sizeof'");
+
+        // Try to parse as type first
+        if (self.isTypeStart()) {
+            const saved_current = self.current;
+            const saved_previous = self.previous;
+
+            if (self.parseType()) |sizeof_type| {
+                if (try self.match(.rparen)) {
+                    return Expr{
+                        .sizeof_type = .{
+                            .type = sizeof_type,
+                            .loc = sizeof_loc,
+                        },
+                    };
+                }
+            } else |_| {}
+
+            // Restore state if type parsing failed
+            self.current = saved_current;
+            self.previous = saved_previous;
+        }
+
+        // Parse as expression
+        const expr = try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after sizeof expression");
+
+        const expr_ptr = try self.allocator.create(Expr);
+        expr_ptr.* = expr;
+
+        return Expr{
+            .sizeof_expr = .{
+                .expr = expr_ptr,
+                .loc = sizeof_loc,
+            },
+        };
+    }
+
+    /// Parse offset expression: offset(Type, member)
+    fn parseOffsetExpression(self: *Parser) ParserError!Expr {
+        const offset_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'offset'");
+
+        const offset_type = try self.parseType();
+
+        try self.consume(.comma, "Expected ',' after type in offset");
+
+        if (!self.check(.identifier)) {
+            self.reportErrorAtCurrent("Expected member name in offset");
+            return error.ParseError;
+        }
+
+        const member = self.current.lexeme;
+        try self.advance();
+
+        try self.consume(.rparen, "Expected ')' after offset expression");
+
+        return Expr{
+            .offset = .{
+                .type = offset_type,
+                .member = member,
+                .loc = offset_loc,
+            },
+        };
+    }
+
     /// Create source location from token
     fn locationFromToken(self: *Parser, token: Token) SourceLocation {
         _ = self;
@@ -532,6 +968,24 @@ pub const Parser = struct {
             try self.consume(.semicolon, "Expected ';' after 'break'");
             return Stmt{ .break_stmt = .{ .loc = loc } };
         }
+
+        // Switch statement: switch (expr) { case val: ... }
+        if (try self.match(.keyword_switch)) {
+            return try self.parseSwitchStatement();
+        }
+
+        // Goto statement: goto label;
+        if (try self.match(.keyword_goto)) {
+            return try self.parseGotoStatement();
+        }
+
+        // Try-catch: try { } catch { }
+        if (try self.match(.keyword_try)) {
+            return try self.parseTryCatchStatement();
+        }
+
+        // TODO: Handle labels (identifier:) - requires lexer lookahead
+        // For now, labels will be parsed as expression statements and caught in semantic analysis
 
         // Variable declaration: Type name = expr;
         // We need to distinguish between declarations and expressions
@@ -760,6 +1214,122 @@ pub const Parser = struct {
             .return_stmt = .{
                 .expr = expr,
                 .loc = return_loc,
+            },
+        };
+    }
+
+    /// Parse switch statement: switch (expr) { case val: stmts... default: stmts... }
+    fn parseSwitchStatement(self: *Parser) ParserError!Stmt {
+        const switch_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'switch'");
+        const switch_expr = try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after switch expression");
+        try self.consume(.lbrace, "Expected '{' before switch body");
+
+        const empty_slice = try self.allocator.alloc(ast.SwitchCase, 0);
+        var cases = std.ArrayList(ast.SwitchCase).fromOwnedSlice(empty_slice);
+        errdefer cases.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            if (try self.match(.keyword_case)) {
+                // Parse case value
+                const case_value = try self.parseExpression();
+                try self.consume(.colon, "Expected ':' after case value");
+
+                // Parse statements until next case/default/}
+                const empty_stmts = try self.allocator.alloc(Stmt, 0);
+                var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_stmts);
+                errdefer stmts.deinit(self.allocator);
+
+                while (!self.check(.keyword_case) and !self.check(.keyword_default) and !self.check(.rbrace)) {
+                    const stmt = try self.parseStatement();
+                    try stmts.append(self.allocator, stmt);
+                }
+
+                try cases.append(self.allocator, ast.SwitchCase{
+                    .value = case_value,
+                    .stmts = try stmts.toOwnedSlice(self.allocator),
+                    .loc = self.locationFromToken(self.previous),
+                });
+            } else if (try self.match(.keyword_default)) {
+                try self.consume(.colon, "Expected ':' after 'default'");
+
+                // Parse default statements
+                const empty_stmts = try self.allocator.alloc(Stmt, 0);
+                var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_stmts);
+                errdefer stmts.deinit(self.allocator);
+
+                while (!self.check(.keyword_case) and !self.check(.rbrace)) {
+                    const stmt = try self.parseStatement();
+                    try stmts.append(self.allocator, stmt);
+                }
+
+                // Default case uses null value
+                try cases.append(self.allocator, ast.SwitchCase{
+                    .value = null,
+                    .stmts = try stmts.toOwnedSlice(self.allocator),
+                    .loc = self.locationFromToken(self.previous),
+                });
+            } else {
+                self.reportErrorAtCurrent("Expected 'case' or 'default' in switch body");
+                return error.ParseError;
+            }
+        }
+
+        try self.consume(.rbrace, "Expected '}' after switch body");
+
+        return Stmt{
+            .switch_stmt = .{
+                .expr = switch_expr,
+                .cases = try cases.toOwnedSlice(self.allocator),
+                .loc = switch_loc,
+            },
+        };
+    }
+
+    /// Parse goto statement: goto label;
+    fn parseGotoStatement(self: *Parser) ParserError!Stmt {
+        const goto_loc = self.locationFromToken(self.previous);
+
+        if (!self.check(.identifier)) {
+            self.reportErrorAtCurrent("Expected label name after 'goto'");
+            return error.ParseError;
+        }
+
+        const label = self.current.lexeme;
+        try self.advance();
+
+        try self.consume(.semicolon, "Expected ';' after goto statement");
+
+        return Stmt{
+            .goto_stmt = .{
+                .label = label,
+                .loc = goto_loc,
+            },
+        };
+    }
+
+    /// Parse try-catch statement: try { } catch { }
+    fn parseTryCatchStatement(self: *Parser) ParserError!Stmt {
+        const try_loc = self.locationFromToken(self.previous);
+
+        // Parse try block
+        try self.consume(.lbrace, "Expected '{' after 'try'");
+        const try_block_ptr = try self.allocator.create(Stmt);
+        try_block_ptr.* = try self.parseBlock();
+
+        // Parse catch block
+        try self.consume(.keyword_catch, "Expected 'catch' after try block");
+        try self.consume(.lbrace, "Expected '{' after 'catch'");
+        const catch_block_ptr = try self.allocator.create(Stmt);
+        catch_block_ptr.* = try self.parseBlock();
+
+        return Stmt{
+            .try_catch = .{
+                .try_block = try_block_ptr,
+                .catch_block = catch_block_ptr,
+                .loc = try_loc,
             },
         };
     }
@@ -1889,4 +2459,167 @@ test "Parse nested blocks" {
     try testing.expect(stmt == .block);
     try testing.expectEqual(@as(usize, 1), stmt.block.stmts.len);
     try testing.expect(stmt.block.stmts[0] == .block);
+}
+
+// ============================================================================
+// Declaration Tests
+// ============================================================================
+
+test "Parse simple function: U0 Main() { }" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "U0 Main() { }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const program = try parser.parse();
+    try testing.expectEqual(@as(usize, 1), program.decls.len);
+    try testing.expect(program.decls[0] == .function);
+    try testing.expectEqualStrings("Main", program.decls[0].function.name);
+    try testing.expect(program.decls[0].function.body != null);
+}
+
+test "Parse function with parameters: I64 Add(I64 a, I64 b) { }" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64 Add(I64 a, I64 b) { }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const program = try parser.parse();
+    try testing.expectEqual(@as(usize, 1), program.decls.len);
+    try testing.expect(program.decls[0] == .function);
+    try testing.expectEqualStrings("Add", program.decls[0].function.name);
+    try testing.expectEqual(@as(usize, 2), program.decls[0].function.params.len);
+    try testing.expectEqualStrings("a", program.decls[0].function.params[0].name);
+    try testing.expectEqualStrings("b", program.decls[0].function.params[1].name);
+}
+
+test "Parse global variable: I64 x = 42;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64 x = 42;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const program = try parser.parse();
+    try testing.expectEqual(@as(usize, 1), program.decls.len);
+    try testing.expect(program.decls[0] == .global_var);
+    try testing.expectEqualStrings("x", program.decls[0].global_var.name);
+    try testing.expect(program.decls[0].global_var.init != null);
+}
+
+test "Parse simple class: class MyClass { I64 x; };" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "class MyClass { I64 x; };";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const program = try parser.parse();
+    try testing.expectEqual(@as(usize, 1), program.decls.len);
+    try testing.expect(program.decls[0] == .class);
+    try testing.expectEqualStrings("MyClass", program.decls[0].class.name);
+    try testing.expectEqual(@as(usize, 1), program.decls[0].class.members.len);
+}
+
+test "Parse class with repr type: I64 class CDate { U32 time; };" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64 class CDate { U32 time; };";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const program = try parser.parse();
+    try testing.expectEqual(@as(usize, 1), program.decls.len);
+    try testing.expect(program.decls[0] == .class);
+    try testing.expectEqualStrings("CDate", program.decls[0].class.name);
+    try testing.expect(program.decls[0].class.repr_type != null);
+}
+
+test "Parse sizeof expression: sizeof(I64)" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "sizeof(I64)";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+    try testing.expect(expr == .sizeof_type);
+}
+
+test "Parse type cast: (I64*)ptr" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "(I64*)ptr";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const expr = try parser.parseExpression();
+    try testing.expect(expr == .cast);
+}
+
+test "Parse switch statement: switch(x) { case 1: break; }" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "switch(x) { case 1: break; }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .switch_stmt);
+    try testing.expectEqual(@as(usize, 1), stmt.switch_stmt.cases.len);
+}
+
+test "Parse goto statement: goto finish;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "goto finish;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .goto_stmt);
+    try testing.expectEqualStrings("finish", stmt.goto_stmt.label);
+}
+
+test "Parse try-catch: try { } catch { }" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "try { x = 1; } catch { y = 2; }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .try_catch);
 }
