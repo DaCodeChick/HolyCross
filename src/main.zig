@@ -2,6 +2,7 @@ const std = @import("std");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
+const semantic = @import("semantic/symbol_table.zig");
 
 pub fn main() !void {
     // Get allocator
@@ -72,4 +73,5 @@ test {
     _ = lexer;
     _ = parser;
     _ = ast;
+    _ = semantic;
 }
