@@ -496,6 +496,43 @@ pub const Parser = struct {
 
     /// Parse a statement
     pub fn parseStatement(self: *Parser) ParserError!Stmt {
+        // Block: { stmts }
+        if (try self.match(.lbrace)) {
+            return try self.parseBlock();
+        }
+
+        // If statement: if (cond) stmt [else stmt]
+        if (try self.match(.keyword_if)) {
+            return try self.parseIfStatement();
+        }
+
+        // While loop: while (cond) stmt
+        if (try self.match(.keyword_while)) {
+            return try self.parseWhileStatement();
+        }
+
+        // Do-while loop: do stmt while (cond);
+        if (try self.match(.keyword_do)) {
+            return try self.parseDoWhileStatement();
+        }
+
+        // For loop: for (init; cond; incr) stmt
+        if (try self.match(.keyword_for)) {
+            return try self.parseForStatement();
+        }
+
+        // Return statement: return [expr];
+        if (try self.match(.keyword_return)) {
+            return try self.parseReturnStatement();
+        }
+
+        // Break statement: break;
+        if (try self.match(.keyword_break)) {
+            const loc = self.locationFromToken(self.previous);
+            try self.consume(.semicolon, "Expected ';' after 'break'");
+            return Stmt{ .break_stmt = .{ .loc = loc } };
+        }
+
         // Variable declaration: Type name = expr;
         // We need to distinguish between declarations and expressions
         // If current token is a type keyword, it's a declaration
@@ -573,6 +610,162 @@ pub const Parser = struct {
         };
     }
 
+    /// Parse block statement: { stmts }
+    fn parseBlock(self: *Parser) ParserError!Stmt {
+        const block_loc = self.locationFromToken(self.previous);
+        const empty_slice = try self.allocator.alloc(Stmt, 0);
+        var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_slice);
+        errdefer stmts.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            const stmt = try self.parseStatement();
+            try stmts.append(self.allocator, stmt);
+        }
+
+        try self.consume(.rbrace, "Expected '}' after block");
+
+        return Stmt{
+            .block = .{
+                .stmts = try stmts.toOwnedSlice(self.allocator),
+                .loc = block_loc,
+            },
+        };
+    }
+
+    /// Parse if statement: if (cond) stmt [else stmt]
+    fn parseIfStatement(self: *Parser) ParserError!Stmt {
+        const if_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'if'");
+        const condition = try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after if condition");
+
+        const then_stmt_ptr = try self.allocator.create(Stmt);
+        then_stmt_ptr.* = try self.parseStatement();
+
+        const else_stmt_ptr: ?*Stmt = if (try self.match(.keyword_else)) blk: {
+            const ptr = try self.allocator.create(Stmt);
+            ptr.* = try self.parseStatement();
+            break :blk ptr;
+        } else null;
+
+        return Stmt{
+            .if_stmt = .{
+                .condition = condition,
+                .then_stmt = then_stmt_ptr,
+                .else_stmt = else_stmt_ptr,
+                .loc = if_loc,
+            },
+        };
+    }
+
+    /// Parse while statement: while (cond) stmt
+    fn parseWhileStatement(self: *Parser) ParserError!Stmt {
+        const while_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'while'");
+        const condition = try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after while condition");
+
+        const body_ptr = try self.allocator.create(Stmt);
+        body_ptr.* = try self.parseStatement();
+
+        return Stmt{
+            .while_stmt = .{
+                .condition = condition,
+                .body = body_ptr,
+                .loc = while_loc,
+            },
+        };
+    }
+
+    /// Parse do-while statement: do stmt while (cond);
+    fn parseDoWhileStatement(self: *Parser) ParserError!Stmt {
+        const do_loc = self.locationFromToken(self.previous);
+
+        const body_ptr = try self.allocator.create(Stmt);
+        body_ptr.* = try self.parseStatement();
+
+        try self.consume(.keyword_while, "Expected 'while' after do-while body");
+        try self.consume(.lparen, "Expected '(' after 'while'");
+        const condition = try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after while condition");
+        try self.consume(.semicolon, "Expected ';' after do-while statement");
+
+        return Stmt{
+            .do_while = .{
+                .body = body_ptr,
+                .condition = condition,
+                .loc = do_loc,
+            },
+        };
+    }
+
+    /// Parse for statement: for (init; cond; incr) stmt
+    fn parseForStatement(self: *Parser) ParserError!Stmt {
+        const for_loc = self.locationFromToken(self.previous);
+
+        try self.consume(.lparen, "Expected '(' after 'for'");
+
+        // Parse initializer (can be declaration or expression)
+        const init_stmt: ?*Stmt = if (try self.match(.semicolon))
+            null // No initializer
+        else blk: {
+            const ptr = try self.allocator.create(Stmt);
+            ptr.* = try self.parseStatement();
+            break :blk ptr;
+        };
+
+        // Parse condition
+        const condition: ?Expr = if (self.check(.semicolon))
+            null // No condition
+        else
+            try self.parseExpression();
+        try self.consume(.semicolon, "Expected ';' after for condition");
+
+        // Parse increment
+        const increment: ?Expr = if (self.check(.rparen))
+            null // No increment
+        else
+            try self.parseExpression();
+        try self.consume(.rparen, "Expected ')' after for clauses");
+
+        // Parse body
+        const body_ptr = try self.allocator.create(Stmt);
+        body_ptr.* = try self.parseStatement();
+
+        return Stmt{
+            .for_stmt = .{
+                .init = init_stmt,
+                .condition = condition,
+                .increment = increment,
+                .body = body_ptr,
+                .loc = for_loc,
+            },
+        };
+    }
+
+    /// Parse return statement: return [expr];
+    fn parseReturnStatement(self: *Parser) ParserError!Stmt {
+        const return_loc = self.locationFromToken(self.previous);
+
+        const expr: ?Expr = if (self.check(.semicolon))
+            null
+        else
+            try self.parseExpression();
+
+        try self.consume(.semicolon, "Expected ';' after return statement");
+
+        return Stmt{
+            .return_stmt = .{
+                .expr = expr,
+                .loc = return_loc,
+            },
+        };
+    }
+
+    // ============================================================================
+    // Type Parsing
     // ============================================================================
     // Postfix Operator Parsing
     // ============================================================================
@@ -1503,4 +1696,197 @@ test "Parse expression statement: x++;" {
     try testing.expect(stmt == .expr);
     try testing.expect(stmt.expr.expr == .unary);
     try testing.expectEqual(UnaryOp.post_increment, stmt.expr.expr.unary.op);
+}
+
+// ============================================================================
+// Control Flow Statement Tests
+// ============================================================================
+
+test "Parse block statement: { x = 1; y = 2; }" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "{ x = 1; y = 2; }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .block);
+    try testing.expectEqual(@as(usize, 2), stmt.block.stmts.len);
+}
+
+test "Parse empty block: {}" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "{}";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .block);
+    try testing.expectEqual(@as(usize, 0), stmt.block.stmts.len);
+}
+
+test "Parse if statement: if (x) y = 1;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "if (x) y = 1;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .if_stmt);
+    try testing.expectEqualStrings("x", stmt.if_stmt.condition.identifier.name);
+    try testing.expect(stmt.if_stmt.then_stmt.* == .expr);
+    try testing.expect(stmt.if_stmt.else_stmt == null);
+}
+
+test "Parse if-else statement: if (x) y = 1; else y = 2;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "if (x) y = 1; else y = 2;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .if_stmt);
+    try testing.expect(stmt.if_stmt.else_stmt != null);
+    try testing.expect(stmt.if_stmt.else_stmt.?.* == .expr);
+}
+
+test "Parse while statement: while (x) y++;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "while (x) y++;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .while_stmt);
+    try testing.expectEqualStrings("x", stmt.while_stmt.condition.identifier.name);
+    try testing.expect(stmt.while_stmt.body.* == .expr);
+}
+
+test "Parse do-while statement: do x++; while (x < 10);" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "do x++; while (x < 10);";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .do_while);
+    try testing.expect(stmt.do_while.body.* == .expr);
+    try testing.expect(stmt.do_while.condition == .binary);
+}
+
+test "Parse for statement: for (i = 0; i < 10; i++) sum += i;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "for (i = 0; i < 10; i++) sum += i;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .for_stmt);
+    try testing.expect(stmt.for_stmt.init != null);
+    try testing.expect(stmt.for_stmt.condition != null);
+    try testing.expect(stmt.for_stmt.increment != null);
+}
+
+test "Parse for statement with declaration: for (I64 i = 0; i < 10; i++) x++;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "for (I64 i = 0; i < 10; i++) x++;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .for_stmt);
+    try testing.expect(stmt.for_stmt.init != null);
+    try testing.expect(stmt.for_stmt.init.?.* == .var_decl);
+}
+
+test "Parse return statement: return 42;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "return 42;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .return_stmt);
+    try testing.expect(stmt.return_stmt.expr != null);
+    try testing.expectEqual(@as(i64, 42), stmt.return_stmt.expr.?.integer.value);
+}
+
+test "Parse return statement with no value: return;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "return;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .return_stmt);
+    try testing.expect(stmt.return_stmt.expr == null);
+}
+
+test "Parse break statement: break;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "break;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .break_stmt);
+}
+
+test "Parse nested blocks" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "{ { x = 1; } }";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .block);
+    try testing.expectEqual(@as(usize, 1), stmt.block.stmts.len);
+    try testing.expect(stmt.block.stmts[0] == .block);
 }
