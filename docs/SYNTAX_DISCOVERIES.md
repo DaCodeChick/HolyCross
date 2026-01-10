@@ -5,12 +5,15 @@
 
 ## Key Discoveries
 
-### 1. Ternary Operator - Unconfirmed
+### 1. Ternary Operator - ❌ NOT SUPPORTED
+
 **Question Raised**: Does HolyC support the ternary operator `condition ? true_val : false_val`?
 
-**Status**: Needs verification against TempleOS source  
-**Action Taken**: Added TODO comment in AST, won't implement until confirmed  
-**Note**: Common in C, but HolyC may not have it
+**Status**: ✅ **CONFIRMED - NOT SUPPORTED**  
+**Verified By**: User confirmation (2026-01-10)  
+**Action Taken**: Removed ternary operator from AST (`src/parser/ast.zig`)  
+
+**Note**: While common in C/C++, HolyC does not include the ternary conditional operator. Use if-else statements instead.
 
 ---
 
@@ -222,7 +225,7 @@ class: struct {
 ## Questions Remaining
 
 1. ✅ **Representation type** - CONFIRMED (user corrected our interpretation)
-2. ❓ **Ternary operator** - Needs verification
+2. ✅ **Ternary operator** - CONFIRMED NOT SUPPORTED (removed from AST)
 3. ❓ **Multiple visibility modifiers** - Can you combine `public static`?
 4. ❓ **Representation + inheritance** - Can you have both?
    ```c

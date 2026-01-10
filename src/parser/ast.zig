@@ -87,15 +87,6 @@ pub const Expr = union(enum) {
         loc: SourceLocation,
     },
 
-    // Ternary (conditional) operator: condition ? true_expr : false_expr
-    // TODO: Verify if HolyC supports ternary operator - may need to remove
-    ternary: struct {
-        condition: *Expr,
-        true_expr: *Expr,
-        false_expr: *Expr,
-        loc: SourceLocation,
-    },
-
     // Function call
     call: struct {
         callee: *Expr,
@@ -151,7 +142,6 @@ pub const Expr = union(enum) {
             .identifier => |id| id.loc,
             .binary => |b| b.loc,
             .unary => |u| u.loc,
-            .ternary => |t| t.loc,
             .call => |c| c.loc,
             .subscript => |s| s.loc,
             .member => |m| m.loc,
