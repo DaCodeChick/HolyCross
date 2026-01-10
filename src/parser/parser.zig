@@ -491,6 +491,89 @@ pub const Parser = struct {
     }
 
     // ============================================================================
+    // Statement Parsing
+    // ============================================================================
+
+    /// Parse a statement
+    pub fn parseStatement(self: *Parser) ParserError!Stmt {
+        // Variable declaration: Type name = expr;
+        // We need to distinguish between declarations and expressions
+        // If current token is a type keyword, it's a declaration
+        if (self.isTypeStart()) {
+            return try self.parseVarDeclaration();
+        }
+
+        // Expression statement: expr;
+        return try self.parseExpressionStatement();
+    }
+
+    /// Check if current token can start a type
+    fn isTypeStart(self: *Parser) bool {
+        return switch (self.current.type) {
+            .keyword_i0,
+            .keyword_i8,
+            .keyword_i16,
+            .keyword_i32,
+            .keyword_i64,
+            .keyword_u0,
+            .keyword_u8,
+            .keyword_u16,
+            .keyword_u32,
+            .keyword_u64,
+            .keyword_f64,
+            => true,
+            // For identifiers, we conservatively treat them as expressions
+            // Named type declarations will need better disambiguation in the future
+            // For now, require explicit primitive types for declarations
+            else => false,
+        };
+    }
+
+    /// Parse variable declaration: Type name = expr;
+    fn parseVarDeclaration(self: *Parser) ParserError!Stmt {
+        const decl_loc = self.locationFromToken(self.current);
+
+        // Parse type
+        const var_type = try self.parseType();
+
+        // Parse variable name
+        try self.consume(.identifier, "Expected variable name");
+        const var_name = self.previous.lexeme;
+
+        // Optional initializer
+        const init_expr: ?Expr = if (try self.match(.op_equal))
+            try self.parseExpression()
+        else
+            null;
+
+        // Expect semicolon
+        try self.consume(.semicolon, "Expected ';' after variable declaration");
+
+        return Stmt{
+            .var_decl = .{
+                .type = var_type,
+                .name = var_name,
+                .init = init_expr,
+                .loc = decl_loc,
+            },
+        };
+    }
+
+    /// Parse expression statement: expr;
+    fn parseExpressionStatement(self: *Parser) ParserError!Stmt {
+        const stmt_loc = self.locationFromToken(self.current);
+        const expr = try self.parseExpression();
+        try self.consume(.semicolon, "Expected ';' after expression");
+
+        return Stmt{
+            .expr = .{
+                .expr = expr,
+                .loc = stmt_loc,
+            },
+        };
+    }
+
+    // ============================================================================
     // Postfix Operator Parsing
     // ============================================================================
 
@@ -1275,4 +1358,149 @@ test "Parse pointer to array: I64[10]*" {
     try testing.expect(type_result.pointer.* == .array);
     try testing.expectEqual(@as(u64, 10), type_result.pointer.array.size.?);
     try testing.expectEqual(Type.i64, type_result.pointer.array.element_type.*);
+}
+
+// ============================================================================
+// Statement Parsing Tests
+// ============================================================================
+
+test "Parse variable declaration: I64 x;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64 x;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .var_decl);
+    try testing.expectEqual(Type.i64, stmt.var_decl.type);
+    try testing.expectEqualStrings("x", stmt.var_decl.name);
+    try testing.expect(stmt.var_decl.init == null);
+}
+
+test "Parse variable declaration with initializer: I64 x = 42;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64 x = 42;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .var_decl);
+    try testing.expectEqual(Type.i64, stmt.var_decl.type);
+    try testing.expectEqualStrings("x", stmt.var_decl.name);
+    try testing.expect(stmt.var_decl.init != null);
+    try testing.expectEqual(@as(i64, 42), stmt.var_decl.init.?.integer.value);
+}
+
+test "Parse variable declaration with expression: U32 y = a + b;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "U32 y = a + b;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .var_decl);
+    try testing.expectEqual(Type.u32, stmt.var_decl.type);
+    try testing.expectEqualStrings("y", stmt.var_decl.name);
+    try testing.expect(stmt.var_decl.init != null);
+    try testing.expect(stmt.var_decl.init.? == .binary);
+    try testing.expectEqual(BinaryOp.add, stmt.var_decl.init.?.binary.op);
+}
+
+test "Parse pointer variable declaration: I64* ptr = &x;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64* ptr = &x;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .var_decl);
+    try testing.expect(stmt.var_decl.type == .pointer);
+    try testing.expectEqual(Type.i64, stmt.var_decl.type.pointer.*);
+    try testing.expectEqualStrings("ptr", stmt.var_decl.name);
+    try testing.expect(stmt.var_decl.init != null);
+    try testing.expect(stmt.var_decl.init.? == .unary);
+    try testing.expectEqual(UnaryOp.address_of, stmt.var_decl.init.?.unary.op);
+}
+
+test "Parse array variable declaration: I64[10] arr;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64[10] arr;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .var_decl);
+    try testing.expect(stmt.var_decl.type == .array);
+    try testing.expectEqual(Type.i64, stmt.var_decl.type.array.element_type.*);
+    try testing.expectEqual(@as(u64, 10), stmt.var_decl.type.array.size.?);
+    try testing.expectEqualStrings("arr", stmt.var_decl.name);
+}
+
+test "Parse expression statement: x = 42;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "x = 42;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .expr);
+    try testing.expect(stmt.expr.expr == .binary);
+    try testing.expectEqual(BinaryOp.assign, stmt.expr.expr.binary.op);
+}
+
+test "Parse expression statement: func(a, b);" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "func(a, b);";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .expr);
+    try testing.expect(stmt.expr.expr == .call);
+    try testing.expectEqualStrings("func", stmt.expr.expr.call.callee.identifier.name);
+    try testing.expectEqual(@as(usize, 2), stmt.expr.expr.call.args.len);
+}
+
+test "Parse expression statement: x++;" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "x++;";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .expr);
+    try testing.expect(stmt.expr.expr == .unary);
+    try testing.expectEqual(UnaryOp.post_increment, stmt.expr.expr.unary.op);
 }
