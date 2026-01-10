@@ -27,7 +27,7 @@ pub const Analyzer = struct {
     errors: std.ArrayList(SemanticError),
 
     // Context tracking for validation
-    loop_depth: u32, // Track nested loop depth for break/continue
+    loop_depth: u32, // Track nested loop depth for break statements
     labels: std.StringHashMap(ast.SourceLocation), // Track labels for goto
     current_function_return_type: ?ast.Type, // Track current function's return type
 
@@ -634,7 +634,6 @@ pub const ErrorKind = enum {
     argument_count_mismatch,
     argument_type_mismatch,
     invalid_break,
-    invalid_continue,
     invalid_return,
     undefined_label,
     duplicate_label,
