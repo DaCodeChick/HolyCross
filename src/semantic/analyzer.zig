@@ -653,8 +653,32 @@ pub const Analyzer = struct {
         defer self.symbol_table.exitScope();
 
         // Analyze each statement in the block
-        for (stmts) |stmt| {
+        var found_terminator = false; // Track if we hit return/break
+        for (stmts, 0..) |stmt, i| {
+            // Check if previous statement was a terminator
+            if (found_terminator) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Unreachable code after {s} statement",
+                    .{if (i > 0) switch (stmts[i - 1]) {
+                        .return_stmt => "return",
+                        .break_stmt => "break",
+                        else => "control flow",
+                    } else "control flow"},
+                );
+                try self.addError(.unreachable_code, msg, stmt.getLocation());
+                // Continue analyzing anyway for better error reporting
+            }
+
             try self.analyzeStatement(stmt);
+
+            // Mark if this statement is a terminator
+            switch (stmt) {
+                .return_stmt, .break_stmt => {
+                    found_terminator = true;
+                },
+                else => {},
+            }
         }
     }
 
