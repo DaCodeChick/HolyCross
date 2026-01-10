@@ -1,11 +1,11 @@
 # HolyCross Development Status
 
-Last Updated: 2026-01-09 (Phase 2 - Parser: IN PROGRESS 🚧)
+Last Updated: 2026-01-10 (Phase 2 - Parser: IN PROGRESS 🚧)
 
-## Current Phase: Phase 2 - Parser 🚧 IN PROGRESS (25% Complete)
+## Current Phase: Phase 2 - Parser 🚧 IN PROGRESS (50% Complete)
 
 ### Completed
-- [x] Complete lexer implementation (1,900+ lines)
+- [x] Complete lexer implementation (2,169 lines across 5 modules)
 - [x] All 71 HolyC keywords recognized
 - [x] All operators tokenized (including HolyC-specific: `^^`, `` ` ``)
 - [x] Integer literals (decimal, hex, binary, with underscores)
@@ -14,13 +14,13 @@ Last Updated: 2026-01-09 (Phase 2 - Parser: IN PROGRESS 🚧)
 - [x] Character literals (including multi-char constants - HolyC feature)
 - [x] Comment handling (line and block comments)
 - [x] Preprocessor directive scanning (#define, #include, #ifdef, etc.)
-- [x] 50+ comprehensive test cases - all passing
+- [x] 50+ comprehensive lexer test cases - all passing
 - [x] Code refactoring to eliminate duplication
 - [x] Complete documentation (KEYWORDS.md)
 
 ## Phase 2 - Parser (AST Construction) 🚧 IN PROGRESS
 
-### Completed (25%)
+### Completed (50%)
 - [x] Define AST node structures (src/parser/ast.zig - 548 lines)
   - Expression nodes: literals, binary/unary ops, identifiers, calls
   - Statement nodes: blocks, control flow, declarations
@@ -30,11 +30,12 @@ Last Updated: 2026-01-09 (Phase 2 - Parser: IN PROGRESS 🚧)
   - Helper functions for AST node creation
   - 3 AST tests passing
 
-- [x] Implement expression parser (src/parser/parser.zig - 641 lines)
+- [x] Implement expression parser (src/parser/parser.zig - 1,273 lines)
   - Pratt parsing for expressions with correct precedence
   - Recursive descent parser framework
   - Error handling with panic mode and synchronization
-  - 16 comprehensive parser tests - all passing
+  - Explicit error sets for Zig 0.15+ compatibility
+  - 103 comprehensive parser tests - all passing
 
 - [x] Parse literals and identifiers ✅
   - Integer literals (decimal, hex, binary)
@@ -57,41 +58,59 @@ Last Updated: 2026-01-09 (Phase 2 - Parser: IN PROGRESS 🚧)
   - Logical: !
   - Bitwise: ~
   - Pointer: *, &
-  - Increment/decrement: ++, -- (prefix only for now)
+  - Increment/decrement: ++, -- (prefix and postfix)
+
+- [x] Parse postfix operators ✅
+  - Function calls: func(), func(a, b, c)
+  - Array subscript: arr[i], matrix[i][j]
+  - Member access: obj.field, obj.inner.field
+  - Arrow operator: ptr->field
+  - Postfix increment/decrement: x++, x--
+  - Complex chains: obj.array[i].method()
+
+- [x] Parse type expressions ✅
+  - Primitive types: I0, I8, I16, I32, I64, U0, U8, U16, U32, U64, F64
+  - Pointer types: T*, T**, T***, etc.
+  - Array types: T[n] (sized), T[] (unsized)
+  - Named types: MyClass, CDate, etc.
+  - Complex types: T*[n] (array of pointers), T[n]* (pointer to array)
 
 - [x] Parse grouping expressions ✅
   - Parentheses for precedence override
   - Nested expressions
 
+### Confirmed NOT Supported
+- [x] ❌ Ternary operator (?:) - Removed from AST (user confirmed)
+
 ### In Progress
-- [ ] Parse function calls
-- [ ] Parse postfix operators (++, --, [], ., ->)
-- [ ] Parse ternary operator (?:)
 - [ ] Parse sizeof and offset expressions
 - [ ] Parse type casts
 
-### Planned Tasks (Remaining 75%)
-- [ ] Parse type declarations
-- [ ] Parse variable declarations
+### Planned Tasks (Remaining 50%)
+- [ ] Parse variable declarations (I64 x = 42;)
+- [ ] Parse statement blocks ({ stmt1; stmt2; })
 - [ ] Parse function definitions
 - [ ] Parse class/union definitions (including "U16i union U16" syntax)
 - [ ] Parse control flow statements (if, while, for, switch)
+- [ ] Parse return/break/continue statements
 - [ ] Parse assembly blocks
 - [ ] Error recovery improvements
 - [ ] More comprehensive parser tests
 
 ### Statistics (Phase 2 Current)
 - **AST Lines**: 548 lines (src/parser/ast.zig)
-- **Parser Lines**: 641 lines (src/parser/parser.zig)
-- **Total Phase 2**: ~1,200 lines
-- **Test Coverage**: 19 tests (3 AST + 16 parser)
-- **Test Execution Time**: ~576μs (all phases)
-- **Examples**: expressions.hc demonstrating parser capabilities
+- **Parser Lines**: 1,273 lines (src/parser/parser.zig)
+- **Total Phase 2**: ~1,820 lines
+- **Test Coverage**: 103 tests (3 AST + 100 parser)
+- **Test Execution Time**: ~4ms (all phases)
+- **Examples**: 
+  - expressions.hc - expression parsing demos
+  - types.hc - type declaration demos
 
 ### Statistics (Phase 1 Complete)
-- **Lines of Code**: ~2,100 (lexer + tests)
+- **Lines of Code**: ~2,169 (lexer split into 5 modules)
 - **Test Coverage**: 50+ test cases covering all features
-- **Test Execution Time**: ~440μs
+- **Test Execution Time**: included in 4ms total
 - **Documentation**: 300+ lines in KEYWORDS.md
 
 ## Previous Phase: Phase 1 - Lexer ✅ COMPLETE
