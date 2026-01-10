@@ -33,6 +33,10 @@ pub const Analyzer = struct {
     current_function_return_type: ?ast.Type, // Track current function's return type
     has_return_statement: bool, // Track if function has any return statements
 
+    // Type information for member access validation
+    class_members: std.StringHashMap([]ast.ClassMember), // Map class name to members
+    union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
+
     pub fn init(allocator: Allocator) Analyzer {
         var sym_table = SymbolTable.init(allocator);
         return .{
@@ -45,6 +49,8 @@ pub const Analyzer = struct {
             .gotos = .{},
             .current_function_return_type = null,
             .has_return_statement = false,
+            .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
+            .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
         };
     }
 
@@ -55,6 +61,8 @@ pub const Analyzer = struct {
         self.errors.deinit(self.allocator);
         self.gotos.deinit(self.allocator);
         self.labels.deinit();
+        self.class_members.deinit();
+        self.union_members.deinit();
         self.type_checker.deinit();
         self.symbol_table.deinit();
     }
@@ -121,18 +129,82 @@ pub const Analyzer = struct {
         );
     }
 
-    /// Collect class declaration (placeholder)
+    /// Collect class declaration
     fn collectClassDeclaration(self: *Analyzer, cls: anytype) AnalyzerError!void {
-        _ = self;
-        _ = cls;
-        // TODO: Implement class declaration collection
+        // Check for duplicate class
+        if (self.symbol_table.lookupLocal(cls.name)) |existing| {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Redeclaration of class '{s}' (previously declared at line {d})",
+                .{ cls.name, existing.getLocation().line },
+            );
+            try self.addError(.redeclared_identifier, msg, cls.loc);
+            return;
+        }
+
+        // Check for duplicate member names within the class
+        var seen_members = std.StringHashMap(void).init(self.allocator);
+        defer seen_members.deinit();
+
+        for (cls.members) |member| {
+            if (seen_members.contains(member.name)) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Duplicate member '{s}' in class '{s}'",
+                    .{ member.name, cls.name },
+                );
+                try self.addError(.redeclared_identifier, msg, member.loc);
+            } else {
+                try seen_members.put(member.name, {});
+            }
+        }
+
+        // Store member information for validation
+        try self.class_members.put(cls.name, cls.members);
+
+        // Define class as a type
+        // For classes with repr_type, use that; otherwise use a named type
+        const underlying_type = if (cls.repr_type) |rt| rt else ast.Type{ .named = cls.name };
+        try self.symbol_table.defineType(cls.name, underlying_type, cls.loc);
     }
 
-    /// Collect union declaration (placeholder)
+    /// Collect union declaration
     fn collectUnionDeclaration(self: *Analyzer, uni: anytype) AnalyzerError!void {
-        _ = self;
-        _ = uni;
-        // TODO: Implement union declaration collection
+        // Check for duplicate union
+        if (self.symbol_table.lookupLocal(uni.name)) |existing| {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Redeclaration of union '{s}' (previously declared at line {d})",
+                .{ uni.name, existing.getLocation().line },
+            );
+            try self.addError(.redeclared_identifier, msg, uni.loc);
+            return;
+        }
+
+        // Check for duplicate member names within the union
+        var seen_members = std.StringHashMap(void).init(self.allocator);
+        defer seen_members.deinit();
+
+        for (uni.members) |member| {
+            if (seen_members.contains(member.name)) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Duplicate member '{s}' in union '{s}'",
+                    .{ member.name, uni.name },
+                );
+                try self.addError(.redeclared_identifier, msg, member.loc);
+            } else {
+                try seen_members.put(member.name, {});
+            }
+        }
+
+        // Store member information for validation
+        try self.union_members.put(uni.name, uni.members);
+
+        // Define union as a type
+        // For unions with repr_type, use that; otherwise use a named type
+        const underlying_type = if (uni.repr_type) |rt| rt else ast.Type{ .named = uni.name };
+        try self.symbol_table.defineType(uni.name, underlying_type, uni.loc);
     }
 
     /// Collect global variable declaration
@@ -352,10 +424,14 @@ pub const Analyzer = struct {
 
             .member => |mem| {
                 try self.validateExpression(mem.object.*);
+                // Validate member access
+                try self.validateMemberAccess(mem.object.*, mem.member, expr.getLocation(), false);
             },
 
             .arrow => |arr| {
                 try self.validateExpression(arr.object.*);
+                // Validate member access (arrow is for pointer dereferencing)
+                try self.validateMemberAccess(arr.object.*, arr.member, expr.getLocation(), true);
             },
 
             .cast => |c| {
@@ -437,6 +513,80 @@ pub const Analyzer = struct {
                 );
                 try self.addError(.argument_type_mismatch, msg, loc);
             }
+        }
+    }
+
+    /// Validate member access on a class or union
+    fn validateMemberAccess(
+        self: *Analyzer,
+        object: ast.Expr,
+        member_name: []const u8,
+        loc: ast.SourceLocation,
+        is_arrow: bool,
+    ) AnalyzerError!void {
+        // Infer the type of the object
+        var object_type = self.type_checker.inferExprType(object) catch |err| {
+            // If type inference fails, skip member validation
+            return err;
+        };
+
+        // If arrow access, dereference pointer
+        if (is_arrow) {
+            switch (object_type) {
+                .pointer => |ptr_type| {
+                    object_type = ptr_type.*;
+                },
+                else => {
+                    const msg = try std.fmt.allocPrint(
+                        self.allocator,
+                        "Arrow operator requires pointer type, got '{s}'",
+                        .{@tagName(object_type)},
+                    );
+                    try self.addError(.type_mismatch, msg, loc);
+                    return;
+                },
+            }
+        }
+
+        // Check if object_type is a named type (class or union)
+        const type_name = switch (object_type) {
+            .named => |name| name,
+            else => {
+                // Not a class or union, can't validate members
+                // (Could be built-in type with members we don't track)
+                return;
+            },
+        };
+
+        // Look up members in class_members or union_members
+        const members = self.class_members.get(type_name) orelse
+            self.union_members.get(type_name) orelse {
+            // Type not found in our maps - might be an undefined type
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Unknown type '{s}'",
+                .{type_name},
+            );
+            try self.addError(.undeclared_identifier, msg, loc);
+            return;
+        };
+
+        // Check if member exists
+        var found = false;
+        for (members) |member| {
+            if (std.mem.eql(u8, member.name, member_name)) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Type '{s}' has no member named '{s}'",
+                .{ type_name, member_name },
+            );
+            try self.addError(.undeclared_identifier, msg, loc);
         }
     }
 
