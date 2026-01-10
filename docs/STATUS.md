@@ -6,18 +6,20 @@ Last Updated: 2026-01-10 (Phase 3 - Semantic Analysis: 🚧 IN PROGRESS)
 
 ### Completed
 - [x] Design document for semantic analysis (SEMANTIC_DESIGN.md)
-- [x] Scope management implementation (scope.zig - 410 lines, 6 tests)
+- [x] Scope management implementation (scope.zig - 197 lines)
   - Scope structure with parent chaining
   - ScopeStack for managing nested scopes (global, function, block)
   - Symbol storage with HashMap
   - Duplicate detection
   - Variable shadowing support
-- [x] Symbol table implementation (symbol_table.zig - 550 lines, 10 tests)
+  - Tests extracted to scope_test.zig (245 lines, 6 tests)
+- [x] Symbol table implementation (symbol_table.zig - 251 lines)
   - High-level API wrapping ScopeStack
   - Define variables, functions, and types
   - Symbol lookup (local and hierarchical)
   - Validation helpers (isVariableDefined, isFunctionDefined, etc.)
   - Mutability and scope checking
+  - Tests extracted to symbol_table_test.zig (259 lines, 10 tests)
 
 ### In Progress
 - [ ] Type checker implementation (type_checker.zig)
@@ -25,11 +27,13 @@ Last Updated: 2026-01-10 (Phase 3 - Semantic Analysis: 🚧 IN PROGRESS)
 - [ ] Integration tests (tests.zig)
 
 ### Statistics (Phase 3 Current)
-- **Scope Management**: 410 lines (src/semantic/scope.zig)
-- **Symbol Table**: 550 lines (src/semantic/symbol_table.zig)
-- **Total Phase 3**: 960 lines
+- **Scope Management**: 197 lines (src/semantic/scope.zig)
+- **Scope Tests**: 245 lines (src/semantic/scope_test.zig)
+- **Symbol Table**: 251 lines (src/semantic/symbol_table.zig)
+- **Symbol Table Tests**: 259 lines (src/semantic/symbol_table_test.zig)
+- **Total Phase 3**: 952 lines (448 implementation + 504 tests)
 - **Test Coverage**: 16 tests passing
-- **Total Tests**: 150 tests passing (lexer + parser + semantic)
+- **Total Tests**: 152 tests passing (lexer + parser + semantic)
 
 ## Previous Phase: Phase 2 - Parser ✅ COMPLETE (100%)
 
