@@ -12,49 +12,16 @@
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");
+const symbol_module = @import("symbol.zig");
 
 const Allocator = std.mem.Allocator;
 const StringHashMap = std.StringHashMap;
 
-/// Symbol stored in a scope
-pub const Symbol = union(enum) {
-    variable: struct {
-        name: []const u8,
-        type: ast.Type,
-        is_global: bool,
-        is_mutable: bool,
-        loc: ast.SourceLocation,
-    },
-    function: struct {
-        name: []const u8,
-        return_type: ast.Type,
-        params: []const ast.Param,
-        loc: ast.SourceLocation,
-    },
-    type_def: struct {
-        name: []const u8,
-        underlying_type: ast.Type,
-        loc: ast.SourceLocation,
-    },
-
-    /// Get the name of this symbol
-    pub fn getName(self: Symbol) []const u8 {
-        return switch (self) {
-            .variable => |v| v.name,
-            .function => |f| f.name,
-            .type_def => |t| t.name,
-        };
-    }
-
-    /// Get the source location of this symbol
-    pub fn getLocation(self: Symbol) ast.SourceLocation {
-        return switch (self) {
-            .variable => |v| v.loc,
-            .function => |f| f.loc,
-            .type_def => |t| t.loc,
-        };
-    }
-};
+// Re-export Symbol types for convenience
+pub const Symbol = symbol_module.Symbol;
+pub const VariableSymbol = symbol_module.VariableSymbol;
+pub const FunctionSymbol = symbol_module.FunctionSymbol;
+pub const TypeSymbol = symbol_module.TypeSymbol;
 
 /// A single lexical scope
 pub const Scope = struct {

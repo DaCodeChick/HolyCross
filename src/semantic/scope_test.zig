@@ -1,11 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
 const scope = @import("scope.zig");
+const symbol_module = @import("symbol.zig");
 const ast = @import("../parser/ast.zig");
 
 const Scope = scope.Scope;
 const ScopeStack = scope.ScopeStack;
-const Symbol = scope.Symbol;
+const Symbol = symbol_module.Symbol;
+const VariableSymbol = symbol_module.VariableSymbol;
 
 // ============================================================================
 // Scope Tests
@@ -21,7 +23,7 @@ test "Scope: define and lookup local" {
 
     // Define a variable
     const var_symbol = Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "x",
             .type = .i64,
             .is_global = true,
@@ -47,7 +49,7 @@ test "Scope: duplicate definition error" {
     defer test_scope.deinit();
 
     const var_symbol = Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "x",
             .type = .i64,
             .is_global = true,
@@ -73,7 +75,7 @@ test "Scope: parent scope lookup" {
     defer parent_scope.deinit();
 
     const parent_var = Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "x",
             .type = .i64,
             .is_global = true,
@@ -88,7 +90,7 @@ test "Scope: parent scope lookup" {
     defer child_scope.deinit();
 
     const child_var = Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "y",
             .type = .i32,
             .is_global = false,
@@ -151,7 +153,7 @@ test "ScopeStack: nested scope symbol lookup" {
     // Global scope
     try stack.enterScope(.global);
     try stack.define(Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "global_var",
             .type = .i64,
             .is_global = true,
@@ -163,7 +165,7 @@ test "ScopeStack: nested scope symbol lookup" {
     // Function scope
     try stack.enterScope(.function);
     try stack.define(Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "param",
             .type = .i32,
             .is_global = false,
@@ -175,7 +177,7 @@ test "ScopeStack: nested scope symbol lookup" {
     // Block scope
     try stack.enterScope(.block);
     try stack.define(Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "local",
             .type = .u8,
             .is_global = false,
@@ -209,7 +211,7 @@ test "ScopeStack: shadowing" {
     // Global scope - define x as I64
     try stack.enterScope(.global);
     try stack.define(Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "x",
             .type = .i64,
             .is_global = true,
@@ -221,7 +223,7 @@ test "ScopeStack: shadowing" {
     // Block scope - shadow x as U32
     try stack.enterScope(.block);
     try stack.define(Symbol{
-        .variable = .{
+        .variable = VariableSymbol{
             .name = "x",
             .type = .u32,
             .is_global = false,

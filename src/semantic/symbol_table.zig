@@ -1,7 +1,21 @@
+//! High-level symbol table API for semantic analysis
+//!
+//! Provides a convenient wrapper around ScopeStack with methods for:
+//! - Defining variables, functions, and types
+//! - Looking up symbols with type-specific helpers
+//! - Validating symbol properties (mutability, scope, etc.)
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
 const scope = @import("scope.zig");
+const symbol_module = @import("symbol.zig");
+
+// Re-export symbol types for convenience
+pub const Symbol = symbol_module.Symbol;
+pub const VariableSymbol = symbol_module.VariableSymbol;
+pub const FunctionSymbol = symbol_module.FunctionSymbol;
+pub const TypeSymbol = symbol_module.TypeSymbol;
 
 /// SymbolTable provides a high-level API for managing symbols across different scopes.
 /// It wraps the ScopeStack and provides domain-specific methods for defining and
@@ -75,7 +89,7 @@ pub const SymbolTable = struct {
         loc: ast.SourceLocation,
     ) !void {
         const symbol = scope.Symbol{
-            .variable = .{
+            .variable = VariableSymbol{
                 .name = name,
                 .type = type_info,
                 .is_global = is_global,
@@ -96,7 +110,7 @@ pub const SymbolTable = struct {
         loc: ast.SourceLocation,
     ) !void {
         const symbol = scope.Symbol{
-            .function = .{
+            .function = FunctionSymbol{
                 .name = name,
                 .return_type = return_type,
                 .params = params,
@@ -115,7 +129,7 @@ pub const SymbolTable = struct {
         loc: ast.SourceLocation,
     ) !void {
         const symbol = scope.Symbol{
-            .type_def = .{
+            .type_def = TypeSymbol{
                 .name = name,
                 .underlying_type = underlying_type,
                 .loc = loc,
@@ -169,60 +183,30 @@ pub const SymbolTable = struct {
     }
 
     /// Get variable information, returns null if not a variable or not found
-    pub fn getVariable(self: *SymbolTable, name: []const u8) ?struct {
-        name: []const u8,
-        type: ast.Type,
-        is_global: bool,
-        is_mutable: bool,
-        loc: ast.SourceLocation,
-    } {
+    pub fn getVariable(self: *SymbolTable, name: []const u8) ?VariableSymbol {
         if (self.lookupSymbol(name)) |symbol| {
             if (symbol == .variable) {
-                return .{
-                    .name = symbol.variable.name,
-                    .type = symbol.variable.type,
-                    .is_global = symbol.variable.is_global,
-                    .is_mutable = symbol.variable.is_mutable,
-                    .loc = symbol.variable.loc,
-                };
+                return symbol.variable;
             }
         }
         return null;
     }
 
     /// Get function information, returns null if not a function or not found
-    pub fn getFunction(self: *SymbolTable, name: []const u8) ?struct {
-        name: []const u8,
-        return_type: ast.Type,
-        params: []const ast.Param,
-        loc: ast.SourceLocation,
-    } {
+    pub fn getFunction(self: *SymbolTable, name: []const u8) ?FunctionSymbol {
         if (self.lookupSymbol(name)) |symbol| {
             if (symbol == .function) {
-                return .{
-                    .name = symbol.function.name,
-                    .return_type = symbol.function.return_type,
-                    .params = symbol.function.params,
-                    .loc = symbol.function.loc,
-                };
+                return symbol.function;
             }
         }
         return null;
     }
 
     /// Get type definition, returns null if not a type or not found
-    pub fn getType(self: *SymbolTable, name: []const u8) ?struct {
-        name: []const u8,
-        underlying_type: ast.Type,
-        loc: ast.SourceLocation,
-    } {
+    pub fn getType(self: *SymbolTable, name: []const u8) ?TypeSymbol {
         if (self.lookupSymbol(name)) |symbol| {
             if (symbol == .type_def) {
-                return .{
-                    .name = symbol.type_def.name,
-                    .underlying_type = symbol.type_def.underlying_type,
-                    .loc = symbol.type_def.loc,
-                };
+                return symbol.type_def;
             }
         }
         return null;

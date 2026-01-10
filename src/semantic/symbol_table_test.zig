@@ -1,9 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
 const symbol_table = @import("symbol_table.zig");
+const symbol_module = @import("symbol.zig");
 const ast = @import("../parser/ast.zig");
 
 const SymbolTable = symbol_table.SymbolTable;
+const VariableSymbol = symbol_module.VariableSymbol;
 
 // ============================================================================
 // SymbolTable Tests
