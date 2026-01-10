@@ -29,7 +29,9 @@ pub const Analyzer = struct {
     // Context tracking for validation
     loop_depth: u32, // Track nested loop depth for break statements
     labels: std.StringHashMap(ast.SourceLocation), // Track labels for goto
+    gotos: std.ArrayList(struct { label: []const u8, loc: ast.SourceLocation }), // Track goto statements
     current_function_return_type: ?ast.Type, // Track current function's return type
+    has_return_statement: bool, // Track if function has any return statements
 
     pub fn init(allocator: Allocator) Analyzer {
         var sym_table = SymbolTable.init(allocator);
@@ -40,7 +42,9 @@ pub const Analyzer = struct {
             .errors = .{},
             .loop_depth = 0,
             .labels = std.StringHashMap(ast.SourceLocation).init(allocator),
+            .gotos = .{},
             .current_function_return_type = null,
+            .has_return_statement = false,
         };
     }
 
@@ -49,6 +53,7 @@ pub const Analyzer = struct {
             self.allocator.free(err.message);
         }
         self.errors.deinit(self.allocator);
+        self.gotos.deinit(self.allocator);
         self.labels.deinit();
         self.type_checker.deinit();
         self.symbol_table.deinit();
@@ -130,11 +135,54 @@ pub const Analyzer = struct {
         // TODO: Implement union declaration collection
     }
 
-    /// Collect global variable declaration (placeholder)
+    /// Collect global variable declaration
     fn collectGlobalVariableDeclaration(self: *Analyzer, gvar: anytype) AnalyzerError!void {
-        _ = self;
-        _ = gvar;
-        // TODO: Implement global variable declaration collection
+        // Check for duplicate global variable
+        if (self.symbol_table.lookupLocal(gvar.name)) |existing| {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Redeclaration of global variable '{s}' (previously declared at line {d})",
+                .{ gvar.name, existing.getLocation().line },
+            );
+            try self.addError(.redeclared_identifier, msg, gvar.loc);
+            return;
+        }
+
+        // If there's an initializer, validate its type
+        if (gvar.init) |init_expr| {
+            const init_type = self.type_checker.inferExprType(init_expr) catch |err| {
+                if (self.type_checker.errors.items.len > 0) {
+                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
+                    const msg = try self.allocator.dupe(u8, type_err.message);
+                    try self.errors.append(self.allocator, .{
+                        .kind = .type_mismatch,
+                        .message = msg,
+                        .loc = type_err.loc,
+                    });
+                }
+                return err;
+            };
+
+            // Check type compatibility
+            const compatible = try self.type_checker.areTypesCompatible(init_type, gvar.type);
+            if (!compatible) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Cannot initialize global variable of type '{s}' with value of type '{s}'",
+                    .{ @tagName(gvar.type), @tagName(init_type) },
+                );
+                try self.addError(.type_mismatch, msg, gvar.loc);
+            }
+        }
+
+        // Define global variable in symbol table
+        try self.symbol_table.defineVariable(
+            gvar.name,
+            gvar.type,
+            true, // is global
+            true, // mutable
+            gvar.loc,
+        );
     }
 
     /// Collect enum declaration (placeholder)
@@ -172,7 +220,9 @@ pub const Analyzer = struct {
         // Reset function context
         self.current_function_return_type = func.return_type;
         self.loop_depth = 0;
+        self.has_return_statement = false;
         self.labels.clearRetainingCapacity();
+        self.gotos.clearRetainingCapacity();
 
         // Add function parameters to scope
         for (func.params) |param| {
@@ -198,6 +248,28 @@ pub const Analyzer = struct {
 
         // Analyze function body statement
         try self.analyzeStatement(body);
+
+        // Validate all goto targets exist
+        for (self.gotos.items) |goto_info| {
+            if (!self.labels.contains(goto_info.label)) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Undefined label '{s}' used in goto",
+                    .{goto_info.label},
+                );
+                try self.addError(.undefined_label, msg, goto_info.loc);
+            }
+        }
+
+        // Check if non-void function is missing return statement
+        if (func.return_type != .u0 and !self.has_return_statement) {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Function '{s}' with return type '{s}' is missing return statement",
+                .{ func.name, @tagName(func.return_type) },
+            );
+            try self.addError(.missing_return, msg, func.loc);
+        }
     }
 
     // ========================================================================
@@ -227,7 +299,10 @@ pub const Analyzer = struct {
 
     /// Analyze expression statement
     fn analyzeExpressionStatement(self: *Analyzer, expr: ast.Expr) AnalyzerError!void {
-        // Just infer the expression type (this validates it)
+        // Validate the expression (this includes function call validation)
+        try self.validateExpression(expr);
+
+        // Also infer the expression type
         _ = self.type_checker.inferExprType(expr) catch |err| {
             // Convert type checker errors to analyzer errors
             if (self.type_checker.errors.items.len > 0) {
@@ -241,6 +316,128 @@ pub const Analyzer = struct {
             }
             return err;
         };
+    }
+
+    /// Validate an expression (recursively validate function calls)
+    fn validateExpression(self: *Analyzer, expr: ast.Expr) AnalyzerError!void {
+        switch (expr) {
+            .integer, .float, .string, .char, .identifier => {}, // Primitives are fine
+
+            .binary => |bin| {
+                try self.validateExpression(bin.left.*);
+                try self.validateExpression(bin.right.*);
+            },
+
+            .unary => |un| {
+                try self.validateExpression(un.operand.*);
+            },
+
+            .call => |call| {
+                // Validate callee
+                try self.validateExpression(call.callee.*);
+
+                // Validate arguments
+                for (call.args) |arg| {
+                    try self.validateExpression(arg);
+                }
+
+                // Validate function call
+                try self.validateFunctionCall(call.callee.*, call.args, expr.getLocation());
+            },
+
+            .subscript => |sub| {
+                try self.validateExpression(sub.array.*);
+                try self.validateExpression(sub.index.*);
+            },
+
+            .member => |mem| {
+                try self.validateExpression(mem.object.*);
+            },
+
+            .arrow => |arr| {
+                try self.validateExpression(arr.object.*);
+            },
+
+            .cast => |c| {
+                try self.validateExpression(c.expr.*);
+            },
+
+            .sizeof_expr => |se| {
+                try self.validateExpression(se.expr.*);
+            },
+
+            .sizeof_type, .offset => {}, // Type operations don't need validation
+        }
+    }
+
+    /// Validate a function call
+    fn validateFunctionCall(self: *Analyzer, callee: ast.Expr, args: []const ast.Expr, loc: ast.SourceLocation) AnalyzerError!void {
+        // Get the function name if it's an identifier
+        const func_name = switch (callee) {
+            .identifier => |id| id.name,
+            else => return, // Complex callees (function pointers) are not validated yet
+        };
+
+        // Look up the function
+        const symbol = self.symbol_table.lookupSymbol(func_name) orelse {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Undeclared function '{s}'",
+                .{func_name},
+            );
+            try self.addError(.undeclared_identifier, msg, loc);
+            return;
+        };
+
+        const func_symbol = switch (symbol) {
+            .function => |f| f,
+            else => {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "'{s}' is not a function",
+                    .{func_name},
+                );
+                try self.addError(.not_callable, msg, loc);
+                return;
+            },
+        };
+
+        // Check argument count
+        if (args.len != func_symbol.params.len) {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Function '{s}' expects {d} argument(s), but got {d}",
+                .{ func_name, func_symbol.params.len, args.len },
+            );
+            try self.addError(.argument_count_mismatch, msg, loc);
+            return;
+        }
+
+        // Check argument types
+        for (args, func_symbol.params, 0..) |arg, param, i| {
+            const arg_type = self.type_checker.inferExprType(arg) catch |err| {
+                if (self.type_checker.errors.items.len > 0) {
+                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
+                    const msg = try self.allocator.dupe(u8, type_err.message);
+                    try self.errors.append(self.allocator, .{
+                        .kind = .type_mismatch,
+                        .message = msg,
+                        .loc = type_err.loc,
+                    });
+                }
+                return err;
+            };
+
+            const compatible = try self.type_checker.areTypesCompatible(arg_type, param.type);
+            if (!compatible) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Argument {d} to function '{s}': expected type '{s}', got '{s}'",
+                    .{ i + 1, func_name, @tagName(param.type), @tagName(arg_type) },
+                );
+                try self.addError(.argument_type_mismatch, msg, loc);
+            }
+        }
     }
 
     /// Analyze variable declaration
@@ -536,6 +733,9 @@ pub const Analyzer = struct {
                 try self.addError(.invalid_return, msg, loc);
             }
         }
+
+        // Mark that function has a return statement
+        self.has_return_statement = true;
     }
 
     /// Analyze break statement
@@ -548,12 +748,8 @@ pub const Analyzer = struct {
 
     /// Analyze goto statement
     fn analyzeGotoStatement(self: *Analyzer, label: []const u8, loc: ast.SourceLocation) AnalyzerError!void {
-        // We'll validate goto targets in a second pass if needed
-        // For now, just record that we saw a goto
-        _ = self;
-        _ = label;
-        _ = loc;
-        // TODO: Implement goto validation
+        // Record this goto for later validation
+        try self.gotos.append(self.allocator, .{ .label = label, .loc = loc });
     }
 
     /// Analyze label
