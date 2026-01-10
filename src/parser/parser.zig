@@ -410,6 +410,87 @@ pub const Parser = struct {
     }
 
     // ============================================================================
+    // Type Parsing
+    // ============================================================================
+
+    /// Parse a type expression
+    /// Handles: I64, U32*, I64[10], I64[], MyClass, etc.
+    pub fn parseType(self: *Parser) ParserError!Type {
+        // Parse base type (primitive or named)
+        var base_type = try self.parseBaseType();
+
+        // Handle pointer suffix: T* or T**
+        while (try self.match(.op_star)) {
+            const ptr_type = try self.allocator.create(Type);
+            ptr_type.* = base_type;
+            base_type = Type{ .pointer = ptr_type };
+        }
+
+        // Handle array suffix: T[n] or T[]
+        if (try self.match(.lbracket)) {
+            const element_type_ptr = try self.allocator.create(Type);
+            element_type_ptr.* = base_type;
+
+            // Check for array size
+            const size: ?u64 = if (self.check(.rbracket))
+                null // Unsized array: T[]
+            else blk: {
+                // Sized array: T[n]
+                const size_expr = try self.parseExpression();
+                // TODO: Evaluate constant expression for size
+                // For now, just check if it's an integer literal
+                if (size_expr != .integer) {
+                    self.reportErrorAtCurrent("Array size must be a constant integer");
+                    return error.ParseError;
+                }
+                break :blk @intCast(size_expr.integer.value);
+            };
+
+            try self.consume(.rbracket, "Expected ']' after array size");
+
+            base_type = Type{
+                .array = .{
+                    .element_type = element_type_ptr,
+                    .size = size,
+                },
+            };
+
+            // Handle pointer suffix after array: T[n]* or T[]*
+            while (try self.match(.op_star)) {
+                const ptr_type = try self.allocator.create(Type);
+                ptr_type.* = base_type;
+                base_type = Type{ .pointer = ptr_type };
+            }
+        }
+
+        return base_type;
+    }
+
+    /// Parse base type (primitive or named type)
+    fn parseBaseType(self: *Parser) ParserError!Type {
+        // Primitive types
+        if (try self.match(.keyword_i0)) return .i0;
+        if (try self.match(.keyword_i8)) return .i8;
+        if (try self.match(.keyword_i16)) return .i16;
+        if (try self.match(.keyword_i32)) return .i32;
+        if (try self.match(.keyword_i64)) return .i64;
+        if (try self.match(.keyword_u0)) return .u0;
+        if (try self.match(.keyword_u8)) return .u8;
+        if (try self.match(.keyword_u16)) return .u16;
+        if (try self.match(.keyword_u32)) return .u32;
+        if (try self.match(.keyword_u64)) return .u64;
+        if (try self.match(.keyword_f64)) return .f64;
+
+        // Named type (class/union name)
+        if (try self.match(.identifier)) {
+            return Type{ .named = self.previous.lexeme };
+        }
+
+        self.reportErrorAtCurrent("Expected type name");
+        return error.ParseError;
+    }
+
+    // ============================================================================
     // Postfix Operator Parsing
     // ============================================================================
 
@@ -1020,4 +1101,178 @@ test "Parse array subscript with expression: arr[i + 1]" {
     try testing.expectEqual(BinaryOp.add, expr.subscript.index.binary.op);
     try testing.expectEqualStrings("i", expr.subscript.index.binary.left.identifier.name);
     try testing.expectEqual(@as(i64, 1), expr.subscript.index.binary.right.integer.value);
+}
+
+// ============================================================================
+// Type Parsing Tests
+// ============================================================================
+
+test "Parse primitive type: I64" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expectEqual(Type.i64, type_result);
+}
+
+test "Parse primitive type: U32" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "U32";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expectEqual(Type.u32, type_result);
+}
+
+test "Parse primitive type: F64" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "F64";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expectEqual(Type.f64, type_result);
+}
+
+test "Parse pointer type: I64*" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64*";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .pointer);
+    try testing.expectEqual(Type.i64, type_result.pointer.*);
+}
+
+test "Parse double pointer type: U8**" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "U8**";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .pointer);
+    try testing.expect(type_result.pointer.* == .pointer);
+    try testing.expectEqual(Type.u8, type_result.pointer.pointer.*);
+}
+
+test "Parse sized array type: I64[10]" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64[10]";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .array);
+    try testing.expectEqual(Type.i64, type_result.array.element_type.*);
+    try testing.expectEqual(@as(u64, 10), type_result.array.size.?);
+}
+
+test "Parse unsized array type: U8[]" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "U8[]";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .array);
+    try testing.expectEqual(Type.u8, type_result.array.element_type.*);
+    try testing.expect(type_result.array.size == null);
+}
+
+test "Parse named type: MyClass" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "MyClass";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .named);
+    try testing.expectEqualStrings("MyClass", type_result.named);
+}
+
+test "Parse pointer to named type: MyClass*" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "MyClass*";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .pointer);
+    try testing.expect(type_result.pointer.* == .named);
+    try testing.expectEqualStrings("MyClass", type_result.pointer.named);
+}
+
+test "Parse array of pointers: I64*[5]" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64*[5]";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .array);
+    try testing.expectEqual(@as(u64, 5), type_result.array.size.?);
+    try testing.expect(type_result.array.element_type.* == .pointer);
+    try testing.expectEqual(Type.i64, type_result.array.element_type.pointer.*);
+}
+
+test "Parse pointer to array: I64[10]*" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "I64[10]*";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const type_result = try parser.parseType();
+    try testing.expect(type_result == .pointer);
+    try testing.expect(type_result.pointer.* == .array);
+    try testing.expectEqual(@as(u64, 10), type_result.pointer.array.size.?);
+    try testing.expectEqual(Type.i64, type_result.pointer.array.element_type.*);
 }
