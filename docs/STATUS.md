@@ -6,20 +6,24 @@ Last Updated: 2026-01-10 (Phase 3 - Semantic Analysis: 🚧 IN PROGRESS)
 
 ### Completed
 - [x] Design document for semantic analysis (SEMANTIC_DESIGN.md)
-- [x] Scope management implementation (scope.zig - 197 lines)
+- [x] Symbol type definitions (symbol.zig - 56 lines)
+  - Symbol union (variable, function, type_def)
+  - Named types: VariableSymbol, FunctionSymbol, TypeSymbol
+  - Helper methods: getName(), getLocation()
+- [x] Scope management implementation (scope.zig - 164 lines)
   - Scope structure with parent chaining
   - ScopeStack for managing nested scopes (global, function, block)
   - Symbol storage with HashMap
   - Duplicate detection
   - Variable shadowing support
-  - Tests extracted to scope_test.zig (245 lines, 6 tests)
-- [x] Symbol table implementation (symbol_table.zig - 251 lines)
+  - Tests extracted to scope_test.zig (247 lines, 6 tests)
+- [x] Symbol table implementation (symbol_table.zig - 235 lines)
   - High-level API wrapping ScopeStack
   - Define variables, functions, and types
   - Symbol lookup (local and hierarchical)
   - Validation helpers (isVariableDefined, isFunctionDefined, etc.)
   - Mutability and scope checking
-  - Tests extracted to symbol_table_test.zig (259 lines, 10 tests)
+  - Tests extracted to symbol_table_test.zig (261 lines, 10 tests)
 
 ### In Progress
 - [ ] Type checker implementation (type_checker.zig)
@@ -27,11 +31,12 @@ Last Updated: 2026-01-10 (Phase 3 - Semantic Analysis: 🚧 IN PROGRESS)
 - [ ] Integration tests (tests.zig)
 
 ### Statistics (Phase 3 Current)
-- **Scope Management**: 197 lines (src/semantic/scope.zig)
-- **Scope Tests**: 245 lines (src/semantic/scope_test.zig)
-- **Symbol Table**: 251 lines (src/semantic/symbol_table.zig)
-- **Symbol Table Tests**: 259 lines (src/semantic/symbol_table_test.zig)
-- **Total Phase 3**: 952 lines (448 implementation + 504 tests)
+- **Symbol Types**: 56 lines (src/semantic/symbol.zig)
+- **Scope Management**: 164 lines (src/semantic/scope.zig)
+- **Scope Tests**: 247 lines (src/semantic/scope_test.zig)
+- **Symbol Table**: 235 lines (src/semantic/symbol_table.zig)
+- **Symbol Table Tests**: 261 lines (src/semantic/symbol_table_test.zig)
+- **Total Phase 3**: 963 lines (455 implementation + 508 tests)
 - **Test Coverage**: 16 tests passing
 - **Total Tests**: 152 tests passing (lexer + parser + semantic)
 
