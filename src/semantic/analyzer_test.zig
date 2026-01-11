@@ -281,7 +281,7 @@ test "Analyzer: break outside loop" {
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
-    try testing.expectEqual(analyzer_module.ErrorKind.redeclared_identifier, analyzer.errors.items[0].kind);
+    try testing.expectEqual(analyzer_module.ErrorKind.invalid_break, analyzer.errors.items[0].kind);
 }
 
 // ============================================================================

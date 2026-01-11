@@ -257,7 +257,7 @@ pub const Analyzer = struct {
         );
     }
 
-    /// Collect enum declaration (placeholder)
+    /// Collect import declaration (placeholder)
     fn collectImportDeclaration(self: *Analyzer, imp: anytype) AnalyzerError!void {
         _ = self;
         _ = imp;
