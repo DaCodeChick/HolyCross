@@ -9,6 +9,16 @@
 //! - Type checking
 //! - Scope resolution
 //! - Error collection and reporting
+//!
+//! Structure (with approximate line numbers):
+//! - Analyzer Init/Deinit (lines 23-74): Main analyzer struct and lifecycle
+//! - Two-Pass Analysis (lines 76-91): Main analyze() entry point
+//! - Pass 1: Declaration Collection (lines 93-253): Collect all top-level declarations
+//! - Helper Functions (lines 255-298): Goto/label validation helpers
+//! - Pass 2: Function Body Analysis (lines 300-378): Analyze function implementations
+//! - Statement Analysis (lines 380-820): Analyze all statement types
+//! - Error Management (lines 822-839): Error recording and reporting
+//! - Error Definitions (lines 841-883): SemanticErrorKind and related types
 
 const std = @import("std");
 const ast = @import("../parser/ast.zig");

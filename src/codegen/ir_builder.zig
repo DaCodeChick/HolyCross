@@ -1,3 +1,22 @@
+//! IR Builder - converts AST to Intermediate Representation
+//!
+//! This module performs the first stage of code generation by converting
+//! the typed AST into a low-level IR that is easier to translate to x64.
+//!
+//! Structure (with approximate line numbers):
+//! - IRBuilder Init/Deinit (lines 7-32): Main builder struct and lifecycle
+//! - Helper Functions (lines 34-55): Temp/label generation, instruction emission
+//! - Declaration Building (lines 57-117): Top-level declarations and functions
+//! - Statement Building (lines 119-407): All statement types (if, while, for, etc.)
+//! - Expression Building (lines 408-726): All expression types and operators
+//! - Type Conversion (lines 727-750): Convert AST types to string hints
+//!
+//! Key Features:
+//! - Basic block generation for control flow
+//! - SSA-style temporary registers
+//! - Loop label stack for break statements
+//! - Placeholder TODOs for future features (switch, goto, classes, etc.)
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
@@ -31,6 +50,10 @@ pub const IRBuilder = struct {
         self.break_label_stack.deinit(self.allocator);
     }
 
+    // ========================================================================
+    // Helper Functions
+    // ========================================================================
+
     /// Generate a new temporary register
     fn newTemp(self: *IRBuilder) u32 {
         const temp = self.temp_counter;
@@ -53,6 +76,10 @@ pub const IRBuilder = struct {
             return error.NoCurrentBlock;
         }
     }
+
+    // ========================================================================
+    // Declaration Building
+    // ========================================================================
 
     /// Build IR from AST root
     pub fn buildFromAST(self: *IRBuilder, root: *const ast.Program) !void {
@@ -115,6 +142,10 @@ pub const IRBuilder = struct {
         self.current_function = null;
         self.current_block = null;
     }
+
+    // ========================================================================
+    // Statement Building
+    // ========================================================================
 
     fn buildStatement(self: *IRBuilder, stmt: ast.Stmt) anyerror!void {
         switch (stmt) {
@@ -404,6 +435,10 @@ pub const IRBuilder = struct {
             .dest = .{ .label = end_label },
         });
     }
+
+    // ========================================================================
+    // Expression Building
+    // ========================================================================
 
     fn buildExpression(self: *IRBuilder, expr: ast.Expr) anyerror!ir.Operand {
         switch (expr) {
@@ -723,6 +758,10 @@ pub const IRBuilder = struct {
 
         return .{ .temp = result };
     }
+
+    // ========================================================================
+    // Type Conversion
+    // ========================================================================
 
     fn typeToString(self: *IRBuilder, typ: ast.Type) ?[]const u8 {
         _ = self;
