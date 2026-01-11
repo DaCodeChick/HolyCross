@@ -31,12 +31,14 @@ pub const TypeCheckError = error{
 pub const TypeChecker = struct {
     symbol_table: *SymbolTable,
     allocator: Allocator,
+    type_arena: std.heap.ArenaAllocator, // Arena for Type* allocations
     errors: std.ArrayList(TypeError),
 
     pub fn init(allocator: Allocator, sym_table: *SymbolTable) TypeChecker {
         return .{
             .symbol_table = sym_table,
             .allocator = allocator,
+            .type_arena = std.heap.ArenaAllocator.init(allocator),
             .errors = .{},
         };
     }
@@ -46,6 +48,7 @@ pub const TypeChecker = struct {
             self.allocator.free(err.message);
         }
         self.errors.deinit(self.allocator);
+        self.type_arena.deinit(); // Frees all Type* allocations
     }
 
     /// Add a type error
@@ -69,7 +72,7 @@ pub const TypeChecker = struct {
             .float => .f64,
             .string => blk: {
                 // String literals are U8* (pointer to U8)
-                const u8_type = try self.allocator.create(ast.Type);
+                const u8_type = try self.type_arena.allocator().create(ast.Type);
                 u8_type.* = .u8;
                 break :blk ast.Type{ .pointer = u8_type };
             },
@@ -94,7 +97,7 @@ pub const TypeChecker = struct {
                 .variable => |v| v.type,
                 .function => |f| blk: {
                     // Allocate return type on heap for function pointer type
-                    const return_type_ptr = try self.allocator.create(ast.Type);
+                    const return_type_ptr = try self.type_arena.allocator().create(ast.Type);
                     return_type_ptr.* = f.return_type;
                     break :blk ast.Type{
                         .function = .{
@@ -207,7 +210,7 @@ pub const TypeChecker = struct {
 
             .address_of => blk: {
                 // Create a pointer type pointing to the operand's type
-                const ptr_type = try self.allocator.create(ast.Type);
+                const ptr_type = try self.type_arena.allocator().create(ast.Type);
                 ptr_type.* = operand_type;
                 break :blk ast.Type{ .pointer = ptr_type };
             },

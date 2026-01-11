@@ -481,7 +481,7 @@ pub const ClassMember = struct {
 /// Complete program (translation unit)
 pub const Program = struct {
     decls: []Decl,
-    allocator: std.mem.Allocator,
+    allocator: std.mem.Allocator, // Backing allocator (used by arena)
     arena: std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Program) void {

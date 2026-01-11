@@ -78,6 +78,7 @@ pub fn main() !void {
     // Phase 3: Semantic analysis
     std.debug.print("[Phase 3] Semantic Analysis...\n", .{});
     var anal = analyzer.Analyzer.init(allocator);
+    anal.initTypeChecker(); // Must be called after analyzer is at final location
     defer anal.deinit();
 
     anal.analyze(program) catch |err| {

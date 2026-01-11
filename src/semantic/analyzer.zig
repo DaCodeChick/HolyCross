@@ -39,10 +39,10 @@ pub const Analyzer = struct {
     union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
 
     pub fn init(allocator: Allocator) Analyzer {
-        var analyzer = Analyzer{
+        return Analyzer{
             .allocator = allocator,
             .symbol_table = SymbolTable.init(allocator),
-            .type_checker = undefined,
+            .type_checker = undefined, // Will be initialized in initTypeChecker()
             .errors = .{},
             .loop_depth = 0,
             .labels = std.StringHashMap(ast.SourceLocation).init(allocator),
@@ -52,9 +52,12 @@ pub const Analyzer = struct {
             .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
         };
-        // Initialize type_checker after analyzer is created
-        analyzer.type_checker = TypeChecker.init(allocator, &analyzer.symbol_table);
-        return analyzer;
+    }
+
+    /// Initialize the type checker after the analyzer is at its final memory location
+    /// This must be called immediately after init() before using the analyzer
+    pub fn initTypeChecker(self: *Analyzer) void {
+        self.type_checker = TypeChecker.init(self.allocator, &self.symbol_table);
     }
 
     pub fn deinit(self: *Analyzer) void {

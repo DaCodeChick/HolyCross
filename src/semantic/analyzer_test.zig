@@ -24,6 +24,7 @@ fn createTestProgram(allocator: std.mem.Allocator, decls: []const ast.Decl) !ast
 
 test "Analyzer: init and deinit" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     try testing.expect(analyzer.errors.items.len == 0);
@@ -32,6 +33,7 @@ test "Analyzer: init and deinit" {
 
 test "Analyzer: empty program analysis" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const program = try createTestProgram(testing.allocator, &[_]ast.Decl{});
@@ -46,6 +48,7 @@ test "Analyzer: empty program analysis" {
 
 test "Analyzer: simple function declaration" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -63,7 +66,6 @@ test "Analyzer: simple function declaration" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
     try testing.expect(analyzer.symbol_table.isFunctionDefined("TestFunc"));
@@ -71,6 +73,7 @@ test "Analyzer: simple function declaration" {
 
 test "Analyzer: duplicate function declaration" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -98,7 +101,6 @@ test "Analyzer: duplicate function declaration" {
     var decls = [_]ast.Decl{ func1, func2 };
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
@@ -111,6 +113,7 @@ test "Analyzer: duplicate function declaration" {
 
 test "Analyzer: class declaration with members" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -135,7 +138,6 @@ test "Analyzer: class declaration with members" {
     var decls = [_]ast.Decl{class_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 
@@ -147,6 +149,7 @@ test "Analyzer: class declaration with members" {
 
 test "Analyzer: duplicate class member" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -171,7 +174,6 @@ test "Analyzer: duplicate class member" {
     var decls = [_]ast.Decl{class_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -180,6 +182,7 @@ test "Analyzer: duplicate class member" {
 
 test "Analyzer: union declaration with members" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -203,7 +206,6 @@ test "Analyzer: union declaration with members" {
     var decls = [_]ast.Decl{union_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 
@@ -215,6 +217,7 @@ test "Analyzer: union declaration with members" {
 
 test "Analyzer: duplicate union member" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -238,7 +241,6 @@ test "Analyzer: duplicate union member" {
     var decls = [_]ast.Decl{union_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -247,6 +249,7 @@ test "Analyzer: duplicate union member" {
 
 test "Analyzer: break outside loop" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -273,7 +276,6 @@ test "Analyzer: break outside loop" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
@@ -286,6 +288,7 @@ test "Analyzer: break outside loop" {
 
 test "Analyzer: function with nested scopes and variable shadowing" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -339,7 +342,6 @@ test "Analyzer: function with nested scopes and variable shadowing" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     // Shadowing should be allowed (no error)
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -347,6 +349,7 @@ test "Analyzer: function with nested scopes and variable shadowing" {
 
 test "Analyzer: function calling another function" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -404,13 +407,13 @@ test "Analyzer: function calling another function" {
     var decls = [_]ast.Decl{ helper_func, main_func };
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 }
 
 test "Analyzer: function with multiple return paths" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -472,7 +475,6 @@ test "Analyzer: function with multiple return paths" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     // This should pass - we have return in both branches
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -480,6 +482,7 @@ test "Analyzer: function with multiple return paths" {
 
 test "Analyzer: while loop with break" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -524,13 +527,13 @@ test "Analyzer: while loop with break" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 }
 
 test "Analyzer: empty switch statement" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -568,13 +571,13 @@ test "Analyzer: empty switch statement" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 }
 
 test "Analyzer: duplicate label" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -602,7 +605,6 @@ test "Analyzer: duplicate label" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
@@ -615,6 +617,7 @@ test "Analyzer: duplicate label" {
 
 test "Analyzer: unreachable code after return" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -655,7 +658,6 @@ test "Analyzer: unreachable code after return" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -664,6 +666,7 @@ test "Analyzer: unreachable code after return" {
 
 test "Analyzer: unreachable code after break" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -718,7 +721,6 @@ test "Analyzer: unreachable code after break" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -727,6 +729,7 @@ test "Analyzer: unreachable code after break" {
 
 test "Analyzer: reachable code (no false positives)" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -767,7 +770,6 @@ test "Analyzer: reachable code (no false positives)" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     // Should pass - all code is reachable
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -775,6 +777,7 @@ test "Analyzer: reachable code (no false positives)" {
 
 test "Analyzer: context tracking reset per function" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -822,7 +825,6 @@ test "Analyzer: context tracking reset per function" {
     var decls = [_]ast.Decl{ func1, func2 };
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     // Both functions should analyze successfully - labels are scoped to functions
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -834,6 +836,7 @@ test "Analyzer: context tracking reset per function" {
 
 test "Analyzer: goto with undefined label" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -860,7 +863,6 @@ test "Analyzer: goto with undefined label" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
@@ -869,6 +871,7 @@ test "Analyzer: goto with undefined label" {
 
 test "Analyzer: goto with valid label" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -896,13 +899,13 @@ test "Analyzer: goto with valid label" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 }
 
 test "Analyzer: missing return statement in non-void function" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -928,7 +931,6 @@ test "Analyzer: missing return statement in non-void function" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expectEqual(@as(usize, 1), analyzer.errors.items.len);
@@ -937,6 +939,7 @@ test "Analyzer: missing return statement in non-void function" {
 
 test "Analyzer: non-void function with return statement" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -964,13 +967,13 @@ test "Analyzer: non-void function with return statement" {
     var decls = [_]ast.Decl{func_decl};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 }
 
 test "Analyzer: function call with wrong argument count" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -1030,7 +1033,6 @@ test "Analyzer: function call with wrong argument count" {
     var decls = [_]ast.Decl{ func1, caller };
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -1039,6 +1041,7 @@ test "Analyzer: function call with wrong argument count" {
 
 test "Analyzer: function call with wrong argument type" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -1097,7 +1100,6 @@ test "Analyzer: function call with wrong argument type" {
     var decls = [_]ast.Decl{ func1, caller };
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -1106,6 +1108,7 @@ test "Analyzer: function call with wrong argument type" {
 
 test "Analyzer: call to undeclared function" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -1142,7 +1145,6 @@ test "Analyzer: call to undeclared function" {
     var decls = [_]ast.Decl{caller};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
     try testing.expect(analyzer.errors.items.len > 0);
@@ -1151,6 +1153,7 @@ test "Analyzer: call to undeclared function" {
 
 test "Analyzer: global variable with valid initializer" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -1167,7 +1170,6 @@ test "Analyzer: global variable with valid initializer" {
     var decls = [_]ast.Decl{global_var};
     const program = try createTestProgram(testing.allocator, &decls);
 
-
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
 
@@ -1178,6 +1180,7 @@ test "Analyzer: global variable with valid initializer" {
 
 test "Analyzer: duplicate global variable" {
     var analyzer = Analyzer.init(testing.allocator);
+    analyzer.initTypeChecker();
     defer analyzer.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -1201,7 +1204,6 @@ test "Analyzer: duplicate global variable" {
 
     var decls = [_]ast.Decl{ global_var1, global_var2 };
     const program = try createTestProgram(testing.allocator, &decls);
-
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
