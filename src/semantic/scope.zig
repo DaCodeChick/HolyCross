@@ -91,8 +91,8 @@ pub const ScopeStack = struct {
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) ScopeStack {
-        return .{
-            .scopes = .{},
+        return ScopeStack{
+            .scopes = .{ .items = &[_]*Scope{}, .capacity = 0 },
             .allocator = allocator,
         };
     }

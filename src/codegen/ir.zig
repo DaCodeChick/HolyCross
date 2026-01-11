@@ -107,6 +107,7 @@ pub const Instruction = struct {
     src1: Operand = .none,
     src2: Operand = .none,
     type_hint: ?[]const u8 = null, // Type info for code gen (e.g., "I64", "U8")
+    args: ?[]Operand = null, // Function call arguments (for call opcode)
 
     pub fn format(
         self: Instruction,
@@ -125,7 +126,16 @@ pub const Instruction = struct {
             .jump_if_zero, .jump_if_not_zero => try writer.print("{any}, {any}", .{ self.src1, self.dest }),
             .ret => {},
             .ret_val => try writer.print("{any}", .{self.src1}),
-            .call => try writer.print("{any} -> {any}", .{ self.src1, self.dest }),
+            .call => {
+                try writer.print("{any}(", .{self.src1});
+                if (self.args) |call_args| {
+                    for (call_args, 0..) |arg, i| {
+                        if (i > 0) try writer.writeAll(", ");
+                        try writer.print("{any}", .{arg});
+                    }
+                }
+                try writer.print(") -> {any}", .{self.dest});
+            },
             .print => try writer.print("{any}", .{self.src1}),
             .alloc_local => try writer.print("{any}, size={any}", .{ self.dest, self.src1 }),
             .param => try writer.print("{any}", .{self.dest}),

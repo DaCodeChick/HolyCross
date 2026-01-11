@@ -39,11 +39,10 @@ pub const Analyzer = struct {
     union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
 
     pub fn init(allocator: Allocator) Analyzer {
-        var sym_table = SymbolTable.init(allocator);
-        return .{
+        const analyzer = Analyzer{
             .allocator = allocator,
-            .symbol_table = sym_table,
-            .type_checker = TypeChecker.init(allocator, &sym_table),
+            .symbol_table = SymbolTable.init(allocator),
+            .type_checker = undefined, // Will be set in analyze()
             .errors = .{},
             .loop_depth = 0,
             .labels = std.StringHashMap(ast.SourceLocation).init(allocator),
@@ -53,6 +52,8 @@ pub const Analyzer = struct {
             .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
         };
+        // NOTE: type_checker will be initialized in analyze() after the struct is in its final location
+        return analyzer;
     }
 
     pub fn deinit(self: *Analyzer) void {
@@ -70,6 +71,9 @@ pub const Analyzer = struct {
 
     /// Analyze a complete program (two-pass analysis)
     pub fn analyze(self: *Analyzer, program: ast.Program) AnalyzerError!void {
+        // Initialize type_checker now that self is in its final location
+        self.type_checker = TypeChecker.init(self.allocator, &self.symbol_table);
+
         // Enter global scope
         try self.symbol_table.enterGlobalScope();
 

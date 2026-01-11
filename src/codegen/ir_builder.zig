@@ -476,10 +476,14 @@ pub const IRBuilder = struct {
     }
 
     fn buildCall(self: *IRBuilder, call: @TypeOf(@as(ast.Expr, undefined).call)) !ir.Operand {
-        // Build arguments
-        // TODO: Pass arguments properly
+        // Build argument expressions and collect operands
+        const initial_args = try self.allocator.alloc(ir.Operand, 0);
+        var arg_operands = std.ArrayList(ir.Operand).fromOwnedSlice(initial_args);
+        defer arg_operands.deinit(self.allocator);
+
         for (call.args) |arg| {
-            _ = try self.buildExpression(arg);
+            const arg_operand = try self.buildExpression(arg);
+            try arg_operands.append(self.allocator, arg_operand);
         }
 
         // Get function name
@@ -489,10 +493,15 @@ pub const IRBuilder = struct {
         };
 
         const temp = self.newTemp();
+
+        // Create owned copy of arguments for the instruction
+        const owned_args = try self.allocator.dupe(ir.Operand, arg_operands.items);
+
         try self.emit(.{
             .opcode = .call,
             .src1 = .{ .function = func_name },
             .dest = .{ .temp = temp },
+            .args = owned_args,
         });
 
         return .{ .temp = temp };
