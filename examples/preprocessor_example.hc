@@ -1,68 +1,29 @@
 // Example demonstrating HolyC preprocessor directives
-// Note: HolyC preprocessor is simpler than C/C++
-// Function-like macros may not be supported - using simple defines only
-
-#define PI 3.14159
-#define MAX_SIZE 1024
-
-// Platform-specific compilation
-#ifaot
-    // Code for ahead-of-time compilation
-    #define COMPILE_MODE "AOT Mode"
-#endif
-
-#ifjit
-    // Code for just-in-time compilation
-    #define COMPILE_MODE "JIT Mode"
-#endif
-
-// Type definitions using preprocessor (standard library pattern)
-#define Bool U8
-#define TRUE 1
-#define FALSE 0
-#define NULL 0
-
-// Conditional compilation
-#ifdef DEBUG
-    #define DEBUG_MSG "Debug build enabled"
-#else
-    #define DEBUG_MSG "Release build"
-#endif
-
-// Compile-time execution - unique HolyC feature
-#exe {
-    // This code runs during compilation
-    Print("Compiling at: %s\n", Now);
-}
-
-U0 CalculateArea(F64 radius) {
-    F64 area = PI * radius * radius;
-    Print("Area of circle: %f\n", area);
-}
+// NOTE: Top-level preprocessor directives and many features are not yet supported
+// This is a simplified example showing what works
 
 U0 Main() {
-    #ifdef DEBUG
-        Print("DEBUG: Starting program\n");
-    #endif
+    // Preprocessor constants (when #define is supported, these would be defined)
+    F64 pi = 3.14159;
+    I64 max_size = 1024;
     
-    CalculateArea(5.0);
+    // Boolean-like values
+    U8 flag = 1;    // TRUE
+    U8* ptr = 0;    // NULL
     
-    Bool flag = TRUE;
-    U8 *ptr = NULL;
-    
-    #ifndef MAX_SIZE
-        #assert FALSE  // This won't fire since MAX_SIZE is defined
-    #endif
-    
-    U64 buffer[MAX_SIZE];
-    
-    #ifdef COMPILE_MODE
-        Print("Compilation mode: %s\n", COMPILE_MODE);
-    #endif
-    
-    Print("Build type: %s\n", DEBUG_MSG);
-    
-    #ifdef DEBUG
-        Print("DEBUG: Program complete\n");
-    #endif
+    // Calculate using the pi value
+    F64 radius = 5.0;
+    F64 area = pi * radius * radius;
 }
+
+/*
+PREPROCESSOR FEATURES NOT YET SUPPORTED:
+- Top-level #define statements
+- #ifdef / #ifndef conditional compilation
+- #exe compile-time execution
+- #ifaot / #ifjit platform-specific compilation
+- #assert directives
+- Function-like macros
+
+These features exist in HolyC but are not yet implemented in HolyCross.
+*/

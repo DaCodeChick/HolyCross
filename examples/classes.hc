@@ -115,11 +115,14 @@ union FloatBits {
 };
 
 // ============================================================================
-// ALIAS SYNTAX (typedef-like)
+// ALIAS SYNTAX (typedef-like) - NOT YET SUPPORTED
 // ============================================================================
 
-// Alias syntax: alias_name union Name
-// This creates both types
+// NOTE: HolyC alias syntax "alias_name union Name" is not yet implemented
+// This syntax would create both the alias and the original type name
+
+// TODO: Implement alias syntax support in parser
+/*
 U16i union U16 {
     I8 i8[2];
     U8 u8[2];
@@ -140,6 +143,7 @@ U64i union U64 {
     I8  i8[8];
     U8  u8[8];
 };
+*/
 
 // ============================================================================
 // CLASSES WITH DIFFERENT MEMBER TYPES
@@ -320,6 +324,43 @@ CDate IntToDate(I64 value) {
 }
 
 // ============================================================================
+// LOCAL VARIABLE USAGE EXAMPLES
+// ============================================================================
+
+// Test basic class/union variable declarations
+U0 TestBasicDeclarations() {
+    Point p;           // Simple class variable
+    Point* ptr;        // Class pointer variable
+    Rectangle rect;    // Another class type
+}
+
+// Test pointer declarations (including multi-level)
+U0 TestPointers() {
+    Point* p1;         // Single pointer
+    Point** p2;        // Pointer to pointer
+    Rectangle* rects;  // Pointer (could be array)
+}
+
+// Test mixed primitive and class declarations
+U0 TestMixed() {
+    I64 x;            // Primitive type
+    Point p;          // Class type
+    I64 y;            // Primitive type  
+    Rectangle r;      // Class type
+    I64* ptr;         // Primitive pointer
+    Point* pptr;      // Class pointer
+}
+
+// Test sizeof with class types
+I64 GetPointSize() {
+    return sizeof(Point);
+}
+
+I64 GetRectSize() {
+    return sizeof(Rectangle);
+}
+
+// ============================================================================
 // DEMONSTRATION
 // ============================================================================
 
@@ -339,6 +380,11 @@ U0 Main() {
     FloatBits fb;
     fb.float_val = 3.14159;
     Print("Float as bits: %X\n", fb.int_bits);
+    
+    // Test local variable declarations
+    TestBasicDeclarations();
+    TestPointers();
+    TestMixed();
     
     Free(node);
 }

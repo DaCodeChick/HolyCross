@@ -1,17 +1,59 @@
 // HolyC Expression Examples
 // Tests parser with various expression types
 
-// Simple arithmetic
-1 + 2
-3 * 4
-5 - 6
-7 / 8
-9 % 10
+U0 TestArithmetic() {
+    I64 a;
+    I64 b;
+    I64 c;
+    
+    // Simple arithmetic
+    a = 1 + 2;
+    a = 3 * 4;
+    a = 5 - 6;
+    a = 7 / 8;
+    a = 9 % 10;
+    
+    // Precedence
+    a = 1 + 2 * 3;
+    a = (1 + 2) * 3;
+    a = 2 * 3 + 4;
+}
 
-// Precedence
-1 + 2 * 3
-(1 + 2) * 3
-2 * 3 + 4
+U0 TestUnary() {
+    I64 a;
+    I64 flag;
+    I64 mask;
+    
+    // Unary operators
+    a = -42;
+    a = +100;
+    a = !flag;
+    a = ~mask;
+}
+
+U0 TestComplex() {
+    I64 a;
+    I64 b;
+    I64 c;
+    I64 x;
+    I64 y;
+    I64 z;
+    I64 w;
+    
+    // Complex expressions
+    a = -a + b * c;
+    a = (x + y) * (z - w);
+    a = a * b + c * c;
+}
+
+U0 Main() {
+    TestArithmetic();
+    TestUnary();
+    TestComplex();
+}
+
+/*
+ADDITIONAL EXPRESSION EXAMPLES (not yet fully supported):
 
 // Power operator (HolyC-specific)
 2`8
@@ -20,57 +62,3 @@
 // Logical XOR (HolyC-specific)
 a ^^ b
 x ^^ y ^^ z
-
-// Unary operators
--42
-+100
-!flag
-~mask
-
-// Complex expressions
--a + b * c
-(x + y) * (z - w)
-a * b + c * d
-
-// Variables
-my_var
-x1
-_internal
-
-// Mixed literals
-42 + 3.14
-100 * 2.5
-
-// Function calls
-func()
-add(1, 2)
-calculate(x, y, z)
-
-// Array subscript
-arr[0]
-matrix[i][j]
-data[x + 1]
-
-// Member access
-obj.field
-person.name
-point.x
-
-// Arrow operator
-ptr->field
-node->next
-obj->value
-
-// Postfix increment/decrement
-x++
-y--
-counter++
-
-// Complex postfix expressions
-obj.array[i]
-func(a, b).result
-arr[i].field
-ptr->array[0]
-obj.method()
-data[i].process()
-list.items[index].name

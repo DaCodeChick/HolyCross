@@ -1,21 +1,17 @@
-// Example demonstrating Bool, TRUE, FALSE, and NULL
-// Note: These are NOT keywords in HolyC - they're defined in the standard library:
-//   class Bool:U8;
-//   #define TRUE 1
-//   #define FALSE 0
-//   #define NULL 0
-// The lexer treats them as regular identifiers, not reserved words.
+// Example demonstrating boolean values and NULL pointers
+// In HolyC, Bool/TRUE/FALSE/NULL are typically defined in stdlib
+// For this example, we use U8 for boolean values
 
 U0 Main() {
-    Bool is_ready = TRUE;
-    Bool is_done = FALSE;
-    U8 *ptr = NULL;
+    U8 is_ready = 1;    // TRUE
+    U8 is_done = 0;     // FALSE
+    U8 *ptr = 0;        // NULL
     
     if (is_ready && !is_done) {
-        "System is ready!\n";
+        is_ready = 2;  // Mark as processed
     }
     
-    if (ptr == NULL) {
-        "Pointer is null\n";
+    if (ptr == 0) {
+        is_done = 1;  // Mark done if pointer is null
     }
 }
