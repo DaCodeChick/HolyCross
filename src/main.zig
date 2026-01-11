@@ -5,6 +5,7 @@ const ast = @import("parser/ast.zig");
 const semantic = @import("semantic/symbol_table.zig");
 const type_checker = @import("semantic/type_checker.zig");
 const analyzer = @import("semantic/analyzer.zig");
+const codegen_test = @import("codegen/codegen_test.zig");
 
 pub fn main() !void {
     // Get allocator
@@ -78,4 +79,5 @@ test {
     _ = semantic;
     _ = type_checker;
     _ = analyzer;
+    _ = codegen_test;
 }
