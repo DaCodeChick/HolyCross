@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const ir_builder = @import("ir_builder.zig");
+const x64 = @import("x64.zig");
 const ast = @import("../parser/ast.zig");
 const testing = std.testing;
 
@@ -115,4 +116,64 @@ test "IR: print module" {
     var buffer = std.ArrayList(u8).fromOwnedSlice(empty);
     defer buffer.deinit(allocator);
     try module.print(buffer.writer(allocator));
+}
+
+test "X64: generate simple function" {
+    const allocator = testing.allocator;
+
+    var module = try ir.Module.init(allocator);
+    defer module.deinit();
+
+    const func = try module.createFunction("test_func");
+    func.param_count = 0;
+
+    const block = try func.createBlock();
+    try block.instructions.append(allocator, .{
+        .opcode = .ret,
+    });
+
+    var gen = try x64.X64Generator.init(allocator);
+    defer gen.deinit();
+
+    try gen.generateFromIR(&module);
+    const output = gen.getOutput();
+
+    // Verify output contains function declaration
+    try testing.expect(std.mem.indexOf(u8, output, "test_func:") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "push rbp") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "ret") != null);
+}
+
+test "X64: generate function with constant" {
+    const allocator = testing.allocator;
+
+    var module = try ir.Module.init(allocator);
+    defer module.deinit();
+
+    const func = try module.createFunction("get_fortytwo");
+    func.param_count = 0;
+    func.temp_count = 1;
+
+    const block = try func.createBlock();
+    try block.instructions.append(allocator, .{
+        .opcode = .load_const,
+        .dest = .{ .temp = 0 },
+        .src1 = .{ .constant = .{ .int = 42 } },
+    });
+    try block.instructions.append(allocator, .{
+        .opcode = .ret_val,
+        .src1 = .{ .temp = 0 },
+    });
+
+    var gen = try x64.X64Generator.init(allocator);
+    defer gen.deinit();
+
+    try gen.generateFromIR(&module);
+    const output = gen.getOutput();
+
+    // Verify output contains constant load
+    try testing.expect(std.mem.indexOf(u8, output, "mov rax, 42") != null);
+
+    // Print output for inspection (commented out normally)
+    // std.debug.print("\n=== Generated x64 Assembly ===\n{s}\n", .{output});
 }

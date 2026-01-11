@@ -6,6 +6,7 @@ const semantic = @import("semantic/symbol_table.zig");
 const type_checker = @import("semantic/type_checker.zig");
 const analyzer = @import("semantic/analyzer.zig");
 const codegen_test = @import("codegen/codegen_test.zig");
+const Compiler = @import("codegen/compiler.zig").Compiler;
 
 pub fn main() !void {
     // Get allocator
@@ -27,8 +28,8 @@ pub fn main() !void {
     const output_file = if (args.len >= 3) args[2] else "a.out";
 
     // Print info
-    std.debug.print("HolyC Cross-Compiler v0.1.0\n", .{});
-    std.debug.print("Compiling: {s} -> {s}\n", .{ input_file, output_file });
+    std.debug.print("HolyCross Compiler v0.1.0\n", .{});
+    std.debug.print("Compiling: {s} -> {s}\n\n", .{ input_file, output_file });
 
     // Read input file
     const file = try std.fs.cwd().openFile(input_file, .{});
@@ -37,18 +38,45 @@ pub fn main() !void {
     const source = try file.readToEndAlloc(allocator, 1024 * 1024); // Max 1MB
     defer allocator.free(source);
 
-    // Phase 0: Lexical analysis (tokenization)
-    // TODO: Implement lexer
-    std.debug.print("\n[Phase 0] Lexical Analysis\n", .{});
-    std.debug.print("Source length: {} bytes\n", .{source.len});
-    std.debug.print("Status: Not yet implemented\n", .{});
+    // Phase 1: Lexical analysis
+    std.debug.print("[Phase 1] Lexical Analysis...\n", .{});
+    var lex = lexer.Lexer.init(allocator, source);
 
-    // TODO: Phase 1: Parsing
-    // TODO: Phase 2: Semantic analysis
-    // TODO: Phase 3: Code generation
-    // TODO: Phase 4: Binary output
+    // Phase 2: Parsing
+    std.debug.print("[Phase 2] Parsing...\n", .{});
+    var pars = try parser.Parser.init(allocator, &lex);
 
-    std.debug.print("\nCompilation incomplete - compiler under development!\n", .{});
+    var program = pars.parse() catch |err| {
+        std.debug.print("Parse error: {}\n", .{err});
+        return err;
+    };
+    defer program.deinit();
+
+    // Phase 3: Semantic analysis
+    std.debug.print("[Phase 3] Semantic Analysis...\n", .{});
+    var anal = analyzer.Analyzer.init(allocator);
+    defer anal.deinit();
+
+    anal.analyze(program) catch |err| {
+        std.debug.print("Semantic analysis error: {}\n", .{err});
+        if (anal.errors.items.len > 0) {
+            std.debug.print("Errors:\n", .{});
+            for (anal.errors.items) |error_item| {
+                std.debug.print("  {s}\n", .{error_item.message});
+            }
+        }
+        return err;
+    };
+
+    // Phase 4: Code generation
+    std.debug.print("[Phase 4] Code Generation...\n", .{});
+    var compiler = Compiler.init(allocator);
+    defer compiler.deinit();
+
+    try compiler.compileToExecutable(&program, output_file);
+
+    std.debug.print("\n✓ Compilation successful!\n", .{});
+    std.debug.print("Output: {s}\n", .{output_file});
 }
 
 fn printUsage(program_name: []const u8) void {
