@@ -114,6 +114,12 @@ pub const Instruction = struct {
     type_hint: ?[]const u8 = null, // Type info for code gen (e.g., "I64", "U8")
     args: ?[]Operand = null, // Function call arguments (for call opcode)
 
+    pub fn deinit(self: *Instruction, allocator: Allocator) void {
+        if (self.args) |args| {
+            allocator.free(args);
+        }
+    }
+
     pub fn format(
         self: Instruction,
         comptime fmt: []const u8,
@@ -172,6 +178,9 @@ pub const BasicBlock = struct {
     }
 
     pub fn deinit(self: *BasicBlock, allocator: Allocator) void {
+        for (self.instructions.items) |*instr| {
+            instr.deinit(allocator);
+        }
         self.instructions.deinit(allocator);
     }
 };
