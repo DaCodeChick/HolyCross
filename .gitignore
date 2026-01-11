@@ -28,6 +28,10 @@ holyc-compiler
 # Test outputs
 test-output/
 *.test
+test
+a.out
+a.s
+*.s
 
 # Debug files
 *.dSYM/
