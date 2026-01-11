@@ -1,8 +1,8 @@
 const std = @import("std");
-const ir = @import("ir.zig");
-const ir_builder = @import("ir_builder.zig");
-const x64 = @import("x64.zig");
-const ast = @import("../parser/ast.zig");
+const ir = @import("../ir.zig");
+const ir_builder = @import("../ir_builder.zig");
+const x64 = @import("../x64.zig");
+const ast = @import("../../parser/ast.zig");
 const testing = std.testing;
 
 test "IRBuilder: simple function" {

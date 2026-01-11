@@ -656,5 +656,5 @@ test "lexer EOF" {
 // Tests (in separate file)
 // ============================================================================
 test {
-    _ = @import("tests.zig");
+    _ = @import("tests/all_tests.zig");
 }

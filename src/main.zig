@@ -5,7 +5,7 @@ const ast = @import("parser/ast.zig");
 const semantic = @import("semantic/symbol_table.zig");
 const type_checker = @import("semantic/type_checker.zig");
 const analyzer = @import("semantic/analyzer.zig");
-const codegen_test = @import("codegen/codegen_test.zig");
+const codegen_test = @import("codegen/tests/codegen_tests.zig");
 const Compiler = @import("codegen/compiler.zig").Compiler;
 
 pub fn main() !void {

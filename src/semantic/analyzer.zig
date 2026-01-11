@@ -889,5 +889,5 @@ pub const ErrorKind = enum {
 
 // Import tests
 test {
-    _ = @import("analyzer_test.zig");
+    _ = @import("tests/all_tests.zig");
 }

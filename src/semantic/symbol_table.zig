@@ -231,5 +231,5 @@ pub const SymbolTable = struct {
 
 // Import tests
 test {
-    _ = @import("symbol_table_test.zig");
+    _ = @import("tests/symbol_table_tests.zig");
 }

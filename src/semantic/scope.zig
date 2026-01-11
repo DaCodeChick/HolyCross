@@ -160,5 +160,5 @@ pub const ScopeStack = struct {
 
 // Import tests
 test {
-    _ = @import("scope_test.zig");
+    _ = @import("tests/scope_tests.zig");
 }

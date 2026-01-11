@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const scope = @import("scope.zig");
-const symbol_module = @import("symbol.zig");
-const ast = @import("../parser/ast.zig");
+const scope = @import("../scope.zig");
+const symbol_module = @import("../symbol.zig");
+const ast = @import("../../parser/ast.zig");
 
 const Scope = scope.Scope;
 const ScopeStack = scope.ScopeStack;

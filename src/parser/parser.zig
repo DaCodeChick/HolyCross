@@ -1438,5 +1438,5 @@ pub const Parser = struct {
 
 // Import tests
 test {
-    _ = @import("parser_test.zig");
+    _ = @import("tests/all_tests.zig");
 }

@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const type_checker = @import("type_checker.zig");
-const symbol_table = @import("symbol_table.zig");
-const ast = @import("../parser/ast.zig");
+const type_checker = @import("../type_checker.zig");
+const symbol_table = @import("../symbol_table.zig");
+const ast = @import("../../parser/ast.zig");
 
 const TypeChecker = type_checker.TypeChecker;
 const SymbolTable = symbol_table.SymbolTable;

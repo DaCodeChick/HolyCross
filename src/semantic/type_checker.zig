@@ -409,5 +409,5 @@ pub const TypeErrorKind = enum {
 
 // Import tests
 test {
-    _ = @import("type_checker_test.zig");
+    _ = @import("tests/type_checker_tests.zig");
 }
