@@ -129,29 +129,39 @@ pub const Analyzer = struct {
         );
     }
 
-    /// Collect class declaration
-    fn collectClassDeclaration(self: *Analyzer, cls: anytype) AnalyzerError!void {
-        // Check for duplicate class
-        if (self.symbol_table.lookupLocal(cls.name)) |existing| {
+    /// Collect a composite type declaration (class or union).
+    /// This unified function handles both class and union declarations to avoid duplication.
+    fn collectCompositeTypeDeclaration(
+        self: *Analyzer,
+        name: []const u8,
+        members: []ast.ClassMember,
+        repr_type: ?ast.Type,
+        loc: ast.SourceLocation,
+        type_kind: enum { class, union_type },
+    ) AnalyzerError!void {
+        const kind_str = if (type_kind == .class) "class" else "union";
+
+        // Check for duplicate declaration
+        if (self.symbol_table.lookupLocal(name)) |existing| {
             const msg = try std.fmt.allocPrint(
                 self.allocator,
-                "Redeclaration of class '{s}' (previously declared at line {d})",
-                .{ cls.name, existing.getLocation().line },
+                "Redeclaration of {s} '{s}' (previously declared at line {d})",
+                .{ kind_str, name, existing.getLocation().line },
             );
-            try self.addError(.redeclared_identifier, msg, cls.loc);
+            try self.addError(.redeclared_identifier, msg, loc);
             return;
         }
 
-        // Check for duplicate member names within the class
+        // Check for duplicate member names within the composite type
         var seen_members = std.StringHashMap(void).init(self.allocator);
         defer seen_members.deinit();
 
-        for (cls.members) |member| {
+        for (members) |member| {
             if (seen_members.contains(member.name)) {
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
-                    "Duplicate member '{s}' in class '{s}'",
-                    .{ member.name, cls.name },
+                    "Duplicate member '{s}' in {s} '{s}'",
+                    .{ member.name, kind_str, name },
                 );
                 try self.addError(.redeclared_identifier, msg, member.loc);
             } else {
@@ -159,52 +169,35 @@ pub const Analyzer = struct {
             }
         }
 
-        // Store member information for validation
-        try self.class_members.put(cls.name, cls.members);
+        // Store member information in the appropriate map
+        const members_map = if (type_kind == .class) &self.class_members else &self.union_members;
+        try members_map.put(name, members);
 
-        // Define class as a type
-        // For classes with repr_type, use that; otherwise use a named type
-        const underlying_type = if (cls.repr_type) |rt| rt else ast.Type{ .named = cls.name };
-        try self.symbol_table.defineType(cls.name, underlying_type, cls.loc);
+        // Define as a type (use repr_type if present, otherwise a named type)
+        const underlying_type = if (repr_type) |rt| rt else ast.Type{ .named = name };
+        try self.symbol_table.defineType(name, underlying_type, loc);
+    }
+
+    /// Collect class declaration
+    fn collectClassDeclaration(self: *Analyzer, cls: anytype) AnalyzerError!void {
+        try self.collectCompositeTypeDeclaration(
+            cls.name,
+            cls.members,
+            cls.repr_type,
+            cls.loc,
+            .class,
+        );
     }
 
     /// Collect union declaration
     fn collectUnionDeclaration(self: *Analyzer, uni: anytype) AnalyzerError!void {
-        // Check for duplicate union
-        if (self.symbol_table.lookupLocal(uni.name)) |existing| {
-            const msg = try std.fmt.allocPrint(
-                self.allocator,
-                "Redeclaration of union '{s}' (previously declared at line {d})",
-                .{ uni.name, existing.getLocation().line },
-            );
-            try self.addError(.redeclared_identifier, msg, uni.loc);
-            return;
-        }
-
-        // Check for duplicate member names within the union
-        var seen_members = std.StringHashMap(void).init(self.allocator);
-        defer seen_members.deinit();
-
-        for (uni.members) |member| {
-            if (seen_members.contains(member.name)) {
-                const msg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "Duplicate member '{s}' in union '{s}'",
-                    .{ member.name, uni.name },
-                );
-                try self.addError(.redeclared_identifier, msg, member.loc);
-            } else {
-                try seen_members.put(member.name, {});
-            }
-        }
-
-        // Store member information for validation
-        try self.union_members.put(uni.name, uni.members);
-
-        // Define union as a type
-        // For unions with repr_type, use that; otherwise use a named type
-        const underlying_type = if (uni.repr_type) |rt| rt else ast.Type{ .named = uni.name };
-        try self.symbol_table.defineType(uni.name, underlying_type, uni.loc);
+        try self.collectCompositeTypeDeclaration(
+            uni.name,
+            uni.members,
+            uni.repr_type,
+            uni.loc,
+            .union_type,
+        );
     }
 
     /// Collect global variable declaration
@@ -222,18 +215,7 @@ pub const Analyzer = struct {
 
         // If there's an initializer, validate its type
         if (gvar.init) |init_expr| {
-            const init_type = self.type_checker.inferExprType(init_expr) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            const init_type = try self.inferExprTypeOrPropagate(init_expr);
 
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(init_type, gvar.type);
@@ -262,6 +244,93 @@ pub const Analyzer = struct {
         _ = self;
         _ = imp;
         // TODO: Implement import declaration collection
+    }
+
+    // ========================================================================
+    // Helper Functions
+    // ========================================================================
+
+    /// Infer expression type and propagate type checker errors to analyzer.
+    /// This helper consolidates the common pattern of calling inferExprType and
+    /// transferring any type checker errors to the analyzer's error list.
+    fn inferExprTypeOrPropagate(self: *Analyzer, expr: ast.Expr) !ast.Type {
+        return self.type_checker.inferExprType(expr) catch |err| {
+            if (self.type_checker.errors.items.len > 0) {
+                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
+                const msg = try self.allocator.dupe(u8, type_err.message);
+                try self.errors.append(self.allocator, .{
+                    .kind = .type_mismatch,
+                    .message = msg,
+                    .loc = type_err.loc,
+                });
+            }
+            return err;
+        };
+    }
+
+    /// Resolve type through pointer dereference if arrow operator is used.
+    /// Returns the appropriate type for member access based on whether '.' or '->' was used.
+    fn resolveAccessType(
+        self: *Analyzer,
+        object_type: ast.Type,
+        is_arrow: bool,
+        loc: ast.SourceLocation,
+    ) !ast.Type {
+        if (!is_arrow) return object_type;
+
+        return switch (object_type) {
+            .pointer => |ptr_type| ptr_type.*,
+            else => {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Arrow operator requires pointer type, got '{s}'",
+                    .{@tagName(object_type)},
+                );
+                try self.addError(.type_mismatch, msg, loc);
+                return error.SemanticError;
+            },
+        };
+    }
+
+    /// Find a member by name in a member list.
+    /// Returns the member if found, null otherwise.
+    fn findMember(members: []const ast.ClassMember, name: []const u8) ?ast.ClassMember {
+        for (members) |member| {
+            if (std.mem.eql(u8, member.name, name)) {
+                return member;
+            }
+        }
+        return null;
+    }
+
+    /// Look up a function symbol by name, reporting appropriate errors if not found or not callable.
+    fn lookupFunctionSymbol(
+        self: *Analyzer,
+        func_name: []const u8,
+        loc: ast.SourceLocation,
+    ) !symbol_table.FunctionSymbol {
+        const symbol = self.symbol_table.lookupSymbol(func_name) orelse {
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Undeclared function '{s}'",
+                .{func_name},
+            );
+            try self.addError(.undeclared_identifier, msg, loc);
+            return error.SemanticError;
+        };
+
+        return switch (symbol) {
+            .function => |f| f,
+            else => {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "'{s}' is not a function",
+                    .{func_name},
+                );
+                try self.addError(.not_callable, msg, loc);
+                return error.SemanticError;
+            },
+        };
     }
 
     // ========================================================================
@@ -375,19 +444,7 @@ pub const Analyzer = struct {
         try self.validateExpression(expr);
 
         // Also infer the expression type
-        _ = self.type_checker.inferExprType(expr) catch |err| {
-            // Convert type checker errors to analyzer errors
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        _ = try self.inferExprTypeOrPropagate(expr);
     }
 
     /// Validate an expression (recursively validate function calls)
@@ -454,29 +511,8 @@ pub const Analyzer = struct {
             else => return, // Complex callees (function pointers) are not validated yet
         };
 
-        // Look up the function
-        const symbol = self.symbol_table.lookupSymbol(func_name) orelse {
-            const msg = try std.fmt.allocPrint(
-                self.allocator,
-                "Undeclared function '{s}'",
-                .{func_name},
-            );
-            try self.addError(.undeclared_identifier, msg, loc);
-            return;
-        };
-
-        const func_symbol = switch (symbol) {
-            .function => |f| f,
-            else => {
-                const msg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "'{s}' is not a function",
-                    .{func_name},
-                );
-                try self.addError(.not_callable, msg, loc);
-                return;
-            },
-        };
+        // Look up the function symbol
+        const func_symbol = try self.lookupFunctionSymbol(func_name, loc);
 
         // Check argument count
         if (args.len != func_symbol.params.len) {
@@ -491,18 +527,7 @@ pub const Analyzer = struct {
 
         // Check argument types
         for (args, func_symbol.params, 0..) |arg, param, i| {
-            const arg_type = self.type_checker.inferExprType(arg) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            const arg_type = try self.inferExprTypeOrPropagate(arg);
 
             const compatible = try self.type_checker.areTypesCompatible(arg_type, param.type);
             if (!compatible) {
@@ -530,23 +555,8 @@ pub const Analyzer = struct {
             return err;
         };
 
-        // If arrow access, dereference pointer
-        if (is_arrow) {
-            switch (object_type) {
-                .pointer => |ptr_type| {
-                    object_type = ptr_type.*;
-                },
-                else => {
-                    const msg = try std.fmt.allocPrint(
-                        self.allocator,
-                        "Arrow operator requires pointer type, got '{s}'",
-                        .{@tagName(object_type)},
-                    );
-                    try self.addError(.type_mismatch, msg, loc);
-                    return;
-                },
-            }
-        }
+        // Resolve type (dereference if arrow operator used)
+        object_type = try self.resolveAccessType(object_type, is_arrow, loc);
 
         // Check if object_type is a named type (class or union)
         const type_name = switch (object_type) {
@@ -572,15 +582,7 @@ pub const Analyzer = struct {
         };
 
         // Check if member exists
-        var found = false;
-        for (members) |member| {
-            if (std.mem.eql(u8, member.name, member_name)) {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
+        if (findMember(members, member_name) == null) {
             const msg = try std.fmt.allocPrint(
                 self.allocator,
                 "Type '{s}' has no member named '{s}'",
@@ -611,18 +613,7 @@ pub const Analyzer = struct {
 
         // If there's an initializer, check type compatibility
         if (initializer) |init_expr| {
-            const init_type = self.type_checker.inferExprType(init_expr) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            const init_type = try self.inferExprTypeOrPropagate(init_expr);
 
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(init_type, var_type);
@@ -690,18 +681,7 @@ pub const Analyzer = struct {
         else_stmt: ?*ast.Stmt,
     ) AnalyzerError!void {
         // Analyze condition
-        _ = self.type_checker.inferExprType(condition) catch |err| {
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        _ = try self.inferExprTypeOrPropagate(condition);
 
         // Analyze then branch
         try self.analyzeStatement(then_stmt);
@@ -715,18 +695,7 @@ pub const Analyzer = struct {
     /// Analyze while statement
     fn analyzeWhileStatement(self: *Analyzer, condition: ast.Expr, body: ast.Stmt) AnalyzerError!void {
         // Analyze condition
-        _ = self.type_checker.inferExprType(condition) catch |err| {
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        _ = try self.inferExprTypeOrPropagate(condition);
 
         // Enter loop context
         self.loop_depth += 1;
@@ -746,18 +715,7 @@ pub const Analyzer = struct {
         try self.analyzeStatement(body);
 
         // Analyze condition
-        _ = self.type_checker.inferExprType(condition) catch |err| {
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        _ = try self.inferExprTypeOrPropagate(condition);
     }
 
     /// Analyze for statement
@@ -779,34 +737,12 @@ pub const Analyzer = struct {
 
         // Analyze condition
         if (condition) |cond| {
-            _ = self.type_checker.inferExprType(cond) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            _ = try self.inferExprTypeOrPropagate(cond);
         }
 
         // Analyze increment
         if (increment) |incr| {
-            _ = self.type_checker.inferExprType(incr) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            _ = try self.inferExprTypeOrPropagate(incr);
         }
 
         // Enter loop context
@@ -820,18 +756,7 @@ pub const Analyzer = struct {
     /// Analyze switch statement
     fn analyzeSwitchStatement(self: *Analyzer, expr: ast.Expr, cases: []const ast.SwitchCase) AnalyzerError!void {
         // Analyze switch expression
-        _ = self.type_checker.inferExprType(expr) catch |err| {
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        _ = try self.inferExprTypeOrPropagate(expr);
 
         // Enter loop context (switch supports break)
         self.loop_depth += 1;
@@ -841,18 +766,7 @@ pub const Analyzer = struct {
         for (cases) |case| {
             // Analyze case value if present (not default)
             if (case.value) |val| {
-                _ = self.type_checker.inferExprType(val) catch |err| {
-                    if (self.type_checker.errors.items.len > 0) {
-                        const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                        const msg = try self.allocator.dupe(u8, type_err.message);
-                        try self.errors.append(self.allocator, .{
-                            .kind = .type_mismatch,
-                            .message = msg,
-                            .loc = type_err.loc,
-                        });
-                    }
-                    return err;
-                };
+                _ = try self.inferExprTypeOrPropagate(val);
             }
 
             // Analyze case statements
@@ -873,18 +787,7 @@ pub const Analyzer = struct {
         // Check if we have a return value
         if (expr) |ret_expr| {
             // Infer return expression type
-            const ret_type = self.type_checker.inferExprType(ret_expr) catch |err| {
-                if (self.type_checker.errors.items.len > 0) {
-                    const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                    const msg = try self.allocator.dupe(u8, type_err.message);
-                    try self.errors.append(self.allocator, .{
-                        .kind = .type_mismatch,
-                        .message = msg,
-                        .loc = type_err.loc,
-                    });
-                }
-                return err;
-            };
+            const ret_type = try self.inferExprTypeOrPropagate(ret_expr);
 
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(ret_type, expected_type);
