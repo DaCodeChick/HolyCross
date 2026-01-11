@@ -220,6 +220,9 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         .store_var => try instruction_gen.Memory.genStoreVar(ctx, instr),
         .move => try instruction_gen.Memory.genMove(ctx, instr),
         .alloc_local => try instruction_gen.Memory.genAllocLocal(ctx),
+        .load_addr => try instruction_gen.Memory.genLoadAddr(ctx, instr),
+        .load_ptr => try instruction_gen.Memory.genLoadPtr(ctx, instr),
+        .store_ptr => try instruction_gen.Memory.genStorePtr(ctx, instr),
         .param => unreachable, // Should use generateInstructionWithParamIdx
 
         // Arithmetic

@@ -130,6 +130,32 @@ pub const Memory = struct {
             else => {},
         }
     }
+
+    pub fn genLoadAddr(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        switch (instr.src1) {
+            .variable => |v| {
+                try ctx.emitComment("load address of {s}", .{v});
+                const offset = ctx.getVarOffset(v);
+                try ctx.emit("    lea rax, [rbp-{d}]  # &{s}\n", .{ offset, v });
+            },
+            else => {},
+        }
+        try Patterns.storeOperand(ctx, instr.dest, "rax");
+    }
+
+    pub fn genLoadPtr(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try ctx.emitComment("load from pointer", .{});
+        try Patterns.loadOperand(ctx, instr.src1, "rax");
+        try ctx.emit("    mov rax, [rax]\n", .{});
+        try Patterns.storeOperand(ctx, instr.dest, "rax");
+    }
+
+    pub fn genStorePtr(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try ctx.emitComment("store to pointer", .{});
+        try Patterns.loadOperand(ctx, instr.dest, "rcx");
+        try Patterns.loadOperand(ctx, instr.src1, "rax");
+        try ctx.emit("    mov [rcx], rax\n", .{});
+    }
 };
 
 /// Arithmetic Instructions

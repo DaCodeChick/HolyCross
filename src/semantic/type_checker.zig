@@ -200,10 +200,11 @@ pub const TypeChecker = struct {
                 break :blk operand_type;
             },
 
-            .address_of => {
-                // TODO: Properly allocate pointer type on heap
-                try self.addError(.not_implemented, "Address-of operator not yet fully implemented", operand.getLocation());
-                return error.TypeError;
+            .address_of => blk: {
+                // Create a pointer type pointing to the operand's type
+                const ptr_type = try self.allocator.create(ast.Type);
+                ptr_type.* = operand_type;
+                break :blk ast.Type{ .pointer = ptr_type };
             },
 
             .dereference => blk: {

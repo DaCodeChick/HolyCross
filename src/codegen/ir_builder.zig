@@ -448,9 +448,8 @@ pub const IRBuilder = struct {
                 // TODO: Member access
                 return .{ .temp = self.newTemp() };
             },
-            .subscript => {
-                // TODO: Array subscript
-                return .{ .temp = self.newTemp() };
+            .subscript => |sub| {
+                return try self.buildSubscript(sub);
             },
             .cast => |cast| {
                 // For now, just evaluate the expression
@@ -468,15 +467,87 @@ pub const IRBuilder = struct {
         // Handle assignment operators specially
         if (bin.op == .assign) {
             const value = try self.buildExpression(bin.right.*);
-            const var_name = switch (bin.left.*) {
-                .identifier => |ident| ident.name,
-                else => "unknown",
-            };
-            try self.emit(.{
-                .opcode = .store_var,
-                .dest = .{ .variable = var_name },
-                .src1 = value,
-            });
+
+            // Check what we're assigning to
+            switch (bin.left.*) {
+                .identifier => |ident| {
+                    // Normal variable assignment: x = value
+                    try self.emit(.{
+                        .opcode = .store_var,
+                        .dest = .{ .variable = ident.name },
+                        .src1 = value,
+                    });
+                },
+                .unary => |un| {
+                    // Pointer dereference assignment: *ptr = value
+                    if (un.op == .dereference) {
+                        const ptr = try self.buildExpression(un.operand.*);
+                        try self.emit(.{
+                            .opcode = .store_ptr,
+                            .dest = ptr,
+                            .src1 = value,
+                        });
+                    } else {
+                        return error.InvalidAssignmentTarget;
+                    }
+                },
+                .subscript => |sub| {
+                    // Array subscript assignment: arr[i] = value
+                    // Calculate the address and store to it
+
+                    // Get the base address of the array
+                    const base_addr = switch (sub.array.*) {
+                        .identifier => |ident| blk: {
+                            const temp = self.newTemp();
+                            try self.emit(.{
+                                .opcode = .load_addr,
+                                .dest = .{ .temp = temp },
+                                .src1 = .{ .variable = ident.name },
+                            });
+                            break :blk ir.Operand{ .temp = temp };
+                        },
+                        else => try self.buildExpression(sub.array.*),
+                    };
+
+                    // Evaluate index
+                    const index = try self.buildExpression(sub.index.*);
+
+                    // Calculate offset: index * 8 (assuming 8-byte elements)
+                    const element_size = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .load_const,
+                        .dest = .{ .temp = element_size },
+                        .src1 = .{ .constant = .{ .int = 8 } },
+                    });
+
+                    const offset = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .mul,
+                        .dest = .{ .temp = offset },
+                        .src1 = index,
+                        .src2 = .{ .temp = element_size },
+                    });
+
+                    // Calculate final address: base + offset
+                    const addr = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .add,
+                        .dest = .{ .temp = addr },
+                        .src1 = base_addr,
+                        .src2 = .{ .temp = offset },
+                    });
+
+                    // Store value to address
+                    try self.emit(.{
+                        .opcode = .store_ptr,
+                        .dest = .{ .temp = addr },
+                        .src1 = value,
+                    });
+                },
+                else => {
+                    return error.InvalidAssignmentTarget;
+                },
+            }
             return value;
         }
 
@@ -518,8 +589,35 @@ pub const IRBuilder = struct {
     }
 
     fn buildUnaryOp(self: *IRBuilder, un: @TypeOf(@as(ast.Expr, undefined).unary)) !ir.Operand {
-        const operand = try self.buildExpression(un.operand.*);
         const temp = self.newTemp();
+
+        // Handle address-of specially - we need the variable name, not its value
+        if (un.op == .address_of) {
+            const var_name = switch (un.operand.*) {
+                .identifier => |ident| ident.name,
+                else => return error.InvalidAddressOfOperand,
+            };
+            try self.emit(.{
+                .opcode = .load_addr,
+                .dest = .{ .temp = temp },
+                .src1 = .{ .variable = var_name },
+            });
+            return .{ .temp = temp };
+        }
+
+        // Handle dereference specially - load from pointer
+        if (un.op == .dereference) {
+            const ptr = try self.buildExpression(un.operand.*);
+            try self.emit(.{
+                .opcode = .load_ptr,
+                .dest = .{ .temp = temp },
+                .src1 = ptr,
+            });
+            return .{ .temp = temp };
+        }
+
+        // For other unary operators, evaluate operand first
+        const operand = try self.buildExpression(un.operand.*);
 
         const opcode: ir.Opcode = switch (un.op) {
             .negate => .neg,
@@ -567,6 +665,63 @@ pub const IRBuilder = struct {
         });
 
         return .{ .temp = temp };
+    }
+
+    fn buildSubscript(self: *IRBuilder, sub: @TypeOf(@as(ast.Expr, undefined).subscript)) !ir.Operand {
+        // Calculate array address
+        // arr[i] = *(arr + i * element_size)
+
+        // Get the base address of the array
+        const base_addr = switch (sub.array.*) {
+            .identifier => |ident| blk: {
+                const temp = self.newTemp();
+                try self.emit(.{
+                    .opcode = .load_addr,
+                    .dest = .{ .temp = temp },
+                    .src1 = .{ .variable = ident.name },
+                });
+                break :blk ir.Operand{ .temp = temp };
+            },
+            else => try self.buildExpression(sub.array.*),
+        };
+
+        // Evaluate index
+        const index = try self.buildExpression(sub.index.*);
+
+        // Calculate offset: index * 8 (assuming 8-byte elements for now)
+        const element_size = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_const,
+            .dest = .{ .temp = element_size },
+            .src1 = .{ .constant = .{ .int = 8 } },
+        });
+
+        const offset = self.newTemp();
+        try self.emit(.{
+            .opcode = .mul,
+            .dest = .{ .temp = offset },
+            .src1 = index,
+            .src2 = .{ .temp = element_size },
+        });
+
+        // Calculate final address: base + offset
+        const addr = self.newTemp();
+        try self.emit(.{
+            .opcode = .add,
+            .dest = .{ .temp = addr },
+            .src1 = base_addr,
+            .src2 = .{ .temp = offset },
+        });
+
+        // Load value from address
+        const result = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_ptr,
+            .dest = .{ .temp = result },
+            .src1 = .{ .temp = addr },
+        });
+
+        return .{ .temp = result };
     }
 
     fn typeToString(self: *IRBuilder, typ: ast.Type) ?[]const u8 {

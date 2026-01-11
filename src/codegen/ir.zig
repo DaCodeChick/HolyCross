@@ -54,6 +54,11 @@ pub const Opcode = enum {
     ret, // Return from function
     ret_val, // Return value from function
 
+    // Memory operations
+    load_addr, // dest = &variable (address of variable)
+    load_ptr, // dest = *ptr (load from pointer)
+    store_ptr, // *ptr = src (store to pointer)
+
     // Special
     print, // HolyC print statement
     alloc_local, // Allocate local variable on stack
