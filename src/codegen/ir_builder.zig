@@ -21,6 +21,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
 const ir = @import("ir.zig");
+const type_checker_module = @import("../semantic/type_checker.zig");
+
+const TypeChecker = type_checker_module.TypeChecker;
 
 /// IR Builder - converts AST to IR
 pub const IRBuilder = struct {
@@ -32,8 +35,9 @@ pub const IRBuilder = struct {
     label_counter: u32,
     break_label_stack: std.ArrayList(u32), // Track break labels for nested loops
     label_map: std.StringHashMap(u32), // Map label names to label IDs (per function)
+    type_checker: ?*TypeChecker, // Optional type checker for type inference
 
-    pub fn init(allocator: Allocator) !IRBuilder {
+    pub fn init(allocator: Allocator, type_checker: ?*TypeChecker) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
         return .{
             .allocator = allocator,
@@ -44,6 +48,7 @@ pub const IRBuilder = struct {
             .label_counter = 0,
             .break_label_stack = std.ArrayList(u32).fromOwnedSlice(empty_labels),
             .label_map = std.StringHashMap(u32).init(allocator),
+            .type_checker = type_checker,
         };
     }
 
@@ -268,10 +273,11 @@ pub const IRBuilder = struct {
         }
 
         // Allocate stack space for variable
+        const type_size = self.calculateTypeSize(decl.type);
         try self.emit(.{
             .opcode = .alloc_local,
             .dest = .{ .variable = decl.name },
-            .src1 = .{ .constant = .{ .int = 8 } }, // TODO: Get actual size from type
+            .src1 = .{ .constant = .{ .int = type_size } },
             .type_hint = self.typeToString(decl.type),
         });
 
@@ -1047,9 +1053,16 @@ pub const IRBuilder = struct {
         const size = switch (expr) {
             .sizeof_expr => |s| blk: {
                 // Calculate size of the expression's type
-                // TODO: Get actual type from semantic analysis
-                _ = s;
-                break :blk @as(i64, 8); // Default to 8 bytes
+                if (self.type_checker) |tc| {
+                    const expr_type = tc.inferExprType(s.expr.*) catch {
+                        // If type inference fails, default to 8 bytes
+                        break :blk @as(i64, 8);
+                    };
+                    break :blk self.calculateTypeSize(expr_type);
+                } else {
+                    // No type checker available, use default
+                    break :blk @as(i64, 8);
+                }
             },
             .sizeof_type => |s| blk: {
                 // Calculate size of the type
@@ -1095,7 +1108,6 @@ pub const IRBuilder = struct {
     // ========================================================================
 
     fn typeToString(self: *IRBuilder, typ: ast.Type) ?[]const u8 {
-        _ = self;
         return switch (typ) {
             .i0 => "I0",
             .i8 => "I8",
@@ -1108,7 +1120,26 @@ pub const IRBuilder = struct {
             .u32 => "U32",
             .u64 => "U64",
             .f64 => "F64",
-            else => null,
+            .pointer => |ptr| {
+                // Format as "T*" where T is the pointed-to type
+                if (self.typeToString(ptr.*)) |inner| {
+                    return std.fmt.allocPrint(self.allocator, "{s}*", .{inner}) catch null;
+                }
+                return "PTR"; // Fallback for complex pointer types
+            },
+            .array => |arr| {
+                // Format as "T[n]" or "T[]"
+                if (self.typeToString(arr.element_type.*)) |elem_type| {
+                    if (arr.size) |size| {
+                        return std.fmt.allocPrint(self.allocator, "{s}[{d}]", .{ elem_type, size }) catch null;
+                    } else {
+                        return std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_type}) catch null;
+                    }
+                }
+                return "ARRAY"; // Fallback
+            },
+            .named => |name| name,
+            .function => "FUNC",
         };
     }
 

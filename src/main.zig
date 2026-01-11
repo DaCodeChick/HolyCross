@@ -99,7 +99,7 @@ pub fn main() !void {
 
     if (emit_asm_only) {
         // Generate assembly only (-S flag)
-        const asm_code = try compiler.compileToAssembly(&program);
+        const asm_code = try compiler.compileToAssembly(&program, &anal.type_checker);
         defer allocator.free(asm_code);
 
         const asm_file = try std.fs.cwd().createFile(output_file, .{});
@@ -110,7 +110,7 @@ pub fn main() !void {
         std.debug.print("Output: {s}\n", .{output_file});
     } else {
         // Generate executable
-        try compiler.compileToExecutable(&program, output_file);
+        try compiler.compileToExecutable(&program, output_file, &anal.type_checker);
 
         std.debug.print("\n✓ Compilation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});

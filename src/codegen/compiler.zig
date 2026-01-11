@@ -4,6 +4,9 @@ const ir = @import("ir.zig");
 const ir_builder = @import("ir_builder.zig");
 const x64 = @import("x64.zig");
 const ast = @import("../parser/ast.zig");
+const type_checker_module = @import("../semantic/type_checker.zig");
+
+const TypeChecker = type_checker_module.TypeChecker;
 
 /// Compiler - orchestrates the compilation pipeline
 pub const Compiler = struct {
@@ -14,9 +17,9 @@ pub const Compiler = struct {
     }
 
     /// Compile AST to x64 assembly string
-    pub fn compileToAssembly(self: *Compiler, program: *const ast.Program) ![]const u8 {
+    pub fn compileToAssembly(self: *Compiler, program: *const ast.Program, type_checker: ?*TypeChecker) ![]const u8 {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -35,9 +38,9 @@ pub const Compiler = struct {
     }
 
     /// Compile AST to executable file
-    pub fn compileToExecutable(self: *Compiler, program: *const ast.Program, output_path: []const u8) !void {
+    pub fn compileToExecutable(self: *Compiler, program: *const ast.Program, output_path: []const u8, type_checker: ?*TypeChecker) !void {
         // Generate assembly
-        const asm_code = try self.compileToAssembly(program);
+        const asm_code = try self.compileToAssembly(program, type_checker);
         defer self.allocator.free(asm_code);
 
         // Write assembly to temporary file
