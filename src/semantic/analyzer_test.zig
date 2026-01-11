@@ -5,6 +5,19 @@ const ast = @import("../parser/ast.zig");
 
 const Analyzer = analyzer_module.Analyzer;
 
+// Helper to create a test Program - semantic tests don't heap-allocate AST nodes,
+// so we just create an empty arena to satisfy the struct definition
+fn createTestProgram(allocator: std.mem.Allocator, decls: []const ast.Decl) !ast.Program {
+    // Create an empty arena (won't be used for allocations in these tests)
+    const arena = std.heap.ArenaAllocator.init(allocator);
+
+    return ast.Program{
+        .decls = @constCast(decls),
+        .allocator = allocator,
+        .arena = arena,
+    };
+}
+
 // ============================================================================
 // Basic Analyzer Tests
 // ============================================================================
@@ -21,10 +34,7 @@ test "Analyzer: empty program analysis" {
     var analyzer = Analyzer.init(testing.allocator);
     defer analyzer.deinit();
 
-    const program = ast.Program{
-        .decls = &[_]ast.Decl{},
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &[_]ast.Decl{});
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -51,10 +61,8 @@ test "Analyzer: simple function declaration" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -88,10 +96,8 @@ test "Analyzer: duplicate function declaration" {
     };
 
     var decls = [_]ast.Decl{ func1, func2 };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -127,10 +133,8 @@ test "Analyzer: class declaration with members" {
     };
 
     var decls = [_]ast.Decl{class_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -165,10 +169,8 @@ test "Analyzer: duplicate class member" {
     };
 
     var decls = [_]ast.Decl{class_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -199,10 +201,8 @@ test "Analyzer: union declaration with members" {
     };
 
     var decls = [_]ast.Decl{union_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -236,10 +236,8 @@ test "Analyzer: duplicate union member" {
     };
 
     var decls = [_]ast.Decl{union_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -273,10 +271,8 @@ test "Analyzer: break outside loop" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -341,10 +337,8 @@ test "Analyzer: function with nested scopes and variable shadowing" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     // Shadowing should be allowed (no error)
     try analyzer.analyze(program);
@@ -408,10 +402,8 @@ test "Analyzer: function calling another function" {
     };
 
     var decls = [_]ast.Decl{ helper_func, main_func };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -478,10 +470,8 @@ test "Analyzer: function with multiple return paths" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     // This should pass - we have return in both branches
     try analyzer.analyze(program);
@@ -532,10 +522,8 @@ test "Analyzer: while loop with break" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -578,10 +566,8 @@ test "Analyzer: empty switch statement" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -614,10 +600,8 @@ test "Analyzer: duplicate label" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -669,10 +653,8 @@ test "Analyzer: unreachable code after return" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -734,10 +716,8 @@ test "Analyzer: unreachable code after break" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -785,10 +765,8 @@ test "Analyzer: reachable code (no false positives)" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     // Should pass - all code is reachable
     try analyzer.analyze(program);
@@ -842,10 +820,8 @@ test "Analyzer: context tracking reset per function" {
     };
 
     var decls = [_]ast.Decl{ func1, func2 };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     // Both functions should analyze successfully - labels are scoped to functions
     try analyzer.analyze(program);
@@ -882,10 +858,8 @@ test "Analyzer: goto with undefined label" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -920,10 +894,8 @@ test "Analyzer: goto with valid label" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -954,10 +926,8 @@ test "Analyzer: missing return statement in non-void function" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -992,10 +962,8 @@ test "Analyzer: non-void function with return statement" {
     };
 
     var decls = [_]ast.Decl{func_decl};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -1060,10 +1028,8 @@ test "Analyzer: function call with wrong argument count" {
     };
 
     var decls = [_]ast.Decl{ func1, caller };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -1129,10 +1095,8 @@ test "Analyzer: function call with wrong argument type" {
     };
 
     var decls = [_]ast.Decl{ func1, caller };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -1176,10 +1140,8 @@ test "Analyzer: call to undeclared function" {
     };
 
     var decls = [_]ast.Decl{caller};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);
@@ -1203,10 +1165,8 @@ test "Analyzer: global variable with valid initializer" {
     };
 
     var decls = [_]ast.Decl{global_var};
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     try analyzer.analyze(program);
     try testing.expectEqual(@as(usize, 0), analyzer.errors.items.len);
@@ -1240,10 +1200,8 @@ test "Analyzer: duplicate global variable" {
     };
 
     var decls = [_]ast.Decl{ global_var1, global_var2 };
-    const program = ast.Program{
-        .decls = &decls,
-        .allocator = testing.allocator,
-    };
+    const program = try createTestProgram(testing.allocator, &decls);
+
 
     const result = analyzer.analyze(program);
     try testing.expectError(error.SemanticError, result);

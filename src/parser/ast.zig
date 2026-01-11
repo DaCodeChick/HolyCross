@@ -482,9 +482,11 @@ pub const ClassMember = struct {
 pub const Program = struct {
     decls: []Decl,
     allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Program) void {
-        self.allocator.free(self.decls);
+        // Arena deinit frees all AST allocations at once
+        self.arena.deinit();
     }
 };
 

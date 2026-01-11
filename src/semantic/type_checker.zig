@@ -67,7 +67,12 @@ pub const TypeChecker = struct {
         return switch (expr) {
             .integer => .i64, // Default integer type
             .float => .f64,
-            .string => ast.Type{ .pointer = try self.allocator.create(ast.Type) }, // U8* - TODO: properly allocate
+            .string => blk: {
+                // String literals are U8* (pointer to U8)
+                const u8_type = try self.allocator.create(ast.Type);
+                u8_type.* = .u8;
+                break :blk ast.Type{ .pointer = u8_type };
+            },
             .char => .i32, // HolyC uses I32 for char
             .identifier => |id| try self.inferIdentifierType(id.name, id.loc),
             .binary => |bin| try self.inferBinaryOpType(bin.left.*, bin.op, bin.right.*),

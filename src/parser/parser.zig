@@ -43,6 +43,7 @@ pub const ParserError = error{
 /// Uses recursive descent parsing with Pratt parsing for expressions
 pub const Parser = struct {
     allocator: std.mem.Allocator,
+    ast_allocator: std.mem.Allocator, // Allocator for AST nodes (arena)
     lexer: *Lexer,
     current: Token,
     previous: Token,
@@ -60,6 +61,7 @@ pub const Parser = struct {
 
         var parser = Parser{
             .allocator = allocator,
+            .ast_allocator = allocator, // Will be set in parse()
             .lexer = lex,
             .current = initial_token,
             .previous = initial_token,
@@ -72,13 +74,20 @@ pub const Parser = struct {
 
     /// Parse a complete program
     pub fn parse(self: *Parser) ParserError!Program {
-        const empty_slice = try self.allocator.alloc(Decl, 0);
+        // Create arena for all AST allocations
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena.deinit();
+
+        // Use arena allocator for all AST nodes
+        self.ast_allocator = arena.allocator();
+
+        const empty_slice = try self.ast_allocator.alloc(Decl, 0);
         var decls = std.ArrayList(Decl).fromOwnedSlice(empty_slice);
-        errdefer decls.deinit(self.allocator);
+        errdefer decls.deinit(self.ast_allocator);
 
         while (!self.check(.eof)) {
             if (self.parseDeclaration()) |decl| {
-                try decls.append(self.allocator, decl);
+                try decls.append(self.ast_allocator, decl);
             } else |err| {
                 if (err == error.ParseError) {
                     self.synchronize();
@@ -89,8 +98,9 @@ pub const Parser = struct {
         }
 
         return Program{
-            .decls = try decls.toOwnedSlice(self.allocator),
+            .decls = try decls.toOwnedSlice(self.ast_allocator),
             .allocator = self.allocator,
+            .arena = arena,
         };
     }
 
@@ -317,13 +327,13 @@ pub const Parser = struct {
 
     /// Parse parameter list for function: (Type name, Type name, ...)
     fn parseParameterList(self: *Parser) ParserError![]ast.Param {
-        const empty_slice = try self.allocator.alloc(ast.Param, 0);
+        const empty_slice = try self.ast_allocator.alloc(ast.Param, 0);
         var params = std.ArrayList(ast.Param).fromOwnedSlice(empty_slice);
-        errdefer params.deinit(self.allocator);
+        errdefer params.deinit(self.ast_allocator);
 
         // Empty parameter list
         if (try self.match(.rparen)) {
-            return try params.toOwnedSlice(self.allocator);
+            return try params.toOwnedSlice(self.ast_allocator);
         }
 
         // Parse parameters
@@ -339,7 +349,7 @@ pub const Parser = struct {
             const param_loc = self.locationFromToken(self.current);
             try self.advance();
 
-            try params.append(self.allocator, ast.Param{
+            try params.append(self.ast_allocator, ast.Param{
                 .type = param_type,
                 .name = param_name,
                 .loc = param_loc,
@@ -351,14 +361,14 @@ pub const Parser = struct {
         }
 
         try self.consume(.rparen, "Expected ')' after parameter list");
-        return try params.toOwnedSlice(self.allocator);
+        return try params.toOwnedSlice(self.ast_allocator);
     }
 
     /// Parse class or union members: Type name; Type name; ...
     fn parseMembers(self: *Parser) ParserError![]ast.ClassMember {
-        const empty_slice = try self.allocator.alloc(ast.ClassMember, 0);
+        const empty_slice = try self.ast_allocator.alloc(ast.ClassMember, 0);
         var members = std.ArrayList(ast.ClassMember).fromOwnedSlice(empty_slice);
-        errdefer members.deinit(self.allocator);
+        errdefer members.deinit(self.ast_allocator);
 
         while (!self.check(.rbrace) and !self.check(.eof)) {
             const member_type = try self.parseType();
@@ -374,14 +384,14 @@ pub const Parser = struct {
 
             try self.consume(.semicolon, "Expected ';' after member declaration");
 
-            try members.append(self.allocator, ast.ClassMember{
+            try members.append(self.ast_allocator, ast.ClassMember{
                 .type = member_type,
                 .name = member_name,
                 .loc = member_loc,
             });
         }
 
-        return try members.toOwnedSlice(self.allocator);
+        return try members.toOwnedSlice(self.ast_allocator);
     }
 
     /// Parse class declaration
@@ -545,10 +555,10 @@ pub const Parser = struct {
             const right = try self.parsePrecedence(next_min);
 
             // Create binary expression
-            const left_ptr = try self.allocator.create(Expr);
+            const left_ptr = try self.ast_allocator.create(Expr);
             left_ptr.* = left;
 
-            const right_ptr = try self.allocator.create(Expr);
+            const right_ptr = try self.ast_allocator.create(Expr);
             right_ptr.* = right;
 
             left = Expr{
@@ -581,7 +591,7 @@ pub const Parser = struct {
             const op_token = self.previous;
             const operand = try self.parsePrecedence(14); // High precedence for unary
 
-            const operand_ptr = try self.allocator.create(Expr);
+            const operand_ptr = try self.ast_allocator.create(Expr);
             operand_ptr.* = operand;
 
             return Expr{
@@ -611,7 +621,7 @@ pub const Parser = struct {
                         const cast_loc = self.locationFromToken(saved_previous);
                         const expr = try self.parsePrecedence(14); // High precedence for cast
 
-                        const expr_ptr = try self.allocator.create(Expr);
+                        const expr_ptr = try self.ast_allocator.create(Expr);
                         expr_ptr.* = expr;
 
                         return Expr{
@@ -769,7 +779,7 @@ pub const Parser = struct {
         const expr = try self.parseExpression();
         try self.consume(.rparen, "Expected ')' after sizeof expression");
 
-        const expr_ptr = try self.allocator.create(Expr);
+        const expr_ptr = try self.ast_allocator.create(Expr);
         expr_ptr.* = expr;
 
         return Expr{
@@ -830,14 +840,14 @@ pub const Parser = struct {
 
         // Handle pointer suffix: T* or T**
         while (try self.match(.op_star)) {
-            const ptr_type = try self.allocator.create(Type);
+            const ptr_type = try self.ast_allocator.create(Type);
             ptr_type.* = base_type;
             base_type = Type{ .pointer = ptr_type };
         }
 
         // Handle array suffix: T[n] or T[]
         if (try self.match(.lbracket)) {
-            const element_type_ptr = try self.allocator.create(Type);
+            const element_type_ptr = try self.ast_allocator.create(Type);
             element_type_ptr.* = base_type;
 
             // Check for array size
@@ -866,7 +876,7 @@ pub const Parser = struct {
 
             // Handle pointer suffix after array: T[n]* or T[]*
             while (try self.match(.op_star)) {
-                const ptr_type = try self.allocator.create(Type);
+                const ptr_type = try self.ast_allocator.create(Type);
                 ptr_type.* = base_type;
                 base_type = Type{ .pointer = ptr_type };
             }
@@ -1023,20 +1033,20 @@ pub const Parser = struct {
     /// Parse block statement: { stmts }
     fn parseBlock(self: *Parser) ParserError!Stmt {
         const block_loc = self.locationFromToken(self.previous);
-        const empty_slice = try self.allocator.alloc(Stmt, 0);
+        const empty_slice = try self.ast_allocator.alloc(Stmt, 0);
         var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_slice);
-        errdefer stmts.deinit(self.allocator);
+        errdefer stmts.deinit(self.ast_allocator);
 
         while (!self.check(.rbrace) and !self.check(.eof)) {
             const stmt = try self.parseStatement();
-            try stmts.append(self.allocator, stmt);
+            try stmts.append(self.ast_allocator, stmt);
         }
 
         try self.consume(.rbrace, "Expected '}' after block");
 
         return Stmt{
             .block = .{
-                .stmts = try stmts.toOwnedSlice(self.allocator),
+                .stmts = try stmts.toOwnedSlice(self.ast_allocator),
                 .loc = block_loc,
             },
         };
@@ -1050,11 +1060,11 @@ pub const Parser = struct {
         const condition = try self.parseExpression();
         try self.consume(.rparen, "Expected ')' after if condition");
 
-        const then_stmt_ptr = try self.allocator.create(Stmt);
+        const then_stmt_ptr = try self.ast_allocator.create(Stmt);
         then_stmt_ptr.* = try self.parseStatement();
 
         const else_stmt_ptr: ?*Stmt = if (try self.match(.keyword_else)) blk: {
-            const ptr = try self.allocator.create(Stmt);
+            const ptr = try self.ast_allocator.create(Stmt);
             ptr.* = try self.parseStatement();
             break :blk ptr;
         } else null;
@@ -1077,7 +1087,7 @@ pub const Parser = struct {
         const condition = try self.parseExpression();
         try self.consume(.rparen, "Expected ')' after while condition");
 
-        const body_ptr = try self.allocator.create(Stmt);
+        const body_ptr = try self.ast_allocator.create(Stmt);
         body_ptr.* = try self.parseStatement();
 
         return Stmt{
@@ -1093,7 +1103,7 @@ pub const Parser = struct {
     fn parseDoWhileStatement(self: *Parser) ParserError!Stmt {
         const do_loc = self.locationFromToken(self.previous);
 
-        const body_ptr = try self.allocator.create(Stmt);
+        const body_ptr = try self.ast_allocator.create(Stmt);
         body_ptr.* = try self.parseStatement();
 
         try self.consume(.keyword_while, "Expected 'while' after do-while body");
@@ -1121,7 +1131,7 @@ pub const Parser = struct {
         const init_stmt: ?*Stmt = if (try self.match(.semicolon))
             null // No initializer
         else blk: {
-            const ptr = try self.allocator.create(Stmt);
+            const ptr = try self.ast_allocator.create(Stmt);
             ptr.* = try self.parseStatement();
             break :blk ptr;
         };
@@ -1141,7 +1151,7 @@ pub const Parser = struct {
         try self.consume(.rparen, "Expected ')' after for clauses");
 
         // Parse body
-        const body_ptr = try self.allocator.create(Stmt);
+        const body_ptr = try self.ast_allocator.create(Stmt);
         body_ptr.* = try self.parseStatement();
 
         return Stmt{
@@ -1183,9 +1193,9 @@ pub const Parser = struct {
         try self.consume(.rparen, "Expected ')' after switch expression");
         try self.consume(.lbrace, "Expected '{' before switch body");
 
-        const empty_slice = try self.allocator.alloc(ast.SwitchCase, 0);
+        const empty_slice = try self.ast_allocator.alloc(ast.SwitchCase, 0);
         var cases = std.ArrayList(ast.SwitchCase).fromOwnedSlice(empty_slice);
-        errdefer cases.deinit(self.allocator);
+        errdefer cases.deinit(self.ast_allocator);
 
         while (!self.check(.rbrace) and !self.check(.eof)) {
             if (try self.match(.keyword_case)) {
@@ -1194,37 +1204,37 @@ pub const Parser = struct {
                 try self.consume(.colon, "Expected ':' after case value");
 
                 // Parse statements until next case/default/}
-                const empty_stmts = try self.allocator.alloc(Stmt, 0);
+                const empty_stmts = try self.ast_allocator.alloc(Stmt, 0);
                 var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_stmts);
-                errdefer stmts.deinit(self.allocator);
+                errdefer stmts.deinit(self.ast_allocator);
 
                 while (!self.check(.keyword_case) and !self.check(.keyword_default) and !self.check(.rbrace)) {
                     const stmt = try self.parseStatement();
-                    try stmts.append(self.allocator, stmt);
+                    try stmts.append(self.ast_allocator, stmt);
                 }
 
-                try cases.append(self.allocator, ast.SwitchCase{
+                try cases.append(self.ast_allocator, ast.SwitchCase{
                     .value = case_value,
-                    .stmts = try stmts.toOwnedSlice(self.allocator),
+                    .stmts = try stmts.toOwnedSlice(self.ast_allocator),
                     .loc = self.locationFromToken(self.previous),
                 });
             } else if (try self.match(.keyword_default)) {
                 try self.consume(.colon, "Expected ':' after 'default'");
 
                 // Parse default statements
-                const empty_stmts = try self.allocator.alloc(Stmt, 0);
+                const empty_stmts = try self.ast_allocator.alloc(Stmt, 0);
                 var stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_stmts);
-                errdefer stmts.deinit(self.allocator);
+                errdefer stmts.deinit(self.ast_allocator);
 
                 while (!self.check(.keyword_case) and !self.check(.rbrace)) {
                     const stmt = try self.parseStatement();
-                    try stmts.append(self.allocator, stmt);
+                    try stmts.append(self.ast_allocator, stmt);
                 }
 
                 // Default case uses null value
-                try cases.append(self.allocator, ast.SwitchCase{
+                try cases.append(self.ast_allocator, ast.SwitchCase{
                     .value = null,
-                    .stmts = try stmts.toOwnedSlice(self.allocator),
+                    .stmts = try stmts.toOwnedSlice(self.ast_allocator),
                     .loc = self.locationFromToken(self.previous),
                 });
             } else {
@@ -1238,7 +1248,7 @@ pub const Parser = struct {
         return Stmt{
             .switch_stmt = .{
                 .expr = switch_expr,
-                .cases = try cases.toOwnedSlice(self.allocator),
+                .cases = try cases.toOwnedSlice(self.ast_allocator),
                 .loc = switch_loc,
             },
         };
@@ -1272,13 +1282,13 @@ pub const Parser = struct {
 
         // Parse try block
         try self.consume(.lbrace, "Expected '{' after 'try'");
-        const try_block_ptr = try self.allocator.create(Stmt);
+        const try_block_ptr = try self.ast_allocator.create(Stmt);
         try_block_ptr.* = try self.parseBlock();
 
         // Parse catch block
         try self.consume(.keyword_catch, "Expected 'catch' after try block");
         try self.consume(.lbrace, "Expected '{' after 'catch'");
-        const catch_block_ptr = try self.allocator.create(Stmt);
+        const catch_block_ptr = try self.ast_allocator.create(Stmt);
         catch_block_ptr.* = try self.parseBlock();
 
         return Stmt{
@@ -1302,7 +1312,7 @@ pub const Parser = struct {
         // Function call: func(args)
         if (try self.match(.lparen)) {
             const args = try self.parseCallArguments();
-            const left_ptr = try self.allocator.create(Expr);
+            const left_ptr = try self.ast_allocator.create(Expr);
             left_ptr.* = left.*;
             left.* = Expr{
                 .call = .{
@@ -1318,9 +1328,9 @@ pub const Parser = struct {
         if (try self.match(.lbracket)) {
             const index = try self.parseExpression();
             try self.consume(.rbracket, "Expected ']' after array subscript");
-            const array_ptr = try self.allocator.create(Expr);
+            const array_ptr = try self.ast_allocator.create(Expr);
             array_ptr.* = left.*;
-            const index_ptr = try self.allocator.create(Expr);
+            const index_ptr = try self.ast_allocator.create(Expr);
             index_ptr.* = index;
             left.* = Expr{
                 .subscript = .{
@@ -1336,7 +1346,7 @@ pub const Parser = struct {
         if (try self.match(.op_dot)) {
             try self.consume(.identifier, "Expected member name after '.'");
             const member_name = self.previous.lexeme;
-            const object_ptr = try self.allocator.create(Expr);
+            const object_ptr = try self.ast_allocator.create(Expr);
             object_ptr.* = left.*;
             left.* = Expr{
                 .member = .{
@@ -1352,7 +1362,7 @@ pub const Parser = struct {
         if (try self.match(.op_arrow)) {
             try self.consume(.identifier, "Expected member name after '->'");
             const member_name = self.previous.lexeme;
-            const object_ptr = try self.allocator.create(Expr);
+            const object_ptr = try self.ast_allocator.create(Expr);
             object_ptr.* = left.*;
             left.* = Expr{
                 .arrow = .{
@@ -1366,7 +1376,7 @@ pub const Parser = struct {
 
         // Postfix increment: x++
         if (try self.match(.op_plus_plus)) {
-            const operand_ptr = try self.allocator.create(Expr);
+            const operand_ptr = try self.ast_allocator.create(Expr);
             operand_ptr.* = left.*;
             left.* = Expr{
                 .unary = .{
@@ -1380,7 +1390,7 @@ pub const Parser = struct {
 
         // Postfix decrement: x--
         if (try self.match(.op_minus_minus)) {
-            const operand_ptr = try self.allocator.create(Expr);
+            const operand_ptr = try self.ast_allocator.create(Expr);
             operand_ptr.* = left.*;
             left.* = Expr{
                 .unary = .{
@@ -1398,26 +1408,26 @@ pub const Parser = struct {
     /// Parse function call arguments: (arg1, arg2, ...)
     /// Assumes '(' has already been consumed
     fn parseCallArguments(self: *Parser) ParserError![]Expr {
-        const empty_slice = try self.allocator.alloc(Expr, 0);
+        const empty_slice = try self.ast_allocator.alloc(Expr, 0);
         var args_list = std.ArrayList(Expr).fromOwnedSlice(empty_slice);
-        errdefer args_list.deinit(self.allocator);
+        errdefer args_list.deinit(self.ast_allocator);
 
         // Empty argument list: ()
         if (self.check(.rparen)) {
             try self.advance();
-            return args_list.toOwnedSlice(self.allocator);
+            return args_list.toOwnedSlice(self.ast_allocator);
         }
 
         // Parse arguments
         while (true) {
             const arg = try self.parseExpression();
-            try args_list.append(self.allocator, arg);
+            try args_list.append(self.ast_allocator, arg);
 
             if (!try self.match(.comma)) break;
         }
 
         try self.consume(.rparen, "Expected ')' after function arguments");
-        return args_list.toOwnedSlice(self.allocator);
+        return args_list.toOwnedSlice(self.ast_allocator);
     }
 };
 
