@@ -57,7 +57,7 @@ extern U0 SomeFunction();
 
 ---
 
-## 3. Alias Syntax for Types
+## 3. Type Qualifiers (e.g., 'i' suffix) - NEEDS RESEARCH
 
 **TempleOS Usage (from Kernel/KernelA.HH):**
 ```c
@@ -67,13 +67,19 @@ U16i union U16 {
 };
 ```
 
-This creates **both** the alias `U16` and marks it with the `i` suffix for certain behaviors.
+**Current Status:** Not understood - requires more research
 
-**Current Status:** Not supported - parser error "Expected declaration"
+**Initial misunderstanding:** Originally thought `U16i` was an alias name, but testing in TempleOS playground shows this syntax doesn't work that way (gives "Undefined identifier at 'union'" error).
 
-**Impact:** Cannot define standard library types correctly
+**Likely explanation:** The `i` suffix appears to be a **type qualifier or modifier** (similar to `const` or `volatile` in C), not a separate identifier. The comment in KernelA.HH says "HolyC union structure is treated as a whole if no member is specified, similar to bit fields."
 
-**Solution:** Parser needs to handle `identifier union/class TypeName { ... }` syntax.
+**Needs investigation:** 
+- What does the `i` suffix actually mean in HolyC?
+- Is it parsed as part of the type keyword or separately?
+- How does it affect type behavior?
+- Is this related to "intermediate" representation?
+
+**Impact:** Cannot define standard library types correctly until this is understood
 
 ---
 
@@ -163,7 +169,7 @@ The `I64 class CDate` means CDate inherits from/aliases I64.
 3. ✅ **Array syntax** - COMPLETED! See examples/array_declarations.hc
 
 ### Priority 2 (Standard Library Compatibility):
-4. **Alias syntax** (U16i union U16) - Needed for stdlib
+4. **Type qualifiers (i suffix)** - Needs research to understand actual syntax/semantics
 5. **Top-level #define** - Needed for constants
 6. **Array members in classes** - Common pattern
 
