@@ -55,6 +55,7 @@ pub const Parser = struct {
     peeked: ?Token = null, // One-token lookahead buffer
     had_error: bool = false,
     panic_mode: bool = false,
+    defines: std.StringHashMap([]const u8), // Preprocessor defines: name -> value
 
     /// Initialize parser with a lexer
     pub fn init(allocator: std.mem.Allocator, lex: *Lexer) ParserError!Parser {
@@ -71,11 +72,23 @@ pub const Parser = struct {
             .lexer = lex,
             .current = initial_token,
             .previous = initial_token,
+            .defines = std.StringHashMap([]const u8).init(allocator),
         };
 
         // Prime the parser with the first token
         try parser.advance();
         return parser;
+    }
+
+    /// Clean up parser resources
+    pub fn deinit(self: *Parser) void {
+        // Free all keys and values in the defines map
+        var it = self.defines.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.defines.deinit();
     }
 
     /// Parse a complete program
@@ -96,6 +109,12 @@ pub const Parser = struct {
         errdefer top_level_stmts.deinit(self.ast_allocator);
 
         while (!self.check(.eof)) {
+            // Handle preprocessor directives
+            if (try self.match(.keyword_define)) {
+                try self.parseDefine();
+                continue;
+            }
+
             // Check if this looks like a declaration (starts with attributes or type keywords)
             const is_decl = self.looksLikeDeclaration();
 
@@ -244,6 +263,40 @@ pub const Parser = struct {
 
             self.advance() catch return;
         }
+    }
+
+    // ============================================================================
+    // Preprocessor Directive Parsing
+    // ============================================================================
+
+    /// Parse a #define directive: #define NAME value
+    /// Stores the define in self.defines for later substitution
+    /// Currently supports only simple single-token values
+    fn parseDefine(self: *Parser) ParserError!void {
+        // #define has already been consumed
+
+        // Expect identifier for the macro name
+        if (!self.check(.identifier)) {
+            self.reportErrorAtCurrent("Expected identifier after #define");
+            return error.ParseError;
+        }
+
+        const macro_name = try self.allocator.dupe(u8, self.current.lexeme);
+        try self.advance();
+
+        // Read the value (currently just the next token's lexeme)
+        // This handles simple cases like: #define NULL 0
+        const value = if (!self.check(.eof) and
+            self.current.type != .keyword_define and
+            !self.looksLikeDeclaration())
+        blk: {
+            const val = try self.allocator.dupe(u8, self.current.lexeme);
+            try self.advance();
+            break :blk val;
+        } else try self.allocator.dupe(u8, "");
+
+        // Store the define
+        try self.defines.put(macro_name, value);
     }
 
     // ============================================================================
@@ -854,12 +907,39 @@ pub const Parser = struct {
             };
         }
 
-        // Identifier
+        // Identifier (or macro substitution)
         if (try self.match(.identifier)) {
+            const name = self.previous.lexeme;
+            const loc = self.locationFromToken(self.previous);
+
+            // Check if this identifier is a defined macro
+            if (self.defines.get(name)) |macro_value| {
+                // Simple constant substitution - parse the macro value as an expression
+                // For now, we only support integer literals as macro values
+                if (std.fmt.parseInt(i64, macro_value, 0)) |value| {
+                    return Expr{
+                        .integer = .{
+                            .value = value,
+                            .loc = loc,
+                        },
+                    };
+                } else |_| {
+                    // If it's not an integer, treat it as an identifier
+                    // This allows chained macro definitions like #define I8_MAX 127, #define INVALID I8_MAX
+                    return Expr{
+                        .identifier = .{
+                            .name = macro_value,
+                            .loc = loc,
+                        },
+                    };
+                }
+            }
+
+            // Not a macro, return as regular identifier
             return Expr{
                 .identifier = .{
-                    .name = self.previous.lexeme,
-                    .loc = self.locationFromToken(self.previous),
+                    .name = name,
+                    .loc = loc,
                 },
             };
         }

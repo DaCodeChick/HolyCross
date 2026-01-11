@@ -68,6 +68,7 @@ pub fn main() !void {
     // Phase 2: Parsing
     std.debug.print("[Phase 2] Parsing...\n", .{});
     var pars = try parser.Parser.init(allocator, &lex);
+    defer pars.deinit();
 
     var program = pars.parse() catch |err| {
         std.debug.print("Parse error: {}\n", .{err});
