@@ -302,22 +302,6 @@ pub const Parser = struct {
             return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
         }
 
-        // Check for alias syntax: identifier class/union Name
-        // Example: U16i union U16 { ... }
-        if (self.check(.identifier)) {
-            const next = try self.peek();
-            if (next.type == .keyword_class or next.type == .keyword_union) {
-                const alias_name = self.current.lexeme;
-                try self.advance(); // consume alias identifier
-
-                if (try self.match(.keyword_class)) {
-                    return try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, alias_name);
-                } else if (try self.match(.keyword_union)) {
-                    return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, alias_name);
-                }
-            }
-        }
-
         // Try to parse type (for function/variable declaration)
         // This could be:
         // 1. Return type for function
@@ -1148,13 +1132,6 @@ pub const Parser = struct {
 
             // Check for class/union declaration
             .keyword_class, .keyword_union => return true,
-
-            // Check for alias syntax: identifier followed by class/union
-            // Example: U16i union U16 { ... }
-            .identifier => {
-                const next = self.peek() catch return false;
-                return next.type == .keyword_class or next.type == .keyword_union;
-            },
 
             // Check if it starts with a type keyword
             else => return self.isTypeStart(),

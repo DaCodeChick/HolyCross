@@ -195,7 +195,6 @@ pub const Analyzer = struct {
         name: []const u8,
         members: []ast.ClassMember,
         repr_type: ?ast.Type,
-        alias: ?[]const u8,
         loc: ast.SourceLocation,
         type_kind: enum { class, union_type },
         is_extern: bool,
@@ -270,14 +269,6 @@ pub const Analyzer = struct {
         // Define as a type (use repr_type if present, otherwise a named type)
         const underlying_type = if (repr_type) |rt| rt else ast.Type{ .named = name };
         try self.symbol_table.defineType(name, underlying_type, loc, is_extern);
-
-        // If an alias is specified, also register it as a type
-        // Example: "U16i union U16" - U16i becomes an alias for U16
-        if (alias) |alias_name| {
-            // The alias should refer to the main type
-            const alias_type = ast.Type{ .named = name };
-            try self.symbol_table.defineType(alias_name, alias_type, loc, is_extern);
-        }
     }
 
     /// Collect class declaration
@@ -286,7 +277,6 @@ pub const Analyzer = struct {
             cls.name,
             cls.members,
             cls.repr_type,
-            cls.alias,
             cls.loc,
             .class,
             cls.is_extern,
@@ -299,7 +289,6 @@ pub const Analyzer = struct {
             uni.name,
             uni.members,
             uni.repr_type,
-            uni.alias,
             uni.loc,
             .union_type,
             uni.is_extern,
