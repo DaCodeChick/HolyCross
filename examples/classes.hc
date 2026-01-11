@@ -99,12 +99,13 @@ union Value {
     U64 as_uint;
 };
 
-// Union with representation type
-// Note: HolyC uses 'class' not 'struct' - there is no 'struct' keyword
-I64 union PackedDate {
+// Representation type class (like TempleOS CDate)
+// The I64 before 'class' means this class can be treated as an I64
+// time and date are sequential fields (time at offset 0, date at offset 4)
+// Together they form an I64 value
+I64 class PackedDate {
     U32 time;
     I32 date;
-    I64 raw;
 };
 
 // Union for type punning
