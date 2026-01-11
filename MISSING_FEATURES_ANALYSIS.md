@@ -95,7 +95,7 @@ This creates **both** the alias `U16` and marks it with the `i` suffix for certa
 
 ---
 
-## 5. Array Members in Classes
+## 5. Array Members in Classes ✅ COMPLETED
 
 **TempleOS Usage (from Kernel/KernelA.HH):**
 ```c
@@ -107,21 +107,33 @@ public class CQueVectU8 {
 };
 ```
 
-**Current Status:** Parser error "Expected ';' after member declaration"
+**Status:** ✅ **IMPLEMENTED** - Array members work!
 
-**Impact:** Cannot define data structures with fixed-size buffers
+**Implementation:** Parser now handles array syntax `[size]` after member names in class/union definitions.
 
-**Solution:** Parser needs to support array syntax in class/union members.
+**Example:** See `examples/array_declarations.hc`
 
 ---
 
-## 6. Variable Arrays (Syntax: Type name[size])
+## 6. Variable Arrays (Syntax: Type name[size]) ✅ COMPLETED
 
-**Current Status:** Parser error for declarations like `I64 arr[10];`
+**TempleOS Usage:**
+```c
+I64 numbers[10];
+U8 buffer[256];
+U0 Process(U8 data[512]);
+```
 
-**Impact:** Basic C-style arrays not usable
+**Status:** ✅ **IMPLEMENTED** - Fully working!
 
-**Solution:** Parser needs to handle subscript after identifier in declarations.
+**Implementation:**
+- Parser handles array suffix `[size]` after variable names
+- Works for local variables, global variables, function parameters, and class members
+- Array subscript `[size]` is parsed after the identifier name (C-style)
+
+**Example:** See `examples/array_declarations.hc`
+
+**Note:** Runtime array allocation/access in codegen is still being developed, but parsing is complete.
 
 ---
 
@@ -148,7 +160,7 @@ The `I64 class CDate` means CDate inherits from/aliases I64.
 ### Priority 1 (Core Features):
 1. ✅ **Top-level statements** - COMPLETED! See examples/top_level_execution.hc
 2. ✅ **extern declarations** - COMPLETED! See examples/extern_declarations.hc  
-3. ⬜ **Array syntax** - Basic feature used everywhere
+3. ✅ **Array syntax** - COMPLETED! See examples/array_declarations.hc
 
 ### Priority 2 (Standard Library Compatibility):
 4. **Alias syntax** (U16i union U16) - Needed for stdlib

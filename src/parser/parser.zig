@@ -333,6 +333,32 @@ pub const Parser = struct {
         const name_loc = self.locationFromToken(self.current);
         try self.advance();
 
+        // Check for array suffix: name[size]
+        // This handles global arrays: I64 global_array[10];
+        var final_type = decl_type;
+        if (try self.match(.lbracket)) {
+            const element_type_ptr = try self.ast_allocator.create(ast.Type);
+            element_type_ptr.* = decl_type;
+
+            // Parse array size
+            const size_expr = try self.parseExpression();
+            if (size_expr != .integer) {
+                self.reportErrorAtCurrent("Array size must be a constant integer");
+                return error.ParseError;
+            }
+            const size: u64 = @intCast(size_expr.integer.value);
+
+            try self.consume(.rbracket, "Expected ']' after array size");
+
+            // Update type to be an array
+            final_type = ast.Type{
+                .array = .{
+                    .element_type = element_type_ptr,
+                    .size = size,
+                },
+            };
+        }
+
         // Check if this is a function (has parenthesis) or variable (has semicolon/assignment)
         if (try self.match(.lparen)) {
             // Function declaration
@@ -349,7 +375,7 @@ pub const Parser = struct {
 
             return Decl{
                 .function = .{
-                    .return_type = decl_type,
+                    .return_type = final_type,
                     .name = name,
                     .params = params,
                     .body = body,
@@ -368,7 +394,7 @@ pub const Parser = struct {
 
             return Decl{
                 .global_var = .{
-                    .type = decl_type,
+                    .type = final_type,
                     .name = name,
                     .init = init_expr,
                     .loc = name_loc,
@@ -390,7 +416,7 @@ pub const Parser = struct {
 
         // Parse parameters
         while (true) {
-            const param_type = try self.parseType();
+            var param_type = try self.parseType();
 
             if (!self.check(.identifier)) {
                 self.reportErrorAtCurrent("Expected parameter name");
@@ -400,6 +426,35 @@ pub const Parser = struct {
             const param_name = self.current.lexeme;
             const param_loc = self.locationFromToken(self.current);
             try self.advance();
+
+            // Check for array suffix: param_name[size]
+            // Handles TempleOS-style: U0 Process(U8 data[512]);
+            if (try self.match(.lbracket)) {
+                const element_type_ptr = try self.ast_allocator.create(ast.Type);
+                element_type_ptr.* = param_type;
+
+                // Parse array size (or empty for unsized)
+                const size: ?u64 = if (self.check(.rbracket))
+                    null // Unsized array: data[]
+                else blk: {
+                    const size_expr = try self.parseExpression();
+                    if (size_expr != .integer) {
+                        self.reportErrorAtCurrent("Array size must be a constant integer");
+                        return error.ParseError;
+                    }
+                    break :blk @intCast(size_expr.integer.value);
+                };
+
+                try self.consume(.rbracket, "Expected ']' after array size");
+
+                // Update type to be an array
+                param_type = ast.Type{
+                    .array = .{
+                        .element_type = element_type_ptr,
+                        .size = size,
+                    },
+                };
+            }
 
             try params.append(self.ast_allocator, ast.Param{
                 .type = param_type,
@@ -423,7 +478,7 @@ pub const Parser = struct {
         errdefer members.deinit(self.ast_allocator);
 
         while (!self.check(.rbrace) and !self.check(.eof)) {
-            const member_type = try self.parseType();
+            var member_type = try self.parseType();
 
             if (!self.check(.identifier)) {
                 self.reportErrorAtCurrent("Expected member name");
@@ -433,6 +488,31 @@ pub const Parser = struct {
             const member_name = self.current.lexeme;
             const member_loc = self.locationFromToken(self.current);
             try self.advance();
+
+            // Check for array suffix: member_name[size]
+            // Handles TempleOS-style: U8 body[512];
+            if (try self.match(.lbracket)) {
+                const element_type_ptr = try self.ast_allocator.create(ast.Type);
+                element_type_ptr.* = member_type;
+
+                // Parse array size
+                const size_expr = try self.parseExpression();
+                if (size_expr != .integer) {
+                    self.reportErrorAtCurrent("Array size must be a constant integer");
+                    return error.ParseError;
+                }
+                const size: u64 = @intCast(size_expr.integer.value);
+
+                try self.consume(.rbracket, "Expected ']' after array size");
+
+                // Update type to be an array
+                member_type = ast.Type{
+                    .array = .{
+                        .element_type = element_type_ptr,
+                        .size = size,
+                    },
+                };
+            }
 
             try self.consume(.semicolon, "Expected ';' after member declaration");
 
@@ -1062,16 +1142,41 @@ pub const Parser = struct {
         return ops.isTypeStartToken(self.current.type);
     }
 
-    /// Parse variable declaration: Type name = expr;
+    /// Parse variable declaration: Type name = expr; or Type name[size] = expr;
     fn parseVarDeclaration(self: *Parser) ParserError!Stmt {
         const decl_loc = self.locationFromToken(self.current);
 
-        // Parse type
-        const var_type = try self.parseType();
+        // Parse base type
+        var var_type = try self.parseType();
 
         // Parse variable name
         try self.consume(.identifier, "Expected variable name");
         const var_name = self.previous.lexeme;
+
+        // Check for array suffix: name[size]
+        // This handles TempleOS-style array syntax: I64 numbers[10];
+        if (try self.match(.lbracket)) {
+            const element_type_ptr = try self.ast_allocator.create(ast.Type);
+            element_type_ptr.* = var_type;
+
+            // Parse array size
+            const size_expr = try self.parseExpression();
+            if (size_expr != .integer) {
+                self.reportErrorAtCurrent("Array size must be a constant integer");
+                return error.ParseError;
+            }
+            const size: u64 = @intCast(size_expr.integer.value);
+
+            try self.consume(.rbracket, "Expected ']' after array size");
+
+            // Update type to be an array
+            var_type = ast.Type{
+                .array = .{
+                    .element_type = element_type_ptr,
+                    .size = size,
+                },
+            };
+        }
 
         // Optional initializer
         const init_expr: ?Expr = if (try self.match(.op_equal))
