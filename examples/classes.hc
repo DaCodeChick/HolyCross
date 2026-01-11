@@ -100,11 +100,10 @@ union Value {
 };
 
 // Union with representation type
+// Note: HolyC uses 'class' not 'struct' - there is no 'struct' keyword
 I64 union PackedDate {
-    struct {
-        U32 time;
-        I32 date;
-    };
+    U32 time;
+    I32 date;
     I64 raw;
 };
 
@@ -238,26 +237,22 @@ U64 class ProcessHandle {
 // UNIONS FOR BIT MANIPULATION
 // ============================================================================
 
-// Color union
+// Color union (simple flat members)
 union Color {
     U32 value;
-    struct {
-        U8 r;
-        U8 g;
-        U8 b;
-        U8 a;
-    };
+    U8 r;
+    U8 g;
+    U8 b;
+    U8 a;
 };
 
-// CPU Flags union
+// CPU Flags union (simple flat members)
 union CPUFlags {
     U64 value;
-    struct {
-        U8 carry;
-        U8 zero;
-        U8 sign;
-        U8 overflow;
-    };
+    U8 carry;
+    U8 zero;
+    U8 sign;
+    U8 overflow;
 };
 
 // ============================================================================
