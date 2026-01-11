@@ -27,18 +27,18 @@ F64* values = &array;
 // Pointer with null
 I64* null_ptr = 0;
 
-// Array declarations
-I64[10] numbers;
-U8[256] bytes;
-F64[100] samples;
+// Array declarations (subscript after variable name)
+I64 numbers[10];
+U8 bytes[256];
+F64 samples[100];
 
 // Array with unsized
-I64[] dynamic;
-U8[] buffer2;
+I64 dynamic[];
+U8 buffer2[];
 
 // Complex types
-I64*[5] ptr_array;
-I64[10]* array_ptr;
+I64* ptr_array[5];              // Array of 5 I64 pointers
+I64 (*array_ptr)[10];           // Pointer to array of 10 I64s
 
 // Multiple similar declarations
 I64 a;
