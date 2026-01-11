@@ -3,14 +3,14 @@
 //! This module implements a recursive descent parser for the HolyC language.
 //! Expression parsing uses Pratt parsing for handling operator precedence.
 //!
-//! Structure:
-//! - Token Management: Token consumption and lookahead
-//! - Error Handling: Error reporting and synchronization
-//! - Declaration Parsing: Functions, classes, unions, globals
-//! - Expression Parsing: Pratt parser with proper precedence
-//! - Type Parsing: Primitives, pointers, arrays, named types
-//! - Statement Parsing: Control flow, variable declarations
-//! - Postfix Parsing: Function calls, subscripts, member access
+//! Structure (with approximate line numbers):
+//! - Token Management (lines 110-146): Token consumption and lookahead
+//! - Error Handling (lines 149-195): Error reporting and synchronization
+//! - Declaration Parsing (lines 197-520): Functions, classes, unions, globals
+//! - Expression Parsing (lines 522-830): Pratt parser with proper precedence
+//! - Type Parsing (lines 832-910): Primitives, pointers, arrays, named types
+//! - Statement Parsing (lines 912-1301): Control flow, variable declarations
+//! - Postfix Parsing (lines 1303-1431): Function calls, subscripts, member access
 //!
 //! Tests are located in parser_test.zig (68 tests covering all features)
 
@@ -30,6 +30,11 @@ const BinaryOp = ast.BinaryOp;
 const UnaryOp = ast.UnaryOp;
 const SourceLocation = ast.SourceLocation;
 const Program = ast.Program;
+
+// Precedence constants for expression parsing
+const PREC_LOWEST = 1; // Lowest precedence level (assignment, comma)
+const PREC_UNARY = 14; // Precedence for unary operators (-, !, *, &, etc.)
+const PREC_CAST = 14; // Precedence for type casts
 
 /// Parser errors
 pub const ParserError = error{
@@ -525,7 +530,7 @@ pub const Parser = struct {
 
     /// Parse an expression
     pub fn parseExpression(self: *Parser) ParserError!Expr {
-        return self.parsePrecedence(1); // Lowest precedence
+        return self.parsePrecedence(PREC_LOWEST);
     }
 
     /// Parse expression with minimum precedence (Pratt parsing)
@@ -589,7 +594,7 @@ pub const Parser = struct {
         // Unary operators
         if (try self.parseUnaryOperator()) |unary_op| {
             const op_token = self.previous;
-            const operand = try self.parsePrecedence(14); // High precedence for unary
+            const operand = try self.parsePrecedence(PREC_UNARY);
 
             const operand_ptr = try self.ast_allocator.create(Expr);
             operand_ptr.* = operand;
@@ -619,7 +624,7 @@ pub const Parser = struct {
                     if (try self.match(.rparen)) {
                         // It's a cast: (Type)expr
                         const cast_loc = self.locationFromToken(saved_previous);
-                        const expr = try self.parsePrecedence(14); // High precedence for cast
+                        const expr = try self.parsePrecedence(PREC_CAST);
 
                         const expr_ptr = try self.ast_allocator.create(Expr);
                         expr_ptr.* = expr;
