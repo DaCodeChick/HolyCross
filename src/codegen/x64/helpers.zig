@@ -54,6 +54,18 @@ pub const GenContext = struct {
         }
         return null;
     }
+
+    /// Check if a variable is global
+    pub fn isGlobalVar(self: *const GenContext, name: []const u8) bool {
+        if (self.current_module) |module| {
+            for (module.globals.items) |global| {
+                if (std.mem.eql(u8, global.name, name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 };
 
 /// Stack layout for a function - tracks offsets for variables and temporaries

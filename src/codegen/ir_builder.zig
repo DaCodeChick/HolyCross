@@ -31,6 +31,7 @@ pub const IRBuilder = struct {
     temp_counter: u32,
     label_counter: u32,
     break_label_stack: std.ArrayList(u32), // Track break labels for nested loops
+    label_map: std.StringHashMap(u32), // Map label names to label IDs (per function)
 
     pub fn init(allocator: Allocator) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
@@ -42,12 +43,14 @@ pub const IRBuilder = struct {
             .temp_counter = 0,
             .label_counter = 0,
             .break_label_stack = std.ArrayList(u32).fromOwnedSlice(empty_labels),
+            .label_map = std.StringHashMap(u32).init(allocator),
         };
     }
 
     pub fn deinit(self: *IRBuilder) void {
         self.module.deinit();
         self.break_label_stack.deinit(self.allocator);
+        self.label_map.deinit();
     }
 
     // ========================================================================
@@ -66,6 +69,16 @@ pub const IRBuilder = struct {
         const label = self.label_counter;
         self.label_counter += 1;
         return label;
+    }
+
+    /// Get or create a label ID for a named label (used for goto/label)
+    fn getOrCreateLabel(self: *IRBuilder, name: []const u8) !u32 {
+        if (self.label_map.get(name)) |existing_id| {
+            return existing_id;
+        }
+        const new_id = self.newLabel();
+        try self.label_map.put(name, new_id);
+        return new_id;
     }
 
     /// Emit an instruction to the current block
@@ -91,7 +104,7 @@ pub const IRBuilder = struct {
     pub fn buildDeclaration(self: *IRBuilder, decl: ast.Decl) !void {
         switch (decl) {
             .function => |func| try self.buildFunction(func),
-            .global_var => {}, // Global variables - TODO later
+            .global_var => |gvar| try self.buildGlobalVariable(gvar),
             .class => {}, // Class declarations - TODO later
             .union_decl => {}, // Union declarations - TODO later
             .import => {}, // Imports - TODO later
@@ -104,6 +117,9 @@ pub const IRBuilder = struct {
         const ir_func = try self.module.createFunction(func.name);
         self.current_function = ir_func;
         self.temp_counter = 0;
+
+        // Clear label map for new function
+        self.label_map.clearRetainingCapacity();
 
         // Set function metadata
         ir_func.param_count = @intCast(func.params.len);
@@ -143,6 +159,22 @@ pub const IRBuilder = struct {
         self.current_block = null;
     }
 
+    fn buildGlobalVariable(self: *IRBuilder, gvar: @TypeOf(@as(ast.Decl, undefined).global_var)) !void {
+        // Evaluate initializer if present
+        var init_value: ?ir.Operand = null;
+        if (gvar.init) |init_expr| {
+            // For globals, we can only handle constant initializers
+            init_value = switch (init_expr) {
+                .integer => |int| .{ .constant = .{ .int = int.value } },
+                .float => |flt| .{ .constant = .{ .float = flt.value } },
+                .char => |ch| .{ .constant = .{ .int = @intCast(ch.value) } },
+                else => null, // Non-constant initializers need runtime code
+            };
+        }
+
+        try self.module.addGlobal(gvar.name, self.typeToString(gvar.type), init_value);
+    }
+
     // ========================================================================
     // Statement Building
     // ========================================================================
@@ -180,14 +212,24 @@ pub const IRBuilder = struct {
             .for_stmt => |for_stmt| {
                 try self.buildForStatement(for_stmt);
             },
-            .switch_stmt => {
-                // TODO: Switch statements
+            .switch_stmt => |switch_stmt| {
+                try self.buildSwitchStatement(switch_stmt);
             },
-            .goto_stmt => {
-                // TODO: Goto statements
+            .goto_stmt => |goto_stmt| {
+                // Get or create label ID for this label name
+                const label_id = try self.getOrCreateLabel(goto_stmt.label);
+                try self.emit(.{
+                    .opcode = .jump,
+                    .dest = .{ .label = label_id },
+                });
             },
-            .label => {
-                // TODO: Label statements
+            .label => |label_stmt| {
+                // Get or create label ID for this label name
+                const label_id = try self.getOrCreateLabel(label_stmt.name);
+                try self.emit(.{
+                    .opcode = .label,
+                    .dest = .{ .label = label_id },
+                });
             },
             .break_stmt => {
                 // Get the current loop's end label from the stack
@@ -204,11 +246,17 @@ pub const IRBuilder = struct {
             .do_while => |do_while_stmt| {
                 try self.buildDoWhileStatement(do_while_stmt);
             },
-            .try_catch => {
-                // TODO: Try statements
+            .try_catch => |try_catch| {
+                // Try-catch: for now, just execute the try block
+                // TODO: Proper exception handling would require runtime support
+                try self.buildStatement(try_catch.try_block.*);
+                // Ignore catch block for now
             },
-            .asm_block => {
-                // TODO: Assembly statements
+            .asm_block => |asm_block| {
+                // TODO: Emit inline assembly
+                // For now, just ignore - proper implementation would need
+                // to pass through the assembly code to the output
+                _ = asm_block;
             },
             .empty => {},
         }
@@ -436,6 +484,89 @@ pub const IRBuilder = struct {
         });
     }
 
+    fn buildSwitchStatement(self: *IRBuilder, switch_stmt: @TypeOf(@as(ast.Stmt, undefined).switch_stmt)) !void {
+        const end_label = self.newLabel();
+
+        // Push end_label to break stack for break statements
+        try self.break_label_stack.append(self.allocator, end_label);
+        defer _ = self.break_label_stack.pop();
+
+        // Evaluate switch expression once
+        const switch_value = try self.buildExpression(switch_stmt.expr);
+
+        // Create labels for each case
+        const case_labels = try self.allocator.alloc(u32, switch_stmt.cases.len);
+        defer self.allocator.free(case_labels);
+
+        var default_label: ?u32 = null;
+
+        for (switch_stmt.cases, 0..) |case, i| {
+            case_labels[i] = self.newLabel();
+            if (case.value == null) {
+                default_label = case_labels[i];
+            }
+        }
+
+        // Generate comparison and jumps for each case
+        for (switch_stmt.cases, 0..) |case, i| {
+            if (case.value) |case_value| {
+                // Evaluate case value
+                const case_val = try self.buildExpression(case_value);
+
+                // Compare: switch_value == case_value
+                const cmp_result = self.newTemp();
+                try self.emit(.{
+                    .opcode = .cmp_eq,
+                    .dest = .{ .temp = cmp_result },
+                    .src1 = switch_value,
+                    .src2 = case_val,
+                });
+
+                // Jump to case label if equal
+                try self.emit(.{
+                    .opcode = .jump_if_not_zero,
+                    .src1 = .{ .temp = cmp_result },
+                    .dest = .{ .label = case_labels[i] },
+                });
+            }
+        }
+
+        // If no case matched, jump to default or end
+        if (default_label) |def_label| {
+            try self.emit(.{
+                .opcode = .jump,
+                .dest = .{ .label = def_label },
+            });
+        } else {
+            try self.emit(.{
+                .opcode = .jump,
+                .dest = .{ .label = end_label },
+            });
+        }
+
+        // Generate code for each case
+        for (switch_stmt.cases, 0..) |case, i| {
+            try self.emit(.{
+                .opcode = .label,
+                .dest = .{ .label = case_labels[i] },
+            });
+
+            // Execute case statements
+            for (case.stmts) |stmt| {
+                try self.buildStatement(stmt);
+            }
+
+            // Note: HolyC has implicit fallthrough like C
+            // Break statements will jump to end_label via break_label_stack
+        }
+
+        // End label
+        try self.emit(.{
+            .opcode = .label,
+            .dest = .{ .label = end_label },
+        });
+    }
+
     // ========================================================================
     // Expression Building
     // ========================================================================
@@ -480,8 +611,7 @@ pub const IRBuilder = struct {
                 return try self.buildCall(call);
             },
             .member, .arrow => {
-                // TODO: Member access
-                return .{ .temp = self.newTemp() };
+                return try self.buildMemberAccess(expr);
             },
             .subscript => |sub| {
                 return try self.buildSubscript(sub);
@@ -492,8 +622,7 @@ pub const IRBuilder = struct {
                 return try self.buildExpression(cast.expr.*);
             },
             .sizeof_expr, .sizeof_type, .offset => {
-                // TODO: Sizeof and offset
-                return .{ .constant = .{ .int = 8 } };
+                return try self.buildSizeofOrOffset(expr);
             },
         }
     }
@@ -651,6 +780,15 @@ pub const IRBuilder = struct {
             return .{ .temp = temp };
         }
 
+        // Handle increment/decrement operators
+        // These modify the operand and have different semantics for pre/post
+        switch (un.op) {
+            .pre_increment, .pre_decrement, .post_increment, .post_decrement => {
+                return try self.buildIncrementDecrement(un);
+            },
+            else => {},
+        }
+
         // For other unary operators, evaluate operand first
         const operand = try self.buildExpression(un.operand.*);
 
@@ -658,7 +796,8 @@ pub const IRBuilder = struct {
             .negate => .neg,
             .bitwise_not => .bit_not,
             .logical_not => .log_not,
-            else => .move, // TODO: Handle other unary operators
+            .plus => .move, // Unary plus is just a no-op
+            else => return error.UnhandledUnaryOperator,
         };
 
         try self.emit(.{
@@ -668,6 +807,59 @@ pub const IRBuilder = struct {
         });
 
         return .{ .temp = temp };
+    }
+
+    fn buildIncrementDecrement(self: *IRBuilder, un: @TypeOf(@as(ast.Expr, undefined).unary)) !ir.Operand {
+        // Get the variable name
+        const var_name = switch (un.operand.*) {
+            .identifier => |ident| ident.name,
+            else => return error.InvalidIncrementDecrementTarget,
+        };
+
+        // Load current value
+        const current = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_var,
+            .dest = .{ .temp = current },
+            .src1 = .{ .variable = var_name },
+        });
+
+        // Create constant 1
+        const one = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_const,
+            .dest = .{ .temp = one },
+            .src1 = .{ .constant = .{ .int = 1 } },
+        });
+
+        // Calculate new value
+        const new_value = self.newTemp();
+        const opcode: ir.Opcode = switch (un.op) {
+            .pre_increment, .post_increment => .add,
+            .pre_decrement, .post_decrement => .sub,
+            else => unreachable,
+        };
+
+        try self.emit(.{
+            .opcode = opcode,
+            .dest = .{ .temp = new_value },
+            .src1 = .{ .temp = current },
+            .src2 = .{ .temp = one },
+        });
+
+        // Store new value back
+        try self.emit(.{
+            .opcode = .store_var,
+            .dest = .{ .variable = var_name },
+            .src1 = .{ .temp = new_value },
+        });
+
+        // Return value depends on pre vs post
+        return switch (un.op) {
+            .pre_increment, .pre_decrement => .{ .temp = new_value }, // Return new value
+            .post_increment, .post_decrement => .{ .temp = current }, // Return old value
+            else => unreachable,
+        };
     }
 
     fn buildCall(self: *IRBuilder, call: @TypeOf(@as(ast.Expr, undefined).call)) !ir.Operand {
@@ -757,6 +949,145 @@ pub const IRBuilder = struct {
         });
 
         return .{ .temp = result };
+    }
+
+    fn buildMemberAccess(self: *IRBuilder, expr: ast.Expr) !ir.Operand {
+        // Handle both . (member) and -> (arrow) access
+        // For arrow: ptr->member is equivalent to (*ptr).member
+
+        const object_expr = switch (expr) {
+            .member => |m| m.object,
+            .arrow => |a| a.object,
+            else => unreachable,
+        };
+
+        const member_name = switch (expr) {
+            .member => |m| m.member,
+            .arrow => |a| a.member,
+            else => unreachable,
+        };
+
+        const is_arrow = switch (expr) {
+            .arrow => true,
+            else => false,
+        };
+
+        // Get base address of the object
+        var base_addr: ir.Operand = undefined;
+
+        if (is_arrow) {
+            // For arrow: object is already a pointer, just evaluate it
+            base_addr = try self.buildExpression(object_expr.*);
+        } else {
+            // For member: need to get address of the object
+            switch (object_expr.*) {
+                .identifier => |ident| {
+                    const temp = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .load_addr,
+                        .dest = .{ .temp = temp },
+                        .src1 = .{ .variable = ident.name },
+                    });
+                    base_addr = .{ .temp = temp };
+                },
+                else => {
+                    // For complex expressions, evaluate and treat as pointer
+                    base_addr = try self.buildExpression(object_expr.*);
+                },
+            }
+        }
+
+        // TODO: Get actual member offset from type information
+        // For now, we'll use a simple hash of the member name as offset
+        // This is a placeholder - proper implementation needs class/union layout info
+        const member_offset = self.calculateMemberOffset(member_name);
+
+        // Calculate address: base + offset
+        const offset_temp = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_const,
+            .dest = .{ .temp = offset_temp },
+            .src1 = .{ .constant = .{ .int = member_offset } },
+        });
+
+        const member_addr = self.newTemp();
+        try self.emit(.{
+            .opcode = .add,
+            .dest = .{ .temp = member_addr },
+            .src1 = base_addr,
+            .src2 = .{ .temp = offset_temp },
+        });
+
+        // Load value from member address
+        const result = self.newTemp();
+        try self.emit(.{
+            .opcode = .load_ptr,
+            .dest = .{ .temp = result },
+            .src1 = .{ .temp = member_addr },
+        });
+
+        return .{ .temp = result };
+    }
+
+    /// Calculate member offset (placeholder implementation)
+    /// TODO: Replace with actual type layout information from semantic analyzer
+    fn calculateMemberOffset(self: *IRBuilder, member_name: []const u8) i64 {
+        _ = self;
+        // Simple hash-based offset for now
+        // In practice, this should look up the member in the class/union definition
+        var hash: u32 = 0;
+        for (member_name) |c| {
+            hash = hash *% 31 +% c;
+        }
+        // Use modulo to keep offsets reasonable (0, 8, 16, 24...)
+        return @as(i64, (hash % 8)) * 8;
+    }
+
+    fn buildSizeofOrOffset(self: *IRBuilder, expr: ast.Expr) !ir.Operand {
+        const size = switch (expr) {
+            .sizeof_expr => |s| blk: {
+                // Calculate size of the expression's type
+                // TODO: Get actual type from semantic analysis
+                _ = s;
+                break :blk @as(i64, 8); // Default to 8 bytes
+            },
+            .sizeof_type => |s| blk: {
+                // Calculate size of the type
+                break :blk self.calculateTypeSize(s.type);
+            },
+            .offset => |o| blk: {
+                // Calculate offset of member in type
+                // TODO: Use actual type layout information
+                _ = o.type;
+                break :blk self.calculateMemberOffset(o.member);
+            },
+            else => unreachable,
+        };
+
+        return .{ .constant = .{ .int = size } };
+    }
+
+    /// Calculate size of a type
+    fn calculateTypeSize(self: *IRBuilder, typ: ast.Type) i64 {
+        return switch (typ) {
+            .i0, .u0 => 0,
+            .i8, .u8 => 1,
+            .i16, .u16 => 2,
+            .i32, .u32 => 4,
+            .i64, .u64, .f64 => 8,
+            .pointer => 8, // Pointers are always 8 bytes on x64
+            .array => |arr| blk: {
+                const elem_size = self.calculateTypeSize(arr.element_type.*);
+                if (arr.size) |size| {
+                    break :blk elem_size * @as(i64, @intCast(size));
+                } else {
+                    // Unsized array defaults to pointer size
+                    break :blk 8;
+                }
+            },
+            .named => 8, // Class/union - TODO: look up actual size
+            .function => 8, // Function pointers
+        };
     }
 
     // ========================================================================

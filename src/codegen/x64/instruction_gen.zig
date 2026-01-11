@@ -75,8 +75,16 @@ pub const Memory = struct {
         switch (instr.src1) {
             .variable => |v| {
                 try ctx.emitComment("load variable {s}", .{v});
-                const offset = ctx.getVarOffset(v);
-                try ctx.emit("    mov rax, [rbp-{d}]  # {s}\n", .{ offset, v });
+
+                // Check if this is a global variable
+                if (ctx.isGlobalVar(v)) {
+                    // Global variable - use RIP-relative addressing
+                    try ctx.emit("    mov rax, [{s}]  # global\n", .{v});
+                } else {
+                    // Local variable - use RBP-relative addressing
+                    const offset = ctx.getVarOffset(v);
+                    try ctx.emit("    mov rax, [rbp-{d}]  # {s}\n", .{ offset, v });
+                }
             },
             else => {},
         }
@@ -88,8 +96,16 @@ pub const Memory = struct {
         switch (instr.dest) {
             .variable => |v| {
                 try ctx.emitComment("store to variable {s}", .{v});
-                const offset = ctx.getVarOffset(v);
-                try ctx.emit("    mov [rbp-{d}], rax  # {s}\n", .{ offset, v });
+
+                // Check if this is a global variable
+                if (ctx.isGlobalVar(v)) {
+                    // Global variable - use RIP-relative addressing
+                    try ctx.emit("    mov [{s}], rax  # global\n", .{v});
+                } else {
+                    // Local variable - use RBP-relative addressing
+                    const offset = ctx.getVarOffset(v);
+                    try ctx.emit("    mov [rbp-{d}], rax  # {s}\n", .{ offset, v });
+                }
             },
             else => {},
         }
@@ -135,8 +151,15 @@ pub const Memory = struct {
         switch (instr.src1) {
             .variable => |v| {
                 try ctx.emitComment("load address of {s}", .{v});
-                const offset = ctx.getVarOffset(v);
-                try ctx.emit("    lea rax, [rbp-{d}]  # &{s}\n", .{ offset, v });
+
+                if (ctx.isGlobalVar(v)) {
+                    // Global variable - use LEA with RIP-relative addressing
+                    try ctx.emit("    lea rax, [{s}]  # &{s} (global)\n", .{ v, v });
+                } else {
+                    // Local variable - use LEA with RBP-relative addressing
+                    const offset = ctx.getVarOffset(v);
+                    try ctx.emit("    lea rax, [rbp-{d}]  # &{s}\n", .{ offset, v });
+                }
             },
             else => {},
         }

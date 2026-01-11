@@ -213,19 +213,29 @@ pub const Function = struct {
     }
 };
 
+/// Global variable declaration
+pub const GlobalVar = struct {
+    name: []const u8,
+    type_hint: ?[]const u8, // Type info (e.g., "I64", "U8")
+    init_value: ?Operand, // Initial value (constant or none)
+};
+
 /// Complete IR Module
 pub const Module = struct {
     allocator: Allocator,
     functions: std.ArrayList(Function),
+    globals: std.ArrayList(GlobalVar), // Global variables
     string_literals: std.StringHashMap(u32), // Map string -> ID
     string_table: std.ArrayList([]const u8), // ID -> string
 
     pub fn init(allocator: Allocator) !Module {
         const empty_funcs = try allocator.alloc(Function, 0);
+        const empty_globals = try allocator.alloc(GlobalVar, 0);
         const empty_strings = try allocator.alloc([]const u8, 0);
         return .{
             .allocator = allocator,
             .functions = std.ArrayList(Function).fromOwnedSlice(empty_funcs),
+            .globals = std.ArrayList(GlobalVar).fromOwnedSlice(empty_globals),
             .string_literals = std.StringHashMap(u32).init(allocator),
             .string_table = std.ArrayList([]const u8).fromOwnedSlice(empty_strings),
         };
@@ -236,6 +246,7 @@ pub const Module = struct {
             func.deinit();
         }
         self.functions.deinit(self.allocator);
+        self.globals.deinit(self.allocator);
         self.string_literals.deinit();
         self.string_table.deinit(self.allocator);
     }
@@ -243,6 +254,14 @@ pub const Module = struct {
     pub fn createFunction(self: *Module, name: []const u8) !*Function {
         try self.functions.append(self.allocator, try Function.init(self.allocator, name));
         return &self.functions.items[self.functions.items.len - 1];
+    }
+
+    pub fn addGlobal(self: *Module, name: []const u8, type_hint: ?[]const u8, init_value: ?Operand) !void {
+        try self.globals.append(self.allocator, .{
+            .name = name,
+            .type_hint = type_hint,
+            .init_value = init_value,
+        });
     }
 
     pub fn addStringLiteral(self: *Module, str: []const u8) !u32 {
@@ -262,6 +281,22 @@ pub const Module = struct {
             try writer.writeAll("=== String Literals ===\n");
             for (self.string_table.items, 0..) |str, i| {
                 try writer.print(".str{d}: \"{s}\"\n", .{ i, str });
+            }
+            try writer.writeAll("\n");
+        }
+
+        // Print global variables
+        if (self.globals.items.len > 0) {
+            try writer.writeAll("=== Global Variables ===\n");
+            for (self.globals.items) |global| {
+                try writer.print("{s}", .{global.name});
+                if (global.type_hint) |hint| {
+                    try writer.print(" [{s}]", .{hint});
+                }
+                if (global.init_value) |init_val| {
+                    try writer.print(" = {any}", .{init_val});
+                }
+                try writer.writeAll("\n");
             }
             try writer.writeAll("\n");
         }

@@ -56,14 +56,52 @@ pub const X64Generator = struct {
     }
 
     fn emitDataSection(self: *X64Generator, module: *const ir.Module) !void {
-        if (module.string_table.items.len == 0) return;
+        const has_strings = module.string_table.items.len > 0;
+        const has_globals = module.globals.items.len > 0;
 
-        try self.output.writer(self.allocator).print(".section .rodata\n", .{});
-        for (module.string_table.items, 0..) |str, i| {
-            try self.output.writer(self.allocator).print(".str{d}:\n", .{i});
-            try self.output.writer(self.allocator).print("    .string \"{s}\"\n", .{str});
+        if (!has_strings and !has_globals) return;
+
+        // Emit read-only data (strings)
+        if (has_strings) {
+            try self.output.writer(self.allocator).print(".section .rodata\n", .{});
+            for (module.string_table.items, 0..) |str, i| {
+                try self.output.writer(self.allocator).print(".str{d}:\n", .{i});
+                try self.output.writer(self.allocator).print("    .string \"{s}\"\n", .{str});
+            }
+            try self.output.writer(self.allocator).print("\n", .{});
         }
-        try self.output.writer(self.allocator).print("\n", .{});
+
+        // Emit global variables
+        if (has_globals) {
+            try self.output.writer(self.allocator).print(".section .data\n", .{});
+            for (module.globals.items) |global| {
+                try self.output.writer(self.allocator).print(".globl {s}\n", .{global.name});
+                try self.output.writer(self.allocator).print("{s}:\n", .{global.name});
+
+                // Emit initializer or zero
+                if (global.init_value) |init_val| {
+                    switch (init_val) {
+                        .constant => |c| switch (c) {
+                            .int => |val| try self.output.writer(self.allocator).print("    .quad {d}\n", .{val}),
+                            .float => |val| {
+                                // Convert float to hex representation for assembly
+                                const int_bits: u64 = @bitCast(val);
+                                try self.output.writer(self.allocator).print("    .quad 0x{x}\n", .{int_bits});
+                            },
+                            .bool => |val| try self.output.writer(self.allocator).print("    .quad {d}\n", .{@as(i64, if (val) 1 else 0)}),
+                        },
+                        else => {
+                            // Fallback to zero initialization for complex cases
+                            try self.output.writer(self.allocator).print("    .quad 0\n", .{});
+                        },
+                    }
+                } else {
+                    // No initializer - zero initialize
+                    try self.output.writer(self.allocator).print("    .quad 0\n", .{});
+                }
+            }
+            try self.output.writer(self.allocator).print("\n", .{});
+        }
     }
 
     fn emitTextSection(self: *X64Generator, module: *const ir.Module) !void {
