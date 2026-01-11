@@ -50,6 +50,7 @@ pub const Analyzer = struct {
     class_members: std.StringHashMap([]ast.ClassMember), // Map class name to members
     union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
     type_layouts: std.StringHashMap(TypeLayout), // Map type name to layout info
+    class_bases: std.StringHashMap([]const u8), // Map derived class name to base class name
 
     pub fn init(allocator: Allocator) Analyzer {
         return Analyzer{
@@ -65,13 +66,19 @@ pub const Analyzer = struct {
             .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .type_layouts = std.StringHashMap(TypeLayout).init(allocator),
+            .class_bases = std.StringHashMap([]const u8).init(allocator),
         };
     }
 
     /// Initialize the type checker after the analyzer is at its final memory location
     /// This must be called immediately after init() before using the analyzer
     pub fn initTypeChecker(self: *Analyzer) void {
-        self.type_checker = TypeChecker.init(self.allocator, &self.symbol_table);
+        self.type_checker = TypeChecker.init(
+            self.allocator,
+            &self.symbol_table,
+            &self.class_members,
+            &self.class_bases,
+        );
     }
 
     pub fn deinit(self: *Analyzer) void {
@@ -83,6 +90,7 @@ pub const Analyzer = struct {
         self.labels.deinit();
         self.class_members.deinit();
         self.union_members.deinit();
+        self.class_bases.deinit();
 
         // Free type layout member arrays
         var layout_iter = self.type_layouts.valueIterator();
@@ -273,6 +281,11 @@ pub const Analyzer = struct {
 
     /// Collect class declaration
     fn collectClassDeclaration(self: *Analyzer, cls: anytype) AnalyzerError!void {
+        // Store base class relationship if present
+        if (cls.base_class) |base_name| {
+            try self.class_bases.put(cls.name, base_name);
+        }
+
         try self.collectCompositeTypeDeclaration(
             cls.name,
             cls.members,
@@ -622,8 +635,10 @@ pub const Analyzer = struct {
         };
 
         // Look up members in class_members or union_members
-        const members = self.class_members.get(type_name) orelse
-            self.union_members.get(type_name) orelse {
+        const is_class = self.class_members.contains(type_name);
+        const is_union = self.union_members.contains(type_name);
+
+        if (!is_class and !is_union) {
             // Type not found in our maps - might be an undefined type
             const msg = try std.fmt.allocPrint(
                 self.allocator,
@@ -632,10 +647,18 @@ pub const Analyzer = struct {
             );
             try self.addError(.undeclared_identifier, msg, loc);
             return;
+        }
+
+        // Check if member exists (including inherited members for classes)
+        const member_found = if (is_class)
+            self.findMemberInClassHierarchy(type_name, member_name)
+        else blk: {
+            // For unions, just check direct members
+            const members = self.union_members.get(type_name).?;
+            break :blk helpers.findMember(members, member_name) != null;
         };
 
-        // Check if member exists
-        if (helpers.findMember(members, member_name) == null) {
+        if (!member_found) {
             const msg = try std.fmt.allocPrint(
                 self.allocator,
                 "Type '{s}' has no member named '{s}'",
@@ -643,6 +666,26 @@ pub const Analyzer = struct {
             );
             try self.addError(.undeclared_identifier, msg, loc);
         }
+    }
+
+    /// Find a member in a class, checking the inheritance hierarchy
+    fn findMemberInClassHierarchy(self: *Analyzer, class_name: []const u8, member_name: []const u8) bool {
+        var current_class: ?[]const u8 = class_name;
+
+        // Walk up the inheritance chain
+        while (current_class) |cls_name| {
+            // Check if member exists in current class
+            if (self.class_members.get(cls_name)) |members| {
+                if (helpers.findMember(members, member_name) != null) {
+                    return true;
+                }
+            }
+
+            // Move to base class
+            current_class = self.class_bases.get(cls_name);
+        }
+
+        return false;
     }
 
     /// Analyze variable declaration

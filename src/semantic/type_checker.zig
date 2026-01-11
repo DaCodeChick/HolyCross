@@ -34,12 +34,23 @@ pub const TypeChecker = struct {
     type_arena: std.heap.ArenaAllocator, // Arena for Type* allocations
     errors: std.ArrayList(TypeError),
 
-    pub fn init(allocator: Allocator, sym_table: *SymbolTable) TypeChecker {
+    // References to analyzer's type information (for member access)
+    class_members: *std.StringHashMap([]ast.ClassMember),
+    class_bases: *std.StringHashMap([]const u8),
+
+    pub fn init(
+        allocator: Allocator,
+        sym_table: *SymbolTable,
+        class_members: *std.StringHashMap([]ast.ClassMember),
+        class_bases: *std.StringHashMap([]const u8),
+    ) TypeChecker {
         return .{
             .symbol_table = sym_table,
             .allocator = allocator,
             .type_arena = std.heap.ArenaAllocator.init(allocator),
             .errors = .{},
+            .class_members = class_members,
+            .class_bases = class_bases,
         };
     }
 
@@ -260,11 +271,53 @@ pub const TypeChecker = struct {
 
     /// Infer type of member access
     fn inferMemberType(self: *TypeChecker, object: ast.Expr, member: []const u8) TypeCheckError!ast.Type {
-        _ = object;
-        _ = member;
-        // TODO: Implement member type lookup for classes/unions
-        try self.addError(.not_implemented, "Member access type checking not yet implemented", ast.SourceLocation{ .line = 0, .column = 0 });
+        // First, infer the type of the object
+        const object_type = try self.inferExprType(object);
+
+        // Get the base type name (handle pointers, etc.)
+        const type_name = switch (object_type) {
+            .named => |name| name,
+            .pointer => |ptr_type| switch (ptr_type.*) {
+                .named => |name| name,
+                else => {
+                    try self.addError(.not_implemented, "Complex pointer member access not yet supported", ast.SourceLocation{ .line = 0, .column = 0 });
+                    return error.TypeError;
+                },
+            },
+            else => {
+                try self.addError(.not_implemented, "Member access on non-class/union type not supported", ast.SourceLocation{ .line = 0, .column = 0 });
+                return error.TypeError;
+            },
+        };
+
+        // Look up the member in the class hierarchy
+        if (try self.findMemberTypeInHierarchy(type_name, member)) |member_type| {
+            return member_type;
+        }
+
+        // Member not found - error already reported
         return error.TypeError;
+    }
+
+    /// Find a member's type in a class hierarchy
+    fn findMemberTypeInHierarchy(self: *TypeChecker, class_name: []const u8, member_name: []const u8) TypeCheckError!?ast.Type {
+        var current_class: ?[]const u8 = class_name;
+        const helpers = @import("analyzer_helpers.zig");
+
+        // Walk up the inheritance chain
+        while (current_class) |cls_name| {
+            // Check if member exists in current class
+            if (self.class_members.get(cls_name)) |members| {
+                if (helpers.findMember(members, member_name)) |member| {
+                    return member.type;
+                }
+            }
+
+            // Move to base class
+            current_class = self.class_bases.get(cls_name);
+        }
+
+        return null;
     }
 
     // ============================================================================
