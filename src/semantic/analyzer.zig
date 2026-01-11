@@ -14,6 +14,7 @@ const std = @import("std");
 const ast = @import("../parser/ast.zig");
 const symbol_table = @import("symbol_table.zig");
 const type_checker = @import("type_checker.zig");
+const helpers = @import("analyzer_helpers.zig");
 
 const Allocator = std.mem.Allocator;
 const SymbolTable = symbol_table.SymbolTable;
@@ -250,87 +251,45 @@ pub const Analyzer = struct {
     // Helper Functions
     // ========================================================================
 
-    /// Infer expression type and propagate type checker errors to analyzer.
-    /// This helper consolidates the common pattern of calling inferExprType and
-    /// transferring any type checker errors to the analyzer's error list.
+    /// Infer expression type and propagate type checker errors to analyzer
     fn inferExprTypeOrPropagate(self: *Analyzer, expr: ast.Expr) !ast.Type {
-        return self.type_checker.inferExprType(expr) catch |err| {
-            if (self.type_checker.errors.items.len > 0) {
-                const type_err = self.type_checker.errors.items[self.type_checker.errors.items.len - 1];
-                const msg = try self.allocator.dupe(u8, type_err.message);
-                try self.errors.append(self.allocator, .{
-                    .kind = .type_mismatch,
-                    .message = msg,
-                    .loc = type_err.loc,
-                });
-            }
-            return err;
-        };
+        return helpers.inferExprTypeOrPropagate(
+            self.allocator,
+            &self.type_checker,
+            &self.errors,
+            expr,
+        );
     }
 
-    /// Resolve type through pointer dereference if arrow operator is used.
-    /// Returns the appropriate type for member access based on whether '.' or '->' was used.
+    /// Resolve type through pointer dereference if arrow operator is used
     fn resolveAccessType(
         self: *Analyzer,
         object_type: ast.Type,
         is_arrow: bool,
         loc: ast.SourceLocation,
     ) !ast.Type {
-        if (!is_arrow) return object_type;
-
-        return switch (object_type) {
-            .pointer => |ptr_type| ptr_type.*,
-            else => {
-                const msg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "Arrow operator requires pointer type, got '{s}'",
-                    .{@tagName(object_type)},
-                );
-                try self.addError(.type_mismatch, msg, loc);
-                return error.SemanticError;
-            },
-        };
+        return helpers.resolveAccessType(
+            self.allocator,
+            object_type,
+            is_arrow,
+            loc,
+            &self.errors,
+        );
     }
 
-    /// Find a member by name in a member list.
-    /// Returns the member if found, null otherwise.
-    fn findMember(members: []const ast.ClassMember, name: []const u8) ?ast.ClassMember {
-        for (members) |member| {
-            if (std.mem.eql(u8, member.name, name)) {
-                return member;
-            }
-        }
-        return null;
-    }
-
-    /// Look up a function symbol by name, reporting appropriate errors if not found or not callable.
+    /// Look up a function symbol by name
     fn lookupFunctionSymbol(
         self: *Analyzer,
         func_name: []const u8,
         loc: ast.SourceLocation,
     ) !symbol_table.FunctionSymbol {
-        const symbol = self.symbol_table.lookupSymbol(func_name) orelse {
-            const msg = try std.fmt.allocPrint(
-                self.allocator,
-                "Undeclared function '{s}'",
-                .{func_name},
-            );
-            try self.addError(.undeclared_identifier, msg, loc);
-            return error.SemanticError;
-        };
-
-        return switch (symbol) {
-            .function => |f| f,
-            else => {
-                const msg = try std.fmt.allocPrint(
-                    self.allocator,
-                    "'{s}' is not a function",
-                    .{func_name},
-                );
-                try self.addError(.not_callable, msg, loc);
-                return error.SemanticError;
-            },
-        };
+        return helpers.lookupFunctionSymbol(
+            self.allocator,
+            &self.symbol_table,
+            func_name,
+            loc,
+            &self.errors,
+        );
     }
 
     // ========================================================================
@@ -582,7 +541,7 @@ pub const Analyzer = struct {
         };
 
         // Check if member exists
-        if (findMember(members, member_name) == null) {
+        if (helpers.findMember(members, member_name) == null) {
             const msg = try std.fmt.allocPrint(
                 self.allocator,
                 "Type '{s}' has no member named '{s}'",
