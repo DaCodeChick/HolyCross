@@ -11,8 +11,10 @@ pub const IRBuilder = struct {
     current_block: ?*ir.BasicBlock,
     temp_counter: u32,
     label_counter: u32,
+    break_label_stack: std.ArrayList(u32), // Track break labels for nested loops
 
     pub fn init(allocator: Allocator) !IRBuilder {
+        const empty_labels = try allocator.alloc(u32, 0);
         return .{
             .allocator = allocator,
             .module = try ir.Module.init(allocator),
@@ -20,11 +22,13 @@ pub const IRBuilder = struct {
             .current_block = null,
             .temp_counter = 0,
             .label_counter = 0,
+            .break_label_stack = std.ArrayList(u32).fromOwnedSlice(empty_labels),
         };
     }
 
     pub fn deinit(self: *IRBuilder) void {
         self.module.deinit();
+        self.break_label_stack.deinit(self.allocator);
     }
 
     /// Generate a new temporary register
@@ -155,10 +159,19 @@ pub const IRBuilder = struct {
                 // TODO: Label statements
             },
             .break_stmt => {
-                // TODO: Break statements
+                // Get the current loop's end label from the stack
+                if (self.break_label_stack.items.len > 0) {
+                    const break_label = self.break_label_stack.items[self.break_label_stack.items.len - 1];
+                    try self.emit(.{
+                        .opcode = .jump,
+                        .dest = .{ .label = break_label },
+                    });
+                } else {
+                    return error.BreakOutsideLoop;
+                }
             },
-            .do_while => {
-                // TODO: Do-while statements
+            .do_while => |do_while_stmt| {
+                try self.buildDoWhileStatement(do_while_stmt);
             },
             .try_catch => {
                 // TODO: Try statements
@@ -249,6 +262,10 @@ pub const IRBuilder = struct {
         const body_label = self.newLabel();
         const end_label = self.newLabel();
 
+        // Push end_label to break stack for break statements
+        try self.break_label_stack.append(self.allocator, end_label);
+        defer _ = self.break_label_stack.pop();
+
         // Loop header
         try self.emit(.{
             .opcode = .label,
@@ -296,6 +313,10 @@ pub const IRBuilder = struct {
         const continue_label = self.newLabel();
         const end_label = self.newLabel();
 
+        // Push end_label to break stack for break statements
+        try self.break_label_stack.append(self.allocator, end_label);
+        defer _ = self.break_label_stack.pop();
+
         // Loop header
         try self.emit(.{
             .opcode = .label,
@@ -334,6 +355,47 @@ pub const IRBuilder = struct {
         try self.emit(.{
             .opcode = .jump,
             .dest = .{ .label = loop_label },
+        });
+
+        // End label
+        try self.emit(.{
+            .opcode = .label,
+            .dest = .{ .label = end_label },
+        });
+    }
+
+    fn buildDoWhileStatement(self: *IRBuilder, do_while_stmt: @TypeOf(@as(ast.Stmt, undefined).do_while)) !void {
+        const body_label = self.newLabel();
+        const condition_label = self.newLabel();
+        const end_label = self.newLabel();
+
+        // Push end_label to break stack for break statements
+        try self.break_label_stack.append(self.allocator, end_label);
+        defer _ = self.break_label_stack.pop();
+
+        // Body label - do-while executes body at least once
+        try self.emit(.{
+            .opcode = .label,
+            .dest = .{ .label = body_label },
+        });
+
+        // Execute body
+        try self.buildStatement(do_while_stmt.body.*);
+
+        // Condition label
+        try self.emit(.{
+            .opcode = .label,
+            .dest = .{ .label = condition_label },
+        });
+
+        // Evaluate condition
+        const cond = try self.buildExpression(do_while_stmt.condition);
+
+        // Jump back to body if condition is true (non-zero)
+        try self.emit(.{
+            .opcode = .jump_if_not_zero,
+            .src1 = cond,
+            .dest = .{ .label = body_label },
         });
 
         // End label
