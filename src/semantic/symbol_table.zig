@@ -108,6 +108,7 @@ pub const SymbolTable = struct {
         return_type: ast.Type,
         params: []const ast.Param,
         loc: ast.SourceLocation,
+        is_extern: bool,
     ) !void {
         const symbol = scope.Symbol{
             .function = FunctionSymbol{
@@ -115,9 +116,32 @@ pub const SymbolTable = struct {
                 .return_type = return_type,
                 .params = params,
                 .loc = loc,
+                .is_extern = is_extern,
             },
         };
         try self.scope_stack.define(symbol);
+    }
+
+    /// Update an existing function in the current scope (e.g., replacing extern with definition)
+    /// Returns error.SymbolNotDefined if the function doesn't exist
+    pub fn updateFunction(
+        self: *SymbolTable,
+        name: []const u8,
+        return_type: ast.Type,
+        params: []const ast.Param,
+        loc: ast.SourceLocation,
+        is_extern: bool,
+    ) !void {
+        const symbol = scope.Symbol{
+            .function = FunctionSymbol{
+                .name = name,
+                .return_type = return_type,
+                .params = params,
+                .loc = loc,
+                .is_extern = is_extern,
+            },
+        };
+        try self.scope_stack.update(symbol);
     }
 
     /// Define a type (class, union, or typedef) in the current scope
@@ -127,12 +151,14 @@ pub const SymbolTable = struct {
         name: []const u8,
         underlying_type: ast.Type,
         loc: ast.SourceLocation,
+        is_extern: bool,
     ) !void {
         const symbol = scope.Symbol{
             .type_def = TypeSymbol{
                 .name = name,
                 .underlying_type = underlying_type,
                 .loc = loc,
+                .is_extern = is_extern,
             },
         };
         try self.scope_stack.define(symbol);

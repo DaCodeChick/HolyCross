@@ -57,7 +57,7 @@ test "SymbolTable: Define and lookup functions" {
         .{ .name = "b", .type = .i64, .loc = loc },
     };
 
-    try sym_table.defineFunction("Add", .i64, &params, loc);
+    try sym_table.defineFunction("Add", .i64, &params, loc, false);
 
     // Lookup should find the function
     const symbol = sym_table.lookupSymbol("Add");
@@ -83,7 +83,7 @@ test "SymbolTable: Define and lookup types" {
     try sym_table.enterGlobalScope();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
-    try sym_table.defineType("MyInt", .i64, loc);
+    try sym_table.defineType("MyInt", .i64, loc, false);
 
     // Lookup should find the type
     const symbol = sym_table.lookupSymbol("MyInt");
@@ -246,8 +246,8 @@ test "SymbolTable: Mixed symbol types in same scope" {
 
     // Define different symbol types with different names
     try sym_table.defineVariable("x", .i64, true, true, loc);
-    try sym_table.defineFunction("Add", .i64, &params, loc);
-    try sym_table.defineType("MyType", .i32, loc);
+    try sym_table.defineFunction("Add", .i64, &params, loc, false);
+    try sym_table.defineType("MyType", .i32, loc, false);
 
     // Each should be found with correct type
     try testing.expect(sym_table.isVariableDefined("x"));

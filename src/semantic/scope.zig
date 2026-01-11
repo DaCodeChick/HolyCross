@@ -59,6 +59,18 @@ pub const Scope = struct {
         try self.symbols.put(name, symbol);
     }
 
+    /// Update an existing symbol in this scope
+    /// Returns error if symbol doesn't exist
+    pub fn update(self: *Scope, symbol: Symbol) !void {
+        const name = symbol.getName();
+
+        if (!self.symbols.contains(name)) {
+            return error.SymbolNotDefined;
+        }
+
+        try self.symbols.put(name, symbol);
+    }
+
     /// Look up a symbol in this scope only (no parent search)
     pub fn lookupLocal(self: *Scope, name: []const u8) ?Symbol {
         return self.symbols.get(name);
@@ -132,6 +144,12 @@ pub const ScopeStack = struct {
     pub fn define(self: *ScopeStack, symbol: Symbol) !void {
         const scope = self.getCurrentScope() orelse return error.NoActiveScope;
         try scope.define(symbol);
+    }
+
+    /// Update an existing symbol in the current scope
+    pub fn update(self: *ScopeStack, symbol: Symbol) !void {
+        const scope = self.getCurrentScope() orelse return error.NoActiveScope;
+        try scope.update(symbol);
     }
 
     /// Look up a symbol starting from the current scope

@@ -137,8 +137,36 @@ pub const Analyzer = struct {
 
     /// Collect function declaration
     fn collectFunctionDeclaration(self: *Analyzer, func: anytype) AnalyzerError!void {
+        const is_extern = func.attributes.is_extern;
+        const has_body = func.body != null;
+
         // Check for duplicate function
         if (self.symbol_table.lookupLocal(func.name)) |existing| {
+            // Allow extern declaration followed by definition
+            if (existing == .function) {
+                const existing_func = existing.function;
+                const existing_is_extern = existing_func.is_extern;
+
+                // Valid combinations:
+                // 1. extern declaration + definition (extern first, then full function)
+                // 2. extern declaration + extern declaration (multiple extern declarations)
+                if (existing_is_extern and !is_extern and has_body) {
+                    // Replace extern declaration with full definition
+                    try self.symbol_table.updateFunction(
+                        func.name,
+                        func.return_type,
+                        func.params,
+                        func.loc,
+                        false, // Not extern anymore, it's a definition
+                    );
+                    return;
+                } else if (existing_is_extern and is_extern) {
+                    // Multiple extern declarations are okay (just redundant)
+                    return;
+                }
+            }
+
+            // Otherwise it's a real redeclaration error
             const msg = try std.fmt.allocPrint(
                 self.allocator,
                 "Redeclaration of function '{s}' (previously declared at line {d})",
@@ -149,11 +177,14 @@ pub const Analyzer = struct {
         }
 
         // Define function in symbol table
+        // An extern without a body is an extern declaration
+        // A function with a body (regardless of extern keyword) is a definition
         try self.symbol_table.defineFunction(
             func.name,
             func.return_type,
             func.params,
             func.loc,
+            is_extern and !has_body,
         );
     }
 
@@ -166,18 +197,45 @@ pub const Analyzer = struct {
         repr_type: ?ast.Type,
         loc: ast.SourceLocation,
         type_kind: enum { class, union_type },
+        is_extern: bool,
     ) AnalyzerError!void {
         const kind_str = if (type_kind == .class) "class" else "union";
 
         // Check for duplicate declaration
         if (self.symbol_table.lookupLocal(name)) |existing| {
-            const msg = try std.fmt.allocPrint(
-                self.allocator,
-                "Redeclaration of {s} '{s}' (previously declared at line {d})",
-                .{ kind_str, name, existing.getLocation().line },
-            );
-            try self.addError(.redeclared_identifier, msg, loc);
-            return;
+            // Allow extern declaration followed by full definition
+            if (existing == .type_def) {
+                const existing_type = existing.type_def;
+                const existing_is_extern = existing_type.is_extern;
+
+                // Valid combinations:
+                // 1. extern declaration + full definition
+                // 2. extern declaration + extern declaration (redundant but okay)
+                if (existing_is_extern and !is_extern) {
+                    // Replace extern declaration with full definition
+                    // We don't return here because we need to process members
+                } else if (existing_is_extern and is_extern) {
+                    // Multiple extern declarations are okay
+                    return;
+                } else {
+                    // Real redeclaration error
+                    const msg = try std.fmt.allocPrint(
+                        self.allocator,
+                        "Redeclaration of {s} '{s}' (previously declared at line {d})",
+                        .{ kind_str, name, existing.getLocation().line },
+                    );
+                    try self.addError(.redeclared_identifier, msg, loc);
+                    return;
+                }
+            } else {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Redeclaration of {s} '{s}' (previously declared at line {d})",
+                    .{ kind_str, name, existing.getLocation().line },
+                );
+                try self.addError(.redeclared_identifier, msg, loc);
+                return;
+            }
         }
 
         // Check for duplicate member names within the composite type
@@ -210,7 +268,7 @@ pub const Analyzer = struct {
 
         // Define as a type (use repr_type if present, otherwise a named type)
         const underlying_type = if (repr_type) |rt| rt else ast.Type{ .named = name };
-        try self.symbol_table.defineType(name, underlying_type, loc);
+        try self.symbol_table.defineType(name, underlying_type, loc, is_extern);
     }
 
     /// Collect class declaration
@@ -221,6 +279,7 @@ pub const Analyzer = struct {
             cls.repr_type,
             cls.loc,
             .class,
+            cls.is_extern,
         );
     }
 
@@ -232,6 +291,7 @@ pub const Analyzer = struct {
             uni.repr_type,
             uni.loc,
             .union_type,
+            uni.is_extern,
         );
     }
 
@@ -877,6 +937,7 @@ pub const AnalyzerError = error{
     OutOfMemory,
     NoActiveScope,
     SymbolAlreadyDefined,
+    SymbolNotDefined,
     TypeError,
 };
 

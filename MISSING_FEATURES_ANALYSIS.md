@@ -29,20 +29,31 @@ MyFunc;  // Top-level function call - executes when file is loaded
 
 ---
 
-## 2. Extern Forward Declarations
+## 2. Extern Forward Declarations ✅ COMPLETED
 
 **TempleOS Usage (from Kernel/KernelA.HH):**
 ```c
 extern class CAOT;
 extern class CAOTHeapGlbl;
 extern class CTask;
+
+extern U0 SomeFunction();
 ```
 
-**Current Status:** Not supported - causes "Redeclaration" errors
+**Status:** ✅ **IMPLEMENTED** - Fully working!
 
-**Impact:** Cannot organize code with header files properly
+**Implementation:**
+- Added `is_extern` field to `FunctionSymbol` and `TypeSymbol`
+- Modified semantic analyzer to allow extern declarations followed by definitions
+- Multiple extern declarations are allowed (redundant but valid)
+- IR builder skips generating code for extern-only declarations
 
-**Solution:** Semantic analyzer should track extern declarations separately from definitions.
+**Valid patterns:**
+1. `extern` declaration → full definition (most common)
+2. Multiple `extern` declarations for the same symbol (redundant but okay)
+3. `extern` declaration without definition (forward reference, linker resolves)
+
+**Example:** See `examples/extern_declarations.hc`
 
 ---
 
@@ -136,7 +147,7 @@ The `I64 class CDate` means CDate inherits from/aliases I64.
 
 ### Priority 1 (Core Features):
 1. ✅ **Top-level statements** - COMPLETED! See examples/top_level_execution.hc
-2. ⬜ **extern declarations** - Needed for multi-file projects
+2. ✅ **extern declarations** - COMPLETED! See examples/extern_declarations.hc  
 3. ⬜ **Array syntax** - Basic feature used everywhere
 
 ### Priority 2 (Standard Library Compatibility):

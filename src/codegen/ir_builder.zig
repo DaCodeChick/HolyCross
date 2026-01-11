@@ -137,6 +137,11 @@ pub const IRBuilder = struct {
     }
 
     fn buildFunction(self: *IRBuilder, func: @TypeOf(@as(ast.Decl, undefined).function)) !void {
+        // Skip extern functions without bodies (forward declarations)
+        if (func.attributes.is_extern and func.body == null) {
+            return;
+        }
+
         // Create IR function
         const ir_func = try self.module.createFunction(func.name);
         self.current_function = ir_func;

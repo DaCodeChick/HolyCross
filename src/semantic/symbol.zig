@@ -46,6 +46,7 @@ pub const FunctionSymbol = struct {
     return_type: ast.Type,
     params: []const ast.Param,
     loc: ast.SourceLocation,
+    is_extern: bool, // True if this is an extern declaration without a body
 };
 
 /// Type definition symbol information
@@ -53,4 +54,5 @@ pub const TypeSymbol = struct {
     name: []const u8,
     underlying_type: ast.Type,
     loc: ast.SourceLocation,
+    is_extern: bool, // True if this is an extern forward declaration
 };
