@@ -22,8 +22,10 @@ const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
 const ir = @import("ir.zig");
 const type_checker_module = @import("../semantic/type_checker.zig");
+const type_layout_module = @import("../semantic/type_layout.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
+const TypeLayout = type_layout_module.TypeLayout;
 
 /// IR Builder - converts AST to IR
 pub const IRBuilder = struct {
@@ -36,8 +38,9 @@ pub const IRBuilder = struct {
     break_label_stack: std.ArrayList(u32), // Track break labels for nested loops
     label_map: std.StringHashMap(u32), // Map label names to label IDs (per function)
     type_checker: ?*TypeChecker, // Optional type checker for type inference
+    type_layouts: ?*const std.StringHashMap(TypeLayout), // Optional type layout map
 
-    pub fn init(allocator: Allocator, type_checker: ?*TypeChecker) !IRBuilder {
+    pub fn init(allocator: Allocator, type_checker: ?*TypeChecker, type_layouts: ?*const std.StringHashMap(TypeLayout)) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
         return .{
             .allocator = allocator,
@@ -49,6 +52,7 @@ pub const IRBuilder = struct {
             .break_label_stack = std.ArrayList(u32).fromOwnedSlice(empty_labels),
             .label_map = std.StringHashMap(u32).init(allocator),
             .type_checker = type_checker,
+            .type_layouts = type_layouts,
         };
     }
 
@@ -1003,10 +1007,42 @@ pub const IRBuilder = struct {
             }
         }
 
-        // TODO: Get actual member offset from type information
-        // For now, we'll use a simple hash of the member name as offset
-        // This is a placeholder - proper implementation needs class/union layout info
-        const member_offset = self.calculateMemberOffset(member_name);
+        // Get actual member offset from type information
+        const member_offset = blk: {
+            // Try to infer the object's type using type checker
+            if (self.type_checker) |tc| {
+                const obj_type = tc.inferExprType(object_expr.*) catch {
+                    // If type inference fails, use hash-based fallback
+                    break :blk self.calculateMemberOffsetFallback(member_name);
+                };
+
+                // Get type name for layout lookup
+                const type_name = switch (obj_type) {
+                    .named => |name| name,
+                    .pointer => |ptr| switch (ptr.*) {
+                        .named => |name| name,
+                        else => {
+                            break :blk self.calculateMemberOffsetFallback(member_name);
+                        },
+                    },
+                    else => {
+                        break :blk self.calculateMemberOffsetFallback(member_name);
+                    },
+                };
+
+                // Look up type layout
+                if (self.type_layouts) |layouts| {
+                    if (layouts.get(type_name)) |layout| {
+                        if (layout.getMemberOffset(member_name)) |offset| {
+                            break :blk @as(i64, @intCast(offset));
+                        }
+                    }
+                }
+            }
+
+            // Fallback to hash-based offset
+            break :blk self.calculateMemberOffsetFallback(member_name);
+        };
 
         // Calculate address: base + offset
         const offset_temp = self.newTemp();
@@ -1035,12 +1071,10 @@ pub const IRBuilder = struct {
         return .{ .temp = result };
     }
 
-    /// Calculate member offset (placeholder implementation)
-    /// TODO: Replace with actual type layout information from semantic analyzer
-    fn calculateMemberOffset(self: *IRBuilder, member_name: []const u8) i64 {
+    /// Calculate member offset using hash (fallback when layout is unavailable)
+    fn calculateMemberOffsetFallback(self: *IRBuilder, member_name: []const u8) i64 {
         _ = self;
-        // Simple hash-based offset for now
-        // In practice, this should look up the member in the class/union definition
+        // Simple hash-based offset for fallback
         var hash: u32 = 0;
         for (member_name) |c| {
             hash = hash *% 31 +% c;
@@ -1070,9 +1104,23 @@ pub const IRBuilder = struct {
             },
             .offset => |o| blk: {
                 // Calculate offset of member in type
-                // TODO: Use actual type layout information
-                _ = o.type;
-                break :blk self.calculateMemberOffset(o.member);
+                if (self.type_layouts) |layouts| {
+                    const type_name = switch (o.type) {
+                        .named => |name| name,
+                        else => {
+                            break :blk self.calculateMemberOffsetFallback(o.member);
+                        },
+                    };
+
+                    if (layouts.get(type_name)) |layout| {
+                        if (layout.getMemberOffset(o.member)) |offset| {
+                            break :blk @as(i64, @intCast(offset));
+                        }
+                    }
+                }
+
+                // Fallback
+                break :blk self.calculateMemberOffsetFallback(o.member);
             },
             else => unreachable,
         };
@@ -1098,7 +1146,16 @@ pub const IRBuilder = struct {
                     break :blk 8;
                 }
             },
-            .named => 8, // Class/union - TODO: look up actual size
+            .named => |name| blk: {
+                // Look up actual size from type layouts
+                if (self.type_layouts) |layouts| {
+                    if (layouts.get(name)) |layout| {
+                        break :blk @as(i64, @intCast(layout.total_size));
+                    }
+                }
+                // Default to 8 bytes if layout not found
+                break :blk 8;
+            },
             .function => 8, // Function pointers
         };
     }

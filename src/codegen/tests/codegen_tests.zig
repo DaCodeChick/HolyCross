@@ -9,7 +9,7 @@ test "IRBuilder: simple function" {
     const allocator = testing.allocator;
 
     // Create a simple AST: U0 Main() { }
-    var builder = try ir_builder.IRBuilder.init(allocator, null);
+    var builder = try ir_builder.IRBuilder.init(allocator, null, null);
     defer builder.deinit();
 
     const func = @as(ast.Decl, .{ .function = .{
@@ -35,7 +35,7 @@ test "IRBuilder: simple function" {
 test "IRBuilder: function with string expression" {
     const allocator = testing.allocator;
 
-    var builder = try ir_builder.IRBuilder.init(allocator, null);
+    var builder = try ir_builder.IRBuilder.init(allocator, null, null);
     defer builder.deinit();
 
     // Create AST for: U0 Main() { "Hello, World!\n"; }

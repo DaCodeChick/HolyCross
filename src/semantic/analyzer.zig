@@ -25,10 +25,12 @@ const ast = @import("../parser/ast.zig");
 const symbol_table = @import("symbol_table.zig");
 const type_checker = @import("type_checker.zig");
 const helpers = @import("analyzer_helpers.zig");
+const type_layout = @import("type_layout.zig");
 
 const Allocator = std.mem.Allocator;
 const SymbolTable = symbol_table.SymbolTable;
 const TypeChecker = type_checker.TypeChecker;
+const TypeLayout = type_layout.TypeLayout;
 
 /// Main semantic analyzer
 pub const Analyzer = struct {
@@ -47,6 +49,7 @@ pub const Analyzer = struct {
     // Type information for member access validation
     class_members: std.StringHashMap([]ast.ClassMember), // Map class name to members
     union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
+    type_layouts: std.StringHashMap(TypeLayout), // Map type name to layout info
 
     pub fn init(allocator: Allocator) Analyzer {
         return Analyzer{
@@ -61,6 +64,7 @@ pub const Analyzer = struct {
             .has_return_statement = false,
             .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
+            .type_layouts = std.StringHashMap(TypeLayout).init(allocator),
         };
     }
 
@@ -79,6 +83,14 @@ pub const Analyzer = struct {
         self.labels.deinit();
         self.class_members.deinit();
         self.union_members.deinit();
+
+        // Free type layout member arrays
+        var layout_iter = self.type_layouts.valueIterator();
+        while (layout_iter.next()) |layout| {
+            self.allocator.free(layout.members);
+        }
+        self.type_layouts.deinit();
+
         self.type_checker.deinit();
         self.symbol_table.deinit();
     }
@@ -188,6 +200,13 @@ pub const Analyzer = struct {
         // Store member information in the appropriate map
         const members_map = if (type_kind == .class) &self.class_members else &self.union_members;
         try members_map.put(name, members);
+
+        // Calculate and store type layout
+        const layout = if (type_kind == .class)
+            try TypeLayout.fromClass(self.allocator, name, members)
+        else
+            try TypeLayout.fromUnion(self.allocator, name, members);
+        try self.type_layouts.put(name, layout);
 
         // Define as a type (use repr_type if present, otherwise a named type)
         const underlying_type = if (repr_type) |rt| rt else ast.Type{ .named = name };

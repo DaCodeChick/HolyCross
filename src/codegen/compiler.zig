@@ -5,8 +5,10 @@ const ir_builder = @import("ir_builder.zig");
 const x64 = @import("x64.zig");
 const ast = @import("../parser/ast.zig");
 const type_checker_module = @import("../semantic/type_checker.zig");
+const type_layout_module = @import("../semantic/type_layout.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
+const TypeLayout = type_layout_module.TypeLayout;
 
 /// Compiler - orchestrates the compilation pipeline
 pub const Compiler = struct {
@@ -17,9 +19,14 @@ pub const Compiler = struct {
     }
 
     /// Compile AST to x64 assembly string
-    pub fn compileToAssembly(self: *Compiler, program: *const ast.Program, type_checker: ?*TypeChecker) ![]const u8 {
+    pub fn compileToAssembly(
+        self: *Compiler,
+        program: *const ast.Program,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+    ) ![]const u8 {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -38,9 +45,15 @@ pub const Compiler = struct {
     }
 
     /// Compile AST to executable file
-    pub fn compileToExecutable(self: *Compiler, program: *const ast.Program, output_path: []const u8, type_checker: ?*TypeChecker) !void {
+    pub fn compileToExecutable(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+    ) !void {
         // Generate assembly
-        const asm_code = try self.compileToAssembly(program, type_checker);
+        const asm_code = try self.compileToAssembly(program, type_checker, type_layouts);
         defer self.allocator.free(asm_code);
 
         // Write assembly to temporary file
