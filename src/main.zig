@@ -122,7 +122,7 @@ fn printUsage(program_name: []const u8) void {
     std.debug.print("HolyC Cross-Compiler - Compile HolyC to native binaries\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Options:\n", .{});
-    std.debug.print("  -S           Emit assembly code only (like gcc -S)\n", .{});
+    std.debug.print("  -S           Emit assembly code only\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Arguments:\n", .{});
     std.debug.print("  <input.hc>   HolyC source file to compile\n", .{});
