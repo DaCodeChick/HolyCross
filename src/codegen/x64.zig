@@ -170,38 +170,84 @@ pub const X64Generator = struct {
         var layout = StackLayout.init(self.allocator);
         errdefer layout.deinit();
 
-        var offset: i64 = 8; // Start at 8 (first slot after saved RBP)
+        var offset: i64 = 0; // Start at 0, will add size before assigning
 
-        // Collect all variables and temps used in the function
-        var vars = std.StringHashMap(void).init(self.allocator);
-        defer vars.deinit();
+        // Collect all variables with their sizes from alloc_local instructions
+        var var_sizes = std.StringHashMap(i64).init(self.allocator);
+        defer var_sizes.deinit();
         var temps = std.AutoHashMap(u32, void).init(self.allocator);
         defer temps.deinit();
 
-        // Scan all instructions to find variables and temps
+        // First pass: collect variable sizes from alloc_local instructions
         for (func.blocks.items) |*block| {
             for (block.instructions.items) |*instr| {
-                try collectOperandVars(instr.dest, &vars, &temps);
-                try collectOperandVars(instr.src1, &vars, &temps);
-                try collectOperandVars(instr.src2, &vars, &temps);
+                if (instr.opcode == .alloc_local) {
+                    if (instr.dest == .variable and instr.src1 == .constant) {
+                        const var_name = instr.dest.variable;
+                        const size = instr.src1.constant.int;
+                        try var_sizes.put(var_name, size);
+                    }
+                }
             }
         }
 
-        // Assign offsets to variables
-        var var_iter = vars.keyIterator();
-        while (var_iter.next()) |var_name| {
-            try layout.var_offsets.put(var_name.*, offset);
+        // Second pass: collect any other variables and all temps
+        for (func.blocks.items) |*block| {
+            for (block.instructions.items) |*instr| {
+                switch (instr.dest) {
+                    .variable => |v| {
+                        if (!var_sizes.contains(v)) {
+                            try var_sizes.put(v, 8); // Default to 8 bytes for unknown variables
+                        }
+                    },
+                    .temp => |t| try temps.put(t, {}),
+                    else => {},
+                }
+                switch (instr.src1) {
+                    .temp => |t| try temps.put(t, {}),
+                    else => {},
+                }
+                switch (instr.src2) {
+                    .temp => |t| try temps.put(t, {}),
+                    else => {},
+                }
+            }
+        }
+
+        // Assign offsets to variables using their actual sizes
+        // IMPORTANT: offset represents the HIGHEST address of the variable (closest to RBP)
+        // For a variable of size N, it occupies [RBP-(offset+N)] through [RBP-(offset+1)]
+        // But we want struct members at positive offsets to work, so we store (offset + size)
+        // as the offset, making the BASE address be RBP - (offset + size)
+        var var_iter = var_sizes.iterator();
+        while (var_iter.next()) |entry| {
+            const size = entry.value_ptr.*;
+            offset += size; // Move offset to accommodate this variable
+            try layout.var_offsets.put(entry.key_ptr.*, offset); // Store the offset to the base
+        }
+
+        // Assign offsets to temps (always 8 bytes each)
+        // Sort temp IDs to ensure consistent allocation
+        const temp_count = temps.count();
+        const temp_ids = try self.allocator.alloc(u32, temp_count);
+        defer self.allocator.free(temp_ids);
+
+        {
+            var temp_iter = temps.keyIterator();
+            var i: usize = 0;
+            while (temp_iter.next()) |temp_id| : (i += 1) {
+                temp_ids[i] = temp_id.*;
+            }
+        }
+
+        std.mem.sort(u32, temp_ids, {}, comptime std.sort.asc(u32));
+
+        for (temp_ids) |temp_id| {
+            try layout.temp_offsets.put(temp_id, offset);
             offset += 8;
         }
 
-        // Assign offsets to temps
-        var temp_iter = temps.keyIterator();
-        while (temp_iter.next()) |temp_id| {
-            try layout.temp_offsets.put(temp_id.*, offset);
-            offset += 8;
-        }
-
-        layout.total_size = @intCast(offset - 8);
+        layout.total_size = @intCast(offset);
 
         // Align to 16 bytes (System V ABI requirement)
         if (layout.total_size % 16 != 0) {
@@ -209,14 +255,6 @@ pub const X64Generator = struct {
         }
 
         return layout;
-    }
-
-    fn collectOperandVars(operand: ir.Operand, vars: *std.StringHashMap(void), temps: *std.AutoHashMap(u32, void)) !void {
-        switch (operand) {
-            .variable => |v| try vars.put(v, {}),
-            .temp => |t| try temps.put(t, {}),
-            else => {},
-        }
     }
 
     pub fn getOutput(self: *X64Generator) []const u8 {

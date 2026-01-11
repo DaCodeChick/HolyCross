@@ -787,6 +787,83 @@ pub const IRBuilder = struct {
                         .src1 = value,
                     });
                 },
+                .member => |mem| {
+                    // Member access assignment: obj.member = value
+                    // Calculate the address of the member and store to it
+
+                    // Get base address of the object
+                    const base_addr = switch (mem.object.*) {
+                        .identifier => |ident| blk: {
+                            const temp = self.newTemp();
+                            try self.emit(.{
+                                .opcode = .load_addr,
+                                .dest = .{ .temp = temp },
+                                .src1 = .{ .variable = ident.name },
+                            });
+                            break :blk ir.Operand{ .temp = temp };
+                        },
+                        else => try self.buildExpression(mem.object.*),
+                    };
+
+                    // Get member offset
+                    const member_offset = blk: {
+                        // Try to infer the object's type using type checker
+                        if (self.type_checker) |tc| {
+                            const obj_type = tc.inferExprType(mem.object.*) catch {
+                                break :blk self.calculateMemberOffsetFallback(mem.member);
+                            };
+
+                            // Get type name for layout lookup
+                            const type_name = switch (obj_type) {
+                                .named => |name| name,
+                                .pointer => |ptr| switch (ptr.*) {
+                                    .named => |name| name,
+                                    else => {
+                                        break :blk self.calculateMemberOffsetFallback(mem.member);
+                                    },
+                                },
+                                else => {
+                                    break :blk self.calculateMemberOffsetFallback(mem.member);
+                                },
+                            };
+
+                            // Look up type layout
+                            if (self.type_layouts) |layouts| {
+                                if (layouts.get(type_name)) |layout| {
+                                    if (layout.getMemberOffset(mem.member)) |offset| {
+                                        break :blk @as(i64, @intCast(offset));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fallback to hash-based offset
+                        break :blk self.calculateMemberOffsetFallback(mem.member);
+                    };
+
+                    // Calculate address: base + offset
+                    const offset_temp = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .load_const,
+                        .dest = .{ .temp = offset_temp },
+                        .src1 = .{ .constant = .{ .int = member_offset } },
+                    });
+
+                    const member_addr = self.newTemp();
+                    try self.emit(.{
+                        .opcode = .add,
+                        .dest = .{ .temp = member_addr },
+                        .src1 = base_addr,
+                        .src2 = .{ .temp = offset_temp },
+                    });
+
+                    // Store value to member address
+                    try self.emit(.{
+                        .opcode = .store_ptr,
+                        .dest = .{ .temp = member_addr },
+                        .src1 = value,
+                    });
+                },
                 else => {
                     return error.InvalidAssignmentTarget;
                 },

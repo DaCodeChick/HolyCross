@@ -51,6 +51,7 @@ pub const Analyzer = struct {
     union_members: std.StringHashMap([]ast.ClassMember), // Map union name to members
     type_layouts: std.StringHashMap(TypeLayout), // Map type name to layout info
     class_bases: std.StringHashMap([]const u8), // Map derived class name to base class name
+    combined_member_arrays: std.ArrayList([]ast.ClassMember), // Track allocated combined arrays for cleanup
 
     pub fn init(allocator: Allocator) Analyzer {
         return Analyzer{
@@ -67,6 +68,7 @@ pub const Analyzer = struct {
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .type_layouts = std.StringHashMap(TypeLayout).init(allocator),
             .class_bases = std.StringHashMap([]const u8).init(allocator),
+            .combined_member_arrays = .{},
         };
     }
 
@@ -91,6 +93,12 @@ pub const Analyzer = struct {
         self.class_members.deinit();
         self.union_members.deinit();
         self.class_bases.deinit();
+
+        // Free combined member arrays from inheritance
+        for (self.combined_member_arrays.items) |arr| {
+            self.allocator.free(arr);
+        }
+        self.combined_member_arrays.deinit(self.allocator);
 
         // Free type layout member arrays
         var layout_iter = self.type_layouts.valueIterator();
@@ -286,9 +294,34 @@ pub const Analyzer = struct {
             try self.class_bases.put(cls.name, base_name);
         }
 
+        // Build complete member list including inherited members
+        const all_members = blk: {
+            // If no base class, just use this class's members
+            if (cls.base_class == null) {
+                break :blk cls.members;
+            }
+
+            const base_name = cls.base_class.?;
+            const base_members = self.class_members.get(base_name) orelse cls.members;
+
+            // Allocate array for base + derived members
+            const combined = try self.allocator.alloc(ast.ClassMember, base_members.len + cls.members.len);
+
+            // Track for cleanup
+            try self.combined_member_arrays.append(self.allocator, combined);
+
+            // Copy base members
+            @memcpy(combined[0..base_members.len], base_members);
+
+            // Copy derived members
+            @memcpy(combined[base_members.len..], cls.members);
+
+            break :blk combined;
+        };
+
         try self.collectCompositeTypeDeclaration(
             cls.name,
-            cls.members,
+            all_members,
             cls.repr_type,
             cls.loc,
             .class,
