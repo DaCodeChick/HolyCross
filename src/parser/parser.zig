@@ -52,6 +52,7 @@ pub const Parser = struct {
     lexer: *Lexer,
     current: Token,
     previous: Token,
+    peeked: ?Token = null, // One-token lookahead buffer
     had_error: bool = false,
     panic_mode: bool = false,
 
@@ -117,13 +118,37 @@ pub const Parser = struct {
     fn advance(self: *Parser) ParserError!void {
         self.previous = self.current;
 
+        // Check if we have a peeked token
+        if (self.peeked) |peeked_token| {
+            self.current = peeked_token;
+            self.peeked = null;
+        } else {
+            while (true) {
+                self.current = try self.lexer.nextToken();
+
+                // Skip invalid tokens (errors already reported by lexer)
+                if (self.current.type != .invalid) break;
+
+                self.reportError("Invalid token");
+            }
+        }
+    }
+
+    /// Peek at the next token without consuming it
+    fn peek(self: *Parser) ParserError!Token {
+        if (self.peeked) |peeked_token| {
+            return peeked_token;
+        }
+
+        // Fetch and cache the next token
         while (true) {
-            self.current = try self.lexer.nextToken();
+            const next_token = try self.lexer.nextToken();
 
-            // Skip invalid tokens (errors already reported by lexer)
-            if (self.current.type != .invalid) break;
-
-            self.reportError("Invalid token");
+            // Skip invalid tokens
+            if (next_token.type != .invalid) {
+                self.peeked = next_token;
+                return next_token;
+            }
         }
     }
 
@@ -982,6 +1007,14 @@ pub const Parser = struct {
             return try self.parseVarDeclaration();
         }
 
+        // Check for class/union typed variable declaration
+        // Pattern: identifier identifier [= expr];
+        // e.g., Point p; or Point p = {...};
+        // We use lookahead to distinguish from expression statements
+        if (self.current.type == .identifier) {
+            return try self.parseIdentifierStatement();
+        }
+
         // Expression statement: expr;
         return try self.parseExpressionStatement();
     }
@@ -1019,6 +1052,35 @@ pub const Parser = struct {
                 .loc = decl_loc,
             },
         };
+    }
+
+    /// Parse statement starting with identifier
+    /// Could be: variable declaration (Point p;) or expression statement (p = 5; or foo();)
+    /// Uses peek to distinguish without consuming tokens
+    fn parseIdentifierStatement(self: *Parser) ParserError!Stmt {
+        // We're at an identifier. Peek at the next token to distinguish:
+        // - identifier identifier [* or ; or =] -> likely declaration (Point p; or Point* p;)
+        // - identifier [anything else] -> expression (x = 5; or foo(); or x.y;)
+
+        const next_token = try self.peek();
+
+        // Check for patterns that indicate a declaration:
+        // 1. identifier identifier -> Point p
+        // 2. identifier * -> Point* (could be pointer declaration)
+        if (next_token.type == .identifier) {
+            // Pattern: identifier identifier
+            // This is likely a declaration: Point p;
+            return try self.parseVarDeclaration();
+        } else if (next_token.type == .op_star) {
+            // Pattern: identifier *
+            // Could be: Point* p; (declaration) or x * y (expression)
+            // Use heuristic: if it's followed by identifier, it's a declaration
+            // For now, treat as declaration
+            return try self.parseVarDeclaration();
+        } else {
+            // Everything else is an expression
+            return try self.parseExpressionStatement();
+        }
     }
 
     /// Parse expression statement: expr;
