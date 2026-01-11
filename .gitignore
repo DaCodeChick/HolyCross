@@ -61,3 +61,8 @@ examples/*.elf
 examples/*.out
 tests/integration/*.elf
 tests/integration/*.out
+
+# Test binaries generated during compilation
+test_pointers
+test_arrays
+simple_test
