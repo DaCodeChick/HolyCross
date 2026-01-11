@@ -105,8 +105,30 @@ pub const Memory = struct {
         try ctx.emitComment("allocate local variable", .{});
     }
 
-    pub fn genParam(ctx: *GenContext) !void {
-        try ctx.emitComment("function parameter", .{});
+    pub fn genParam(ctx: *GenContext, instr: *const ir.Instruction, param_idx: u32) !void {
+        // System V AMD64 ABI: First 6 integer parameters in registers
+        const param_regs = [_][]const u8{ "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+
+        switch (instr.dest) {
+            .variable => |var_name| {
+                try ctx.emitComment("parameter: {s}", .{var_name});
+
+                if (param_idx < 6) {
+                    // Load from register
+                    const reg = param_regs[param_idx];
+                    const offset = ctx.getVarOffset(var_name);
+                    try ctx.emit("    mov [rbp-{d}], {s}  # {s}\n", .{ offset, reg, var_name });
+                } else {
+                    // Load from stack (passed by caller)
+                    // Parameters 7+ are at [rbp+16], [rbp+24], etc. (after return addr and saved rbp)
+                    const stack_offset = 16 + (param_idx - 6) * 8;
+                    const var_offset = ctx.getVarOffset(var_name);
+                    try ctx.emit("    mov rax, [rbp+{d}]\n", .{stack_offset});
+                    try ctx.emit("    mov [rbp-{d}], rax  # {s}\n", .{ var_offset, var_name });
+                }
+            },
+            else => {},
+        }
     }
 };
 
@@ -333,8 +355,47 @@ pub const Functions = struct {
         switch (instr.src1) {
             .function => |f| {
                 try ctx.emitComment("call {s}", .{f});
-                // TODO: Proper argument passing (System V ABI)
+
+                // System V AMD64 ABI: First 6 integer arguments in registers
+                const arg_regs = [_][]const u8{ "rdi", "rsi", "rdx", "rcx", "r8", "r9" };
+
+                // Pass arguments
+                if (instr.args) |args| {
+                    // Count stack arguments (7+)
+                    var stack_args: usize = 0;
+                    if (args.len > 6) {
+                        stack_args = args.len - 6;
+                    }
+
+                    // Push stack arguments in reverse order (right-to-left)
+                    if (stack_args > 0) {
+                        var i: usize = args.len;
+                        while (i > 6) {
+                            i -= 1;
+                            try Patterns.loadOperand(ctx, args[i], "rax");
+                            try ctx.emit("    push rax\n", .{});
+                        }
+                    }
+
+                    // Load register arguments (first 6)
+                    const reg_count = @min(args.len, 6);
+                    var idx: usize = 0;
+                    while (idx < reg_count) : (idx += 1) {
+                        try Patterns.loadOperand(ctx, args[idx], arg_regs[idx]);
+                    }
+                }
+
+                // Align stack to 16 bytes before call (required by System V ABI)
+                // Note: This is simplified - proper implementation needs to track stack alignment
                 try ctx.emit("    call {s}\n", .{f});
+
+                // Clean up stack arguments if any
+                if (instr.args) |args| {
+                    if (args.len > 6) {
+                        const stack_bytes = (args.len - 6) * 8;
+                        try ctx.emit("    add rsp, {d}\n", .{stack_bytes});
+                    }
+                }
             },
             else => {},
         }

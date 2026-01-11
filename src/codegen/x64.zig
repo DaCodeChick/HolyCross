@@ -117,7 +117,7 @@ pub const X64Generator = struct {
 
         // Generate code for each basic block
         for (func.blocks.items) |*block| {
-            try self.generateBasicBlock(&ctx, block);
+            try self.generateBasicBlock(&ctx, block, func.name);
         }
 
         // Function epilogue (fallthrough case)
@@ -128,12 +128,19 @@ pub const X64Generator = struct {
         self.current_layout = null;
     }
 
-    fn generateBasicBlock(self: *X64Generator, ctx: *GenContext, block: *const ir.BasicBlock) !void {
+    fn generateBasicBlock(self: *X64Generator, ctx: *GenContext, block: *const ir.BasicBlock, func_name: []const u8) !void {
         _ = self;
-        try ctx.emit(".Lblock{d}:\n", .{block.id});
+        try ctx.emit(".L{s}_block{d}:\n", .{ func_name, block.id });
 
+        var param_idx: u32 = 0;
         for (block.instructions.items) |*instr| {
-            try generateInstruction(ctx, instr);
+            // Track parameter index for param instructions
+            if (instr.opcode == .param) {
+                try generateInstructionWithParamIdx(ctx, instr, param_idx);
+                param_idx += 1;
+            } else {
+                try generateInstruction(ctx, instr);
+            }
         }
     }
 
@@ -213,7 +220,7 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         .store_var => try instruction_gen.Memory.genStoreVar(ctx, instr),
         .move => try instruction_gen.Memory.genMove(ctx, instr),
         .alloc_local => try instruction_gen.Memory.genAllocLocal(ctx),
-        .param => try instruction_gen.Memory.genParam(ctx),
+        .param => unreachable, // Should use generateInstructionWithParamIdx
 
         // Arithmetic
         .add => try instruction_gen.Arithmetic.genAdd(ctx, instr),
@@ -248,5 +255,13 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         // Functions
         .call => try instruction_gen.Functions.genCall(ctx, instr),
         .print => try instruction_gen.Functions.genPrint(ctx, instr),
+    }
+}
+
+/// Instruction dispatcher for param instructions (needs parameter index)
+fn generateInstructionWithParamIdx(ctx: *GenContext, instr: *const ir.Instruction, param_idx: u32) !void {
+    switch (instr.opcode) {
+        .param => try instruction_gen.Memory.genParam(ctx, instr, param_idx),
+        else => try generateInstruction(ctx, instr),
     }
 }
