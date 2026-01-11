@@ -57,7 +57,7 @@ extern U0 SomeFunction();
 
 ---
 
-## 3. Alias Syntax for Types
+## 3. Alias Syntax for Types ✅ COMPLETED
 
 **TempleOS Usage (from Kernel/KernelA.HH):**
 ```c
@@ -67,13 +67,25 @@ U16i union U16 {
 };
 ```
 
-This creates **both** the alias `U16` and marks it with the `i` suffix for certain behaviors.
+This creates **both** the main type (`U16`) and an alias (`U16i`) that refers to it.
 
-**Current Status:** Not supported - parser error "Expected declaration"
+**Status:** ✅ **IMPLEMENTED** - Fully working!
 
-**Impact:** Cannot define standard library types correctly
+**Implementation:**
+- Parser modified to recognize `identifier union/class TypeName` syntax
+- Parser uses lookahead (`peek()`) to distinguish alias syntax from other declarations
+- `looksLikeDeclaration()` updated to recognize this pattern at top-level
+- Semantic analyzer registers both the main type and the alias in the symbol table
+- Alias is stored as a `named` type that refers to the main type
 
-**Solution:** Parser needs to handle `identifier union/class TypeName { ... }` syntax.
+**How it works:**
+1. `AliasName union TypeName { ... }` creates type `TypeName` and alias `AliasName`
+2. `AliasName class ClassName { ... }` creates class `ClassName` and alias `AliasName`
+3. Both the alias and the main type can be used interchangeably in code
+
+**Example:** See `examples/alias_syntax.hc`
+
+**Note:** Type names cannot be reserved keywords (like `U16`, `I32`) - use custom names instead (like `MyU16`, `MyI32`).
 
 ---
 
@@ -163,9 +175,8 @@ The `I64 class CDate` means CDate inherits from/aliases I64.
 3. ✅ **Array syntax** - COMPLETED! See examples/array_declarations.hc
 
 ### Priority 2 (Standard Library Compatibility):
-4. **Alias syntax** (U16i union U16) - Needed for stdlib
+4. ✅ **Alias syntax** - COMPLETED! See examples/alias_syntax.hc
 5. **Top-level #define** - Needed for constants
-6. **Array members in classes** - Common pattern
 
 ### Priority 3 (Advanced):
 7. **Class inheritance/alias syntax** - Less common
