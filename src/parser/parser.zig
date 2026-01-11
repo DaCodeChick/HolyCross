@@ -87,24 +87,46 @@ pub const Parser = struct {
         // Use arena allocator for all AST nodes
         self.ast_allocator = arena.allocator();
 
-        const empty_slice = try self.ast_allocator.alloc(Decl, 0);
-        var decls = std.ArrayList(Decl).fromOwnedSlice(empty_slice);
+        const empty_decl_slice = try self.ast_allocator.alloc(Decl, 0);
+        var decls = std.ArrayList(Decl).fromOwnedSlice(empty_decl_slice);
         errdefer decls.deinit(self.ast_allocator);
 
+        const empty_stmt_slice = try self.ast_allocator.alloc(Stmt, 0);
+        var top_level_stmts = std.ArrayList(Stmt).fromOwnedSlice(empty_stmt_slice);
+        errdefer top_level_stmts.deinit(self.ast_allocator);
+
         while (!self.check(.eof)) {
-            if (self.parseDeclaration()) |decl| {
-                try decls.append(self.ast_allocator, decl);
-            } else |err| {
-                if (err == error.ParseError) {
-                    self.synchronize();
-                } else {
-                    return err;
+            // Check if this looks like a declaration (starts with attributes or type keywords)
+            const is_decl = self.looksLikeDeclaration();
+
+            if (is_decl) {
+                // Parse as declaration
+                if (self.parseDeclaration()) |decl| {
+                    try decls.append(self.ast_allocator, decl);
+                } else |err| {
+                    if (err == error.ParseError) {
+                        self.synchronize();
+                    } else {
+                        return err;
+                    }
+                }
+            } else {
+                // Parse as top-level statement
+                if (self.parseStatement()) |stmt| {
+                    try top_level_stmts.append(self.ast_allocator, stmt);
+                } else |err| {
+                    if (err == error.ParseError) {
+                        self.synchronize();
+                    } else {
+                        return err;
+                    }
                 }
             }
         }
 
         return Program{
             .decls = try decls.toOwnedSlice(self.ast_allocator),
+            .top_level_stmts = try top_level_stmts.toOwnedSlice(self.ast_allocator),
             .allocator = self.allocator,
             .arena = arena,
         };
@@ -1020,6 +1042,22 @@ pub const Parser = struct {
     }
 
     /// Check if current token can start a type
+    /// Check if current token looks like the start of a declaration
+    /// Declarations start with: attributes (public, static, extern, etc.),
+    /// class/union keywords, or type keywords
+    fn looksLikeDeclaration(self: *Parser) bool {
+        // Check for declaration attributes
+        switch (self.current.type) {
+            .keyword_public, .keyword_static, .keyword_extern, .keyword_interrupt, .keyword_haserrcode, .keyword_argpop, .keyword_noargpop, .keyword_lock => return true,
+
+            // Check for class/union declaration
+            .keyword_class, .keyword_union => return true,
+
+            // Check if it starts with a type keyword
+            else => return self.isTypeStart(),
+        }
+    }
+
     fn isTypeStart(self: *Parser) bool {
         return ops.isTypeStartToken(self.current.type);
     }

@@ -105,9 +105,24 @@ pub const IRBuilder = struct {
 
     /// Build IR from AST root
     pub fn buildFromAST(self: *IRBuilder, root: *const ast.Program) !void {
+        // Check if there's a HolyC Main function
+        var has_main = false;
+        for (root.decls) |decl| {
+            if (decl == .function and std.mem.eql(u8, decl.function.name, "Main")) {
+                has_main = true;
+                break;
+            }
+        }
+
+        // First, process all declarations (including Main if it exists)
         for (root.decls) |decl| {
             try self.buildDeclaration(decl);
         }
+
+        // Create C's main() function that:
+        // 1. Executes top-level statements (if any)
+        // 2. Calls HolyC Main() function (if it exists)
+        try self.buildCMainFunction(root.top_level_stmts, has_main);
     }
 
     pub fn buildDeclaration(self: *IRBuilder, decl: ast.Decl) !void {
@@ -160,6 +175,55 @@ pub const IRBuilder = struct {
         {
             try self.emit(.{ .opcode = .ret });
         }
+
+        // Update function metadata
+        ir_func.temp_count = self.temp_counter;
+
+        self.current_function = null;
+        self.current_block = null;
+    }
+
+    /// Build C's main() function that executes top-level statements and calls HolyC Main()
+    fn buildCMainFunction(self: *IRBuilder, top_level_stmts: []const ast.Stmt, has_holys_main: bool) !void {
+        // Create IR function for C's main entry point
+        const ir_func = try self.module.createFunction("main");
+        self.current_function = ir_func;
+        self.temp_counter = 0;
+
+        // Clear label map for new function
+        self.label_map.clearRetainingCapacity();
+
+        // Set function metadata (no parameters for now - TODO: handle argc/argv)
+        ir_func.param_count = 0;
+
+        // Create entry block
+        const entry = try ir_func.createBlock();
+        self.current_block = entry;
+
+        // First, execute all top-level statements
+        for (top_level_stmts) |stmt| {
+            try self.buildStatement(stmt);
+        }
+
+        // Then, if there's a HolyC Main function, call it
+        if (has_holys_main) {
+            // Create call to Main() with no arguments
+            const temp = self.newTemp();
+            const empty_args = try self.allocator.alloc(ir.Operand, 0);
+
+            try self.emit(.{
+                .opcode = .call,
+                .dest = .{ .temp = temp },
+                .src1 = .{ .function = "Main" },
+                .args = empty_args,
+            });
+        }
+
+        // Return 0 from main
+        try self.emit(.{
+            .opcode = .ret_val,
+            .src1 = .{ .constant = .{ .int = 0 } },
+        });
 
         // Update function metadata
         ir_func.temp_count = self.temp_counter;

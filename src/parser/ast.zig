@@ -481,6 +481,7 @@ pub const ClassMember = struct {
 /// Complete program (translation unit)
 pub const Program = struct {
     decls: []Decl,
+    top_level_stmts: []Stmt, // Statements to execute at program load time
     allocator: std.mem.Allocator, // Backing allocator (used by arena)
     arena: std.heap.ArenaAllocator,
 
