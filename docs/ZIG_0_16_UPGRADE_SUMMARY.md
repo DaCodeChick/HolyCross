@@ -14,6 +14,7 @@ HolyCross has been successfully upgraded from Zig 0.15.2 to Zig 0.16.0.
 ### 2. Code Updates
 - ✅ Replaced `std.mem.indexOf` with `std.mem.find` in codegen tests (4 occurrences)
 - ✅ No other indexOf variants found in codebase
+- ✅ Fixed TypeChecker test initialization (14 tests) - added required class_members and class_bases parameters
 
 ### 3. Compatibility Analysis
 
@@ -77,8 +78,9 @@ zig build
 1. `README.md` - Version requirement updated
 2. `docs/GETTING_STARTED.md` - Version requirement updated  
 3. `src/codegen/tests/codegen_tests.zig` - indexOf → find (4 lines)
-4. `docs/ZIG_0_16_MIGRATION.md` - New migration guide
-5. `docs/ZIG_0_16_UPGRADE_SUMMARY.md` - This file
+4. `src/semantic/tests/type_checker_tests.zig` - Fixed TypeChecker.init() calls (14 tests)
+5. `docs/ZIG_0_16_MIGRATION.md` - New migration guide
+6. `docs/ZIG_0_16_UPGRADE_SUMMARY.md` - This file
 
 ## Notes
 
@@ -87,5 +89,7 @@ The upgrade was remarkably smooth because:
 - We don't use advanced I/O APIs that were changed
 - We don't use language features that had breaking changes
 - Our build system is simple and stable
+
+**Important**: The code is now ready for Zig 0.16.0, but is currently on Zig 0.15.2. Once you upgrade to Zig 0.16.0, all tests should compile and run successfully. The TypeChecker test fixes were necessary regardless of Zig version (they were pre-existing issues from when class_members/class_bases parameters were added).
 
 The Zig team's commitment to making upgrades smooth shows in this release!
