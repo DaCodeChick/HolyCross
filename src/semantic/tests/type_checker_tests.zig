@@ -15,7 +15,12 @@ test "TypeChecker: isIntegerType" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expect(checker.isIntegerType(.i8));
@@ -34,7 +39,12 @@ test "TypeChecker: isFloatType" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expect(checker.isFloatType(.f64));
@@ -46,7 +56,12 @@ test "TypeChecker: isNumericType" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expect(checker.isNumericType(.i32));
@@ -58,7 +73,12 @@ test "TypeChecker: getIntegerSize" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expectEqual(@as(u32, 8), checker.getIntegerSize(.i8));
@@ -75,7 +95,12 @@ test "TypeChecker: areTypesCompatible - exact match" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expect(try checker.areTypesCompatible(.i64, .i64));
@@ -86,7 +111,12 @@ test "TypeChecker: areTypesCompatible - integer to integer" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     // HolyC allows all integer conversions
@@ -99,7 +129,12 @@ test "TypeChecker: areTypesCompatible - integer to float" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     try testing.expect(try checker.areTypesCompatible(.i32, .f64));
@@ -114,7 +149,12 @@ test "TypeChecker: inferExprType - integer literal" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -128,7 +168,12 @@ test "TypeChecker: inferExprType - float literal" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -142,7 +187,12 @@ test "TypeChecker: inferExprType - char literal" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -161,7 +211,12 @@ test "TypeChecker: inferExprType - identifier variable" {
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
     try sym_table.defineVariable("x", .i64, true, true, loc);
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const expr = ast.Expr{ .identifier = .{ .name = "x", .loc = loc } };
@@ -176,7 +231,12 @@ test "TypeChecker: inferExprType - undeclared identifier" {
 
     try sym_table.enterGlobalScope();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const loc = ast.SourceLocation{ .line = 1, .column = 1 };
@@ -195,7 +255,12 @@ test "TypeChecker: arithmetic operation promotes to larger type" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const promoted = checker.promoteIntegerTypes(.i32, .i64);
@@ -209,7 +274,12 @@ test "TypeChecker: arithmetic with float returns float" {
     var sym_table = SymbolTable.init(testing.allocator);
     defer sym_table.deinit();
 
-    var checker = TypeChecker.init(testing.allocator, &sym_table);
+    var class_members = std.StringHashMap([]ast.ClassMember).init(testing.allocator);
+    defer class_members.deinit();
+    var class_bases = std.StringHashMap([]const u8).init(testing.allocator);
+    defer class_bases.deinit();
+
+    var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
     const result = try checker.arithmeticResultType(.i64, .f64);
