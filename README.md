@@ -30,7 +30,7 @@ HolyC is the programming language created by Terry A. Davis for TempleOS. This p
 ## Building
 
 ### Prerequisites
-- Zig 0.15.2 or later
+- Zig 0.16.0 or later
 - Linux x64 (primary development platform)
 - Windows or macOS (future support)
 

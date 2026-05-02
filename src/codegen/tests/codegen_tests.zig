@@ -139,9 +139,9 @@ test "X64: generate simple function" {
     const output = gen.getOutput();
 
     // Verify output contains function declaration
-    try testing.expect(std.mem.indexOf(u8, output, "test_func:") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "push rbp") != null);
-    try testing.expect(std.mem.indexOf(u8, output, "ret") != null);
+    try testing.expect(std.mem.find(u8, output, "test_func:") != null);
+    try testing.expect(std.mem.find(u8, output, "push rbp") != null);
+    try testing.expect(std.mem.find(u8, output, "ret") != null);
 }
 
 test "X64: generate function with constant" {
@@ -172,7 +172,7 @@ test "X64: generate function with constant" {
     const output = gen.getOutput();
 
     // Verify output contains constant load
-    try testing.expect(std.mem.indexOf(u8, output, "mov rax, 42") != null);
+    try testing.expect(std.mem.find(u8, output, "mov rax, 42") != null);
 
     // Print output for inspection (commented out normally)
     // std.debug.print("\n=== Generated x64 Assembly ===\n{s}\n", .{output});

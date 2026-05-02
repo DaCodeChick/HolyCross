@@ -20,8 +20,8 @@ Welcome to HolyCross development! This guide will help you start contributing.
 
 ### Prerequisites
 ```bash
-# Zig 0.15.2 or later
-zig version  # Should show 0.15.2+
+# Zig 0.16.0 or later
+zig version  # Should show 0.16.0+
 
 # Git
 git --version
