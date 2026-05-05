@@ -522,7 +522,7 @@ pub const Analyzer = struct {
             .empty => {}, // Nothing to analyze
             .expr => |e| try self.analyzeExpressionStatement(e.expr),
             .var_decl => |v| try self.analyzeVariableDeclaration(v.type, v.name, v.init, v.loc),
-            .block => |b| try self.analyzeBlock(b.stmts),
+            .block => |b| try self.analyzeBlock(b.stmts, b.creates_scope),
             .if_stmt => |i| try self.analyzeIfStatement(i.condition, i.then_stmt.*, i.else_stmt),
             .while_stmt => |w| try self.analyzeWhileStatement(w.condition, w.body.*),
             .do_while => |d| try self.analyzeDoWhileStatement(d.body.*, d.condition),
@@ -767,10 +767,14 @@ pub const Analyzer = struct {
     }
 
     /// Analyze block statement
-    fn analyzeBlock(self: *Analyzer, stmts: []const ast.Stmt) AnalyzerError!void {
-        // Enter new block scope
-        try self.symbol_table.enterBlockScope();
-        defer self.symbol_table.exitScope();
+    fn analyzeBlock(self: *Analyzer, stmts: []const ast.Stmt, creates_scope: bool) AnalyzerError!void {
+        // Enter new block scope only if requested
+        if (creates_scope) {
+            try self.symbol_table.enterBlockScope();
+        }
+        defer if (creates_scope) {
+            self.symbol_table.exitScope();
+        };
 
         // Analyze each statement in the block
         var found_terminator = false; // Track if we hit return/break

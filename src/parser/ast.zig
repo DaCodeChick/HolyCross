@@ -284,6 +284,7 @@ pub const Stmt = union(enum) {
     // Block: { stmt1; stmt2; ... }
     block: struct {
         stmts: []Stmt,
+        creates_scope: bool = true, // False for synthetic blocks (e.g., multi-var decls)
         loc: SourceLocation,
     },
 

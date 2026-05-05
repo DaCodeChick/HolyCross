@@ -1229,55 +1229,87 @@ pub const Parser = struct {
     }
 
     /// Parse variable declaration: Type name = expr; or Type name[size] = expr;
+    /// Supports multi-variable declarations: Type a, b, c;
     fn parseVarDeclaration(self: *Parser) ParserError!Stmt {
         const decl_loc = self.locationFromToken(self.current);
 
-        // Parse base type
-        var var_type = try self.parseType();
+        // Parse base type (shared by all variables in this declaration)
+        const base_type = try self.parseType();
+        
+        // Collect all variable declarations
+        const empty_slice = try self.ast_allocator.alloc(Stmt, 0);
+        var decls = std.ArrayList(Stmt).fromOwnedSlice(empty_slice);
+        
+        // Parse first variable (and any additional comma-separated variables)
+        while (true) {
+            var var_type = base_type;
+            
+            // Parse variable name
+            try self.consume(.identifier, "Expected variable name");
+            const var_name = self.previous.lexeme;
 
-        // Parse variable name
-        try self.consume(.identifier, "Expected variable name");
-        const var_name = self.previous.lexeme;
+            // Check for array suffix: name[size]
+            // This handles TempleOS-style array syntax: I64 numbers[10];
+            if (try self.match(.lbracket)) {
+                const element_type_ptr = try self.ast_allocator.create(ast.Type);
+                element_type_ptr.* = base_type;
 
-        // Check for array suffix: name[size]
-        // This handles TempleOS-style array syntax: I64 numbers[10];
-        if (try self.match(.lbracket)) {
-            const element_type_ptr = try self.ast_allocator.create(ast.Type);
-            element_type_ptr.* = var_type;
+                // Parse array size
+                const size_expr = try self.parseExpression();
+                if (size_expr != .integer) {
+                    self.reportErrorAtCurrent("Array size must be a constant integer");
+                    return error.ParseError;
+                }
+                const size: u64 = @intCast(size_expr.integer.value);
 
-            // Parse array size
-            const size_expr = try self.parseExpression();
-            if (size_expr != .integer) {
-                self.reportErrorAtCurrent("Array size must be a constant integer");
-                return error.ParseError;
+                try self.consume(.rbracket, "Expected ']' after array size");
+
+                // Update type to be an array
+                var_type = ast.Type{
+                    .array = .{
+                        .element_type = element_type_ptr,
+                        .size = size,
+                    },
+                };
             }
-            const size: u64 = @intCast(size_expr.integer.value);
 
-            try self.consume(.rbracket, "Expected ']' after array size");
+            // Optional initializer
+            const init_expr: ?Expr = if (try self.match(.op_equal))
+                try self.parseExpression()
+            else
+                null;
 
-            // Update type to be an array
-            var_type = ast.Type{
-                .array = .{
-                    .element_type = element_type_ptr,
-                    .size = size,
+            // Add this variable declaration
+            try decls.append(self.ast_allocator, Stmt{
+                .var_decl = .{
+                    .type = var_type,
+                    .name = var_name,
+                    .init = init_expr,
+                    .loc = decl_loc,
                 },
-            };
+            });
+            
+            // Check for comma (more variables) or semicolon (end of declaration)
+            if (try self.match(.comma)) {
+                // Continue parsing next variable
+                continue;
+            } else {
+                // Must be semicolon to end declaration
+                try self.consume(.semicolon, "Expected ';' or ',' after variable declaration");
+                break;
+            }
         }
-
-        // Optional initializer
-        const init_expr: ?Expr = if (try self.match(.op_equal))
-            try self.parseExpression()
-        else
-            null;
-
-        // Expect semicolon
-        try self.consume(.semicolon, "Expected ';' after variable declaration");
-
+        
+        // If only one declaration, return it directly
+        if (decls.items.len == 1) {
+            return decls.items[0];
+        }
+        
+        // Multiple declarations: wrap in a non-scoping block
         return Stmt{
-            .var_decl = .{
-                .type = var_type,
-                .name = var_name,
-                .init = init_expr,
+            .block = .{
+                .stmts = try decls.toOwnedSlice(self.ast_allocator),
+                .creates_scope = false, // Don't create new scope
                 .loc = decl_loc,
             },
         };
