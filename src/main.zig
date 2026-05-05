@@ -57,10 +57,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Read input file
     const cwd = std.Io.Dir.cwd();
-    const file = try cwd.openFile(input_file, .{});
-    defer file.close();
-
-    const source = try file.readToEndAlloc(allocator, 1024 * 1024); // Max 1MB
+    const source = try cwd.readFileAlloc(init.io, input_file, allocator, std.Io.Limit.limited(1024 * 1024)); // Max 1MB
     defer allocator.free(source);
 
     // Phase 1: Lexical analysis
@@ -105,15 +102,15 @@ pub fn main(init: std.process.Init) !void {
         const asm_code = try compiler.compileToAssembly(&program, &anal.type_checker, &anal.type_layouts);
         defer allocator.free(asm_code);
 
-        const asm_file = try cwd.createFile(output_file, .{});
-        defer asm_file.close();
-        try asm_file.writeAll(asm_code);
+        const asm_file = try cwd.createFile(init.io, output_file, .{});
+        defer asm_file.close(init.io);
+        try asm_file.writeStreamingAll(init.io, asm_code);
 
         std.debug.print("\n✓ Assembly generation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});
     } else {
         // Generate executable
-        try compiler.compileToExecutable(&program, output_file, &anal.type_checker, &anal.type_layouts);
+        try compiler.compileToExecutable(&program, output_file, &anal.type_checker, &anal.type_layouts, init.io);
 
         std.debug.print("\n✓ Compilation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});

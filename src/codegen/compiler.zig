@@ -51,6 +51,7 @@ pub const Compiler = struct {
         output_path: []const u8,
         type_checker: ?*TypeChecker,
         type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
     ) !void {
         // Generate assembly
         const asm_code = try self.compileToAssembly(program, type_checker, type_layouts);
@@ -61,25 +62,24 @@ pub const Compiler = struct {
         defer self.allocator.free(asm_path);
 
         const cwd = std.Io.Dir.cwd();
-        const asm_file = try cwd.createFile(asm_path, .{});
-        defer asm_file.close();
-        try asm_file.writeAll(asm_code);
+        const asm_file = try cwd.createFile(io, asm_path, .{});
+        defer asm_file.close(io);
+        try asm_file.writeStreamingAll(io, asm_code);
 
         // Use gcc to assemble and link (simpler than using as + ld directly)
-        const gcc_result = try std.process.Child.run(.{
-            .allocator = self.allocator,
+        var child = try std.process.spawn(io, .{
             .argv = &[_][]const u8{ "gcc", "-o", output_path, asm_path, "-no-pie" },
         });
-        defer self.allocator.free(gcc_result.stdout);
-        defer self.allocator.free(gcc_result.stderr);
-
-        if (gcc_result.term.Exited != 0) {
-            std.debug.print("GCC error:\n{s}\n", .{gcc_result.stderr});
+        
+        const term = try child.wait(io);
+        
+        if (term != .exited or term.exited != 0) {
+            std.debug.print("GCC compilation failed with exit code: {}\n", .{term});
             return error.CompilationFailed;
         }
 
         // Clean up intermediate files
-        try cwd.deleteFile(asm_path);
+        try cwd.deleteFile(io, asm_path);
     }
 
     pub fn deinit(self: *Compiler) void {
