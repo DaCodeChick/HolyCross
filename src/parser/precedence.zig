@@ -80,6 +80,7 @@ pub fn isTypeStartToken(token_type: TokenType) bool {
         .keyword_u32,
         .keyword_u64,
         .keyword_f64,
+        .keyword_bool,
         => true,
         else => false,
     };

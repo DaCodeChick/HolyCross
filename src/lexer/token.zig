@@ -9,7 +9,7 @@ pub const TokenType = enum {
     string_literal,
     char_literal,
 
-    // Type Keywords (I0-I64, U0-U64, F64)
+    // Type Keywords (I0-I64, U0-U64, F64, Bool)
     keyword_i0, // void signed (zero-sized)
     keyword_i8,
     keyword_i16,
@@ -21,6 +21,7 @@ pub const TokenType = enum {
     keyword_u32,
     keyword_u64,
     keyword_f64,
+    keyword_bool, // Boolean type (uses I64 internally)
 
     // Control Flow Keywords
     keyword_if,

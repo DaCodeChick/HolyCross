@@ -363,7 +363,7 @@ pub const TypeChecker = struct {
     pub fn isIntegerType(self: *TypeChecker, typ: ast.Type) bool {
         _ = self;
         return switch (typ) {
-            .i0, .i8, .i16, .i32, .i64, .u0, .u8, .u16, .u32, .u64 => true,
+            .i0, .i8, .i16, .i32, .i64, .u0, .u8, .u16, .u32, .u64, .bool => true,
             else => false,
         };
     }
@@ -399,7 +399,7 @@ pub const TypeChecker = struct {
             .i8, .u8 => 8,
             .i16, .u16 => 16,
             .i32, .u32 => 32,
-            .i64, .u64 => 64,
+            .i64, .u64, .bool => 64, // Bool is represented as I64
             else => 0,
         };
     }

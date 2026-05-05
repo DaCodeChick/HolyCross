@@ -22,6 +22,7 @@ pub const Type = union(enum) {
     u32,
     u64,
     f64,
+    bool, // Boolean type (internally I64)
 
     // Complex types
     pointer: *Type, // T*
@@ -47,6 +48,7 @@ pub const Type = union(enum) {
             .u32 => try writer.writeAll("U32"),
             .u64 => try writer.writeAll("U64"),
             .f64 => try writer.writeAll("F64"),
+            .bool => try writer.writeAll("Bool"),
             .pointer => |ptr| try writer.print("*{}", .{ptr}),
             .array => |arr| {
                 if (arr.size) |size| {

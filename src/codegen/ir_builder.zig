@@ -1281,7 +1281,7 @@ pub const IRBuilder = struct {
             .i8, .u8 => 1,
             .i16, .u16 => 2,
             .i32, .u32 => 4,
-            .i64, .u64, .f64 => 8,
+            .i64, .u64, .f64, .bool => 8, // Bool is 8 bytes (I64)
             .pointer => 8, // Pointers are always 8 bytes on x64
             .array => |arr| blk: {
                 const elem_size = self.calculateTypeSize(arr.element_type.*);
@@ -1323,6 +1323,7 @@ pub const IRBuilder = struct {
             .u32 => "U32",
             .u64 => "U64",
             .f64 => "F64",
+            .bool => "Bool",
             .pointer => |ptr| {
                 // Format as "T*" where T is the pointed-to type
                 if (self.typeToString(ptr.*)) |inner| {

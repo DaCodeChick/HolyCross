@@ -1111,6 +1111,7 @@ pub const Parser = struct {
         if (try self.match(.keyword_u32)) return .u32;
         if (try self.match(.keyword_u64)) return .u64;
         if (try self.match(.keyword_f64)) return .f64;
+        if (try self.match(.keyword_bool)) return .bool;
 
         // Named type (class/union name)
         if (try self.match(.identifier)) {

@@ -137,7 +137,7 @@ fn calculateMemberSize(typ: ast.Type) u64 {
         .i8, .u8 => 1,
         .i16, .u16 => 2,
         .i32, .u32 => 4,
-        .i64, .u64, .f64 => 8,
+        .i64, .u64, .f64, .bool => 8, // Bool is 8 bytes (I64)
         .pointer => 8, // Pointers are 8 bytes on x64
         .array => |arr| {
             const elem_size = calculateMemberSize(arr.element_type.*);
@@ -158,7 +158,7 @@ fn calculateAlignment(typ: ast.Type) u64 {
         .i8, .u8 => 1,
         .i16, .u16 => 2,
         .i32, .u32 => 4,
-        .i64, .u64, .f64 => 8,
+        .i64, .u64, .f64, .bool => 8, // Bool aligned as I64
         .pointer => 8,
         .array => |arr| calculateAlignment(arr.element_type.*),
         .named => 8, // Named types - should be looked up

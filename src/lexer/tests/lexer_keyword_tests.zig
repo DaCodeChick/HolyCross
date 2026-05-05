@@ -27,13 +27,15 @@ test "keyword lookup" {
     try testing.expect(@import("../keywords.zig").getKeyword("ALIGN").? == .keyword_align);
     try testing.expect(@import("../keywords.zig").getKeyword("DU64").? == .keyword_du64);
 
-    // Test non-keywords (including library-defined identifiers)
+    // Test builtin Bool type
+    try testing.expect(@import("../keywords.zig").getKeyword("Bool").? == .keyword_bool);
+
+    // Test non-keywords
     try testing.expect(@import("../keywords.zig").getKeyword("notakeyword") == null);
     try testing.expect(@import("../keywords.zig").getKeyword("foo") == null);
-    try testing.expect(@import("../keywords.zig").getKeyword("Bool") == null); // Library type, not keyword
-    try testing.expect(@import("../keywords.zig").getKeyword("TRUE") == null); // Library constant, not keyword
-    try testing.expect(@import("../keywords.zig").getKeyword("FALSE") == null); // Library constant, not keyword
-    try testing.expect(@import("../keywords.zig").getKeyword("NULL") == null); // Library constant, not keyword
+    try testing.expect(@import("../keywords.zig").getKeyword("TRUE") == null); // Regular identifier, not keyword
+    try testing.expect(@import("../keywords.zig").getKeyword("FALSE") == null); // Regular identifier, not keyword
+    try testing.expect(@import("../keywords.zig").getKeyword("NULL") == null); // Regular identifier, not keyword
 }
 
 test "identifier helpers" {

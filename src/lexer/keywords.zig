@@ -4,7 +4,7 @@ const TokenType = @import("token.zig").TokenType;
 /// Keyword map for fast lookup
 const KeywordMap = std.StaticStringMap(TokenType);
 
-/// All HolyC keywords mapped to their token types (71 total)
+/// All HolyC keywords mapped to their token types (72 total)
 pub const keywords = KeywordMap.initComptime(.{
     // Type keywords
     .{ "I0", .keyword_i0 },
@@ -18,6 +18,7 @@ pub const keywords = KeywordMap.initComptime(.{
     .{ "U32", .keyword_u32 },
     .{ "U64", .keyword_u64 },
     .{ "F64", .keyword_f64 },
+    .{ "Bool", .keyword_bool },
 
     // Control flow
     .{ "if", .keyword_if },

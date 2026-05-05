@@ -2,12 +2,12 @@ const std = @import("std");
 
 /// Preprocessor for HolyC source code
 /// Handles conditional compilation (#ifdef, #ifndef, #else, #endif),
-/// file inclusion (#include), and macro tracking (#define)
+/// file inclusion (#include), and macro expansion
 pub const Preprocessor = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
     filename: []const u8,
-    defines: std.StringHashMap(void), // Simple set of defined macros
+    defines: std.StringHashMap([]const u8), // Macros with optional values
     output: std.ArrayList(u8),
     pos: usize = 0,
     line: usize = 1,
@@ -16,34 +16,30 @@ pub const Preprocessor = struct {
     io: *const std.Io = undefined, // For file operations
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8, filename: []const u8) !Preprocessor {
-        var preprocessor = Preprocessor{
+        return Preprocessor{
             .allocator = allocator,
             .source = source,
             .filename = filename,
-            .defines = std.StringHashMap(void).init(allocator),
+            .defines = std.StringHashMap([]const u8).init(allocator),
             .output = .{ .items = &.{}, .capacity = 0 },
             .include_depth = 0,
         };
-        try preprocessor.defineBuiltins();
-        return preprocessor;
     }
 
     pub fn initWithIo(allocator: std.mem.Allocator, source: []const u8, filename: []const u8, io: *const std.Io) !Preprocessor {
-        var preprocessor = Preprocessor{
+        return Preprocessor{
             .allocator = allocator,
             .source = source,
             .filename = filename,
-            .defines = std.StringHashMap(void).init(allocator),
+            .defines = std.StringHashMap([]const u8).init(allocator),
             .output = .{ .items = &.{}, .capacity = 0 },
             .include_depth = 0,
             .io = io,
         };
-        try preprocessor.defineBuiltins();
-        return preprocessor;
     }
 
     /// Create a preprocessor for an included file (shares defines with parent)
-    fn initForInclude(allocator: std.mem.Allocator, source: []const u8, filename: []const u8, io: *const std.Io, parent_defines: std.StringHashMap(void), depth: usize) !Preprocessor {
+    fn initForInclude(allocator: std.mem.Allocator, source: []const u8, filename: []const u8, io: *const std.Io, parent_defines: std.StringHashMap([]const u8), depth: usize) !Preprocessor {
         return Preprocessor{
             .allocator = allocator,
             .source = source,
@@ -55,14 +51,12 @@ pub const Preprocessor = struct {
         };
     }
 
-    /// Define builtin preprocessor symbols
-    fn defineBuiltins(self: *Preprocessor) !void {
-        try self.defines.put("TRUE", {});
-        try self.defines.put("FALSE", {});
-        try self.defines.put("NULL", {});
-    }
-
     pub fn deinit(self: *Preprocessor) void {
+        // Free all macro values
+        var it = self.defines.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
         self.defines.deinit();
         self.output.deinit(self.allocator);
     }
@@ -119,9 +113,17 @@ pub const Preprocessor = struct {
                     const is_defined = self.defines.contains(macro);
                     try include_stack.append(self.allocator, currently_including and !is_defined);
                     self.skipToEndOfLine();
+                } else if (std.mem.eql(u8, directive, "ifaot")) {
+                    // AOT (ahead-of-time) compilation - always true for now
+                    try include_stack.append(self.allocator, currently_including and true);
+                    self.skipToEndOfLine();
+                } else if (std.mem.eql(u8, directive, "ifjit")) {
+                    // JIT (just-in-time) compilation - always false for now
+                    try include_stack.append(self.allocator, currently_including and false);
+                    self.skipToEndOfLine();
                 } else if (std.mem.eql(u8, directive, "else")) {
                     if (include_stack.items.len <= 1) {
-                        return self.reportError(directive_line, "#else without matching #ifdef/#ifndef");
+                        return self.reportError(directive_line, "#else without matching #ifdef/#ifndef/#ifaot/#ifjit");
                     }
                     // Flip the current include state (if parent is including)
                     const parent_including = if (include_stack.items.len > 1) 
@@ -132,7 +134,7 @@ pub const Preprocessor = struct {
                     self.skipToEndOfLine();
                 } else if (std.mem.eql(u8, directive, "endif")) {
                     if (include_stack.items.len <= 1) {
-                        return self.reportError(directive_line, "#endif without matching #ifdef/#ifndef");
+                        return self.reportError(directive_line, "#endif without matching #ifdef/#ifndef/#ifaot/#ifjit");
                     }
                     _ = include_stack.pop();
                     self.skipToEndOfLine();
@@ -164,9 +166,15 @@ pub const Preprocessor = struct {
                     }
                 }
             } else {
-                // Regular content - output if we're currently including
+                // Regular content - check for identifier expansion if we're currently including
                 if (currently_including) {
-                    try self.output.append(self.allocator, self.advance());
+                    const ch = self.peek();
+                    if (self.isIdentifierStart(ch)) {
+                        // Try to expand identifier
+                        try self.expandIdentifier();
+                    } else {
+                        try self.output.append(self.allocator, self.advance());
+                    }
                 } else {
                     _ = self.advance();
                 }
@@ -175,7 +183,7 @@ pub const Preprocessor = struct {
 
         // Check for unclosed conditionals
         if (include_stack.items.len > 1) {
-            return self.reportError(self.line, "Unclosed #ifdef/#ifndef at end of file");
+            return self.reportError(self.line, "Unclosed #ifdef/#ifndef/#ifaot/#ifjit at end of file");
         }
     }
 
@@ -188,8 +196,22 @@ pub const Preprocessor = struct {
             return self.reportError(self.line, "Expected identifier after #define");
         }
 
-        // For now, just track that the macro is defined (no value/expansion)
-        try self.defines.put(macro_name, {});
+        // Read the rest of the line as the macro value
+        self.skipWhitespace();
+        const value_start = self.pos;
+        while (self.pos < self.source.len and self.peek() != '\n') {
+            _ = self.advance();
+        }
+        const value = self.source[value_start..self.pos];
+        
+        // Trim trailing whitespace from value
+        var trimmed_value = value;
+        while (trimmed_value.len > 0 and (trimmed_value[trimmed_value.len - 1] == ' ' or trimmed_value[trimmed_value.len - 1] == '\t')) {
+            trimmed_value = trimmed_value[0..trimmed_value.len - 1];
+        }
+        
+        const value_copy = try self.allocator.dupe(u8, trimmed_value);
+        try self.defines.put(macro_name, value_copy);
     }
 
     /// Handle #include directive
@@ -243,7 +265,7 @@ pub const Preprocessor = struct {
             self.defines,
             self.include_depth + 1
         );
-        defer include_preprocessor.defines = std.StringHashMap(void).init(self.allocator); // Prevent double-free
+        defer include_preprocessor.defines = std.StringHashMap([]const u8).init(self.allocator); // Prevent double-free
         
         // Process the included file
         const processed_include = try include_preprocessor.process();
@@ -253,6 +275,28 @@ pub const Preprocessor = struct {
         try self.output.appendSlice(self.allocator, processed_include);
         
         self.skipToEndOfLine();
+    }
+
+    /// Expand an identifier if it's a defined macro
+    fn expandIdentifier(self: *Preprocessor) !void {
+        const start_pos = self.pos;
+        const identifier = try self.readIdentifier();
+        
+        if (identifier.len == 0) {
+            // Not an identifier, just output the char
+            self.pos = start_pos;
+            try self.output.append(self.allocator, self.advance());
+            return;
+        }
+        
+        // Check if this identifier is a defined macro
+        if (self.defines.get(identifier)) |value| {
+            // Expand the macro by outputting its value
+            try self.output.appendSlice(self.allocator, value);
+        } else {
+            // Not a macro, output the identifier as-is
+            try self.output.appendSlice(self.allocator, identifier);
+        }
     }
 
     /// Resolve include path relative to current file or as absolute

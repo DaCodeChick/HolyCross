@@ -92,12 +92,18 @@ test "complex expression with all features" {
     // We could continue, but this validates the key features
 }
 
-test "Bool, TRUE, FALSE, NULL are identifiers, not keywords" {
+test "Bool is builtin keyword; TRUE, FALSE, NULL are identifiers" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    // These are defined in the HolyC standard library, not language keywords
-    const test_cases = [_][]const u8{ "Bool", "TRUE", "FALSE", "NULL" };
+    // Bool is now a builtin type keyword
+    var lexer1 = Lexer.init(allocator, "Bool");
+    const tok1 = try lexer1.nextToken();
+    try testing.expect(tok1.type == .keyword_bool);
+    try testing.expectEqualStrings("Bool", tok1.lexeme);
+
+    // TRUE, FALSE, NULL are regular identifiers (not builtins)
+    const test_cases = [_][]const u8{ "TRUE", "FALSE", "NULL" };
 
     for (test_cases) |name| {
         var lexer = Lexer.init(allocator, name);
@@ -107,16 +113,16 @@ test "Bool, TRUE, FALSE, NULL are identifiers, not keywords" {
     }
 }
 
-test "Bool declaration treated as regular identifier" {
+test "Bool declaration as builtin type" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
     const source = "Bool flag = TRUE;";
     var lexer = Lexer.init(allocator, source);
 
-    // Bool - identifier, not keyword
+    // Bool - keyword
     const tok1 = try lexer.nextToken();
-    try testing.expect(tok1.type == .identifier);
+    try testing.expect(tok1.type == .keyword_bool);
     try testing.expectEqualStrings("Bool", tok1.lexeme);
 
     // flag
@@ -127,7 +133,7 @@ test "Bool declaration treated as regular identifier" {
     const tok3 = try lexer.nextToken();
     try testing.expect(tok3.type == .op_equal);
 
-    // TRUE - identifier, not keyword
+    // TRUE - identifier (preprocessor symbol)
     const tok4 = try lexer.nextToken();
     try testing.expect(tok4.type == .identifier);
     try testing.expectEqualStrings("TRUE", tok4.lexeme);
