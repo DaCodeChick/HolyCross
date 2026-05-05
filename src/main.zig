@@ -1,4 +1,5 @@
 const std = @import("std");
+const preprocessor = @import("preprocessor/preprocessor.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
 const ast = @import("parser/ast.zig");
@@ -60,9 +61,16 @@ pub fn main(init: std.process.Init) !void {
     const source = try cwd.readFileAlloc(init.io, input_file, allocator, std.Io.Limit.limited(1024 * 1024)); // Max 1MB
     defer allocator.free(source);
 
+    // Phase 0: Preprocessing (conditional compilation)
+    std.debug.print("[Phase 0] Preprocessing...\n", .{});
+    var preproc = try preprocessor.Preprocessor.initWithIo(allocator, source, input_file, &init.io);
+    defer preproc.deinit();
+    const processed_source = try preproc.process();
+    defer allocator.free(processed_source);
+
     // Phase 1: Lexical analysis
     std.debug.print("[Phase 1] Lexical Analysis...\n", .{});
-    var lex = lexer.Lexer.init(allocator, source);
+    var lex = lexer.Lexer.init(allocator, processed_source);
 
     // Phase 2: Parsing
     std.debug.print("[Phase 2] Parsing...\n", .{});
