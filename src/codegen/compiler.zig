@@ -60,7 +60,8 @@ pub const Compiler = struct {
         const asm_path = try std.fmt.allocPrint(self.allocator, "{s}.s", .{output_path});
         defer self.allocator.free(asm_path);
 
-        const asm_file = try std.fs.cwd().createFile(asm_path, .{});
+        const cwd = std.Io.Dir.cwd();
+        const asm_file = try cwd.createFile(asm_path, .{});
         defer asm_file.close();
         try asm_file.writeAll(asm_code);
 
@@ -78,7 +79,7 @@ pub const Compiler = struct {
         }
 
         // Clean up intermediate files
-        try std.fs.cwd().deleteFile(asm_path);
+        try cwd.deleteFile(asm_path);
     }
 
     pub fn deinit(self: *Compiler) void {

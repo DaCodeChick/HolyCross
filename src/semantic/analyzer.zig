@@ -58,17 +58,17 @@ pub const Analyzer = struct {
             .allocator = allocator,
             .symbol_table = SymbolTable.init(allocator),
             .type_checker = undefined, // Will be initialized in initTypeChecker()
-            .errors = .{},
+            .errors = .{ .items = &.{}, .capacity = 0 },
             .loop_depth = 0,
             .labels = std.StringHashMap(ast.SourceLocation).init(allocator),
-            .gotos = .{},
+            .gotos = .{ .items = &.{}, .capacity = 0 },
             .current_function_return_type = null,
             .has_return_statement = false,
             .class_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .union_members = std.StringHashMap([]ast.ClassMember).init(allocator),
             .type_layouts = std.StringHashMap(TypeLayout).init(allocator),
             .class_bases = std.StringHashMap([]const u8).init(allocator),
-            .combined_member_arrays = .{},
+            .combined_member_arrays = .{ .items = &.{}, .capacity = 0 },
         };
     }
 

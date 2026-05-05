@@ -8,15 +8,16 @@ const analyzer = @import("semantic/analyzer.zig");
 const codegen_test = @import("codegen/tests/codegen_tests.zig");
 const Compiler = @import("codegen/compiler.zig").Compiler;
 
-pub fn main() !void {
-    // Get allocator
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    // Get allocator - use the one provided by init
+    const allocator = init.gpa;
+    
+    // Create arena for args allocation
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
     // Get command line arguments
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(arena.allocator());
 
     // Parse arguments
     if (args.len < 2) {
@@ -55,7 +56,8 @@ pub fn main() !void {
     std.debug.print("Compiling: {s} -> {s}\n\n", .{ input_file, output_file });
 
     // Read input file
-    const file = try std.fs.cwd().openFile(input_file, .{});
+    const cwd = std.Io.Dir.cwd();
+    const file = try cwd.openFile(input_file, .{});
     defer file.close();
 
     const source = try file.readToEndAlloc(allocator, 1024 * 1024); // Max 1MB
@@ -103,7 +105,7 @@ pub fn main() !void {
         const asm_code = try compiler.compileToAssembly(&program, &anal.type_checker, &anal.type_layouts);
         defer allocator.free(asm_code);
 
-        const asm_file = try std.fs.cwd().createFile(output_file, .{});
+        const asm_file = try cwd.createFile(output_file, .{});
         defer asm_file.close();
         try asm_file.writeAll(asm_code);
 

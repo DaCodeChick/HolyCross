@@ -48,7 +48,7 @@ pub const TypeChecker = struct {
             .symbol_table = sym_table,
             .allocator = allocator,
             .type_arena = std.heap.ArenaAllocator.init(allocator),
-            .errors = .{},
+            .errors = .{ .items = &.{}, .capacity = 0 },
             .class_members = class_members,
             .class_bases = class_bases,
         };

@@ -11,14 +11,19 @@ pub const GenContext = struct {
 
     /// Emit assembly code
     pub fn emit(self: *GenContext, comptime fmt: []const u8, args: anytype) !void {
-        try self.output.writer(self.allocator).print(fmt, args);
+        // Zig 0.16.0: Use allocPrint + appendSlice instead of ArrayList.print
+        const formatted = try std.fmt.allocPrint(self.allocator, fmt, args);
+        defer self.allocator.free(formatted);
+        try self.output.appendSlice(self.allocator, formatted);
     }
 
     /// Emit assembly comment
     pub fn emitComment(self: *GenContext, comptime fmt: []const u8, args: anytype) !void {
-        try self.output.writer(self.allocator).print("    # ", .{});
-        try self.output.writer(self.allocator).print(fmt, args);
-        try self.output.writer(self.allocator).print("\n", .{});
+        try self.output.appendSlice(self.allocator, "    # ");
+        const formatted = try std.fmt.allocPrint(self.allocator, fmt, args);
+        defer self.allocator.free(formatted);
+        try self.output.appendSlice(self.allocator, formatted);
+        try self.output.append(self.allocator, '\n');
     }
 
     /// Get variable offset from stack layout

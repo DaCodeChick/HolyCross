@@ -51,8 +51,8 @@ pub const X64Generator = struct {
     }
 
     fn emitHeader(self: *X64Generator) !void {
-        try self.output.writer(self.allocator).print(".intel_syntax noprefix\n", .{});
-        try self.output.writer(self.allocator).print("\n", .{});
+        try self.output.appendSlice(self.allocator, ".intel_syntax noprefix\n");
+        try self.output.append(self.allocator, '\n');
     }
 
     fn emitDataSection(self: *X64Generator, module: *const ir.Module) !void {
@@ -63,49 +63,69 @@ pub const X64Generator = struct {
 
         // Emit read-only data (strings)
         if (has_strings) {
-            try self.output.writer(self.allocator).print(".section .rodata\n", .{});
+            try self.output.appendSlice(self.allocator, ".section .rodata\n");
             for (module.string_table.items, 0..) |str, i| {
-                try self.output.writer(self.allocator).print(".str{d}:\n", .{i});
-                try self.output.writer(self.allocator).print("    .string \"{s}\"\n", .{str});
+                const label = try std.fmt.allocPrint(self.allocator, ".str{d}:\n", .{i});
+                defer self.allocator.free(label);
+                try self.output.appendSlice(self.allocator, label);
+                
+                const str_directive = try std.fmt.allocPrint(self.allocator, "    .string \"{s}\"\n", .{str});
+                defer self.allocator.free(str_directive);
+                try self.output.appendSlice(self.allocator, str_directive);
             }
-            try self.output.writer(self.allocator).print("\n", .{});
+            try self.output.append(self.allocator, '\n');
         }
 
         // Emit global variables
         if (has_globals) {
-            try self.output.writer(self.allocator).print(".section .data\n", .{});
+            try self.output.appendSlice(self.allocator, ".section .data\n");
             for (module.globals.items) |global| {
-                try self.output.writer(self.allocator).print(".globl {s}\n", .{global.name});
-                try self.output.writer(self.allocator).print("{s}:\n", .{global.name});
+                const globl_directive = try std.fmt.allocPrint(self.allocator, ".globl {s}\n", .{global.name});
+                defer self.allocator.free(globl_directive);
+                try self.output.appendSlice(self.allocator, globl_directive);
+                
+                const label = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{global.name});
+                defer self.allocator.free(label);
+                try self.output.appendSlice(self.allocator, label);
 
                 // Emit initializer or zero
                 if (global.init_value) |init_val| {
                     switch (init_val) {
                         .constant => |c| switch (c) {
-                            .int => |val| try self.output.writer(self.allocator).print("    .quad {d}\n", .{val}),
+                            .int => |val| {
+                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad {d}\n", .{val});
+                                defer self.allocator.free(directive);
+                                try self.output.appendSlice(self.allocator, directive);
+                            },
                             .float => |val| {
                                 // Convert float to hex representation for assembly
                                 const int_bits: u64 = @bitCast(val);
-                                try self.output.writer(self.allocator).print("    .quad 0x{x}\n", .{int_bits});
+                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad 0x{x}\n", .{int_bits});
+                                defer self.allocator.free(directive);
+                                try self.output.appendSlice(self.allocator, directive);
                             },
-                            .bool => |val| try self.output.writer(self.allocator).print("    .quad {d}\n", .{@as(i64, if (val) 1 else 0)}),
+                            .bool => |val| {
+                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad {d}\n", .{@as(i64, if (val) 1 else 0)});
+                                defer self.allocator.free(directive);
+                                try self.output.appendSlice(self.allocator, directive);
+                            },
                         },
                         else => {
                             // Fallback to zero initialization for complex cases
-                            try self.output.writer(self.allocator).print("    .quad 0\n", .{});
+                            try self.output.appendSlice(self.allocator, "    .quad 0\n");
                         },
                     }
                 } else {
                     // No initializer - zero initialize
-                    try self.output.writer(self.allocator).print("    .quad 0\n", .{});
+                    try self.output.appendSlice(self.allocator, "    .quad 0\n");
                 }
             }
-            try self.output.writer(self.allocator).print("\n", .{});
+            try self.output.append(self.allocator, '\n');
         }
     }
 
     fn emitTextSection(self: *X64Generator, module: *const ir.Module) !void {
-        try self.output.writer(self.allocator).print(".section .text\n", .{});
+        try self.output.appendSlice(self.allocator, ".section .text\n");
 
         for (module.functions.items) |*func| {
             try self.generateFunction(func);
