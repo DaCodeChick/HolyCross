@@ -119,9 +119,11 @@ pub const Parser = struct {
             const is_decl = self.looksLikeDeclaration();
 
             if (is_decl) {
-                // Parse as declaration
-                if (self.parseDeclaration()) |decl| {
-                    try decls.append(self.ast_allocator, decl);
+                // Parse as declaration (may return multiple decls for comma-separated vars)
+                if (self.parseDeclaration()) |parsed_decls| {
+                    for (parsed_decls) |decl| {
+                        try decls.append(self.ast_allocator, decl);
+                    }
                 } else |err| {
                     if (err == error.ParseError) {
                         self.synchronize();
@@ -343,16 +345,22 @@ pub const Parser = struct {
         return attrs;
     }
 
-    fn parseDeclaration(self: *Parser) ParserError!Decl {
+    fn parseDeclaration(self: *Parser) ParserError![]Decl {
         // Parse declaration attributes
         const attrs = try self.parseAttributes();
 
         // Check for class/union declaration
         if (try self.match(.keyword_class)) {
-            return try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
+            const single_decl = try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
+            const decl_slice = try self.ast_allocator.alloc(Decl, 1);
+            decl_slice[0] = single_decl;
+            return decl_slice;
         }
         if (try self.match(.keyword_union)) {
-            return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
+            const single_decl = try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, null, null);
+            const decl_slice = try self.ast_allocator.alloc(Decl, 1);
+            decl_slice[0] = single_decl;
+            return decl_slice;
         }
 
         // Try to parse type (for function/variable declaration)
@@ -370,10 +378,16 @@ pub const Parser = struct {
 
         // Check if this is a class/union with representation type
         if (try self.match(.keyword_class)) {
-            return try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
+            const single_decl = try self.parseClassDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
+            const decl_slice = try self.ast_allocator.alloc(Decl, 1);
+            decl_slice[0] = single_decl;
+            return decl_slice;
         }
         if (try self.match(.keyword_union)) {
-            return try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
+            const single_decl = try self.parseUnionDeclaration(attrs.is_public, attrs.is_static, attrs.is_extern, decl_type, null);
+            const decl_slice = try self.ast_allocator.alloc(Decl, 1);
+            decl_slice[0] = single_decl;
+            return decl_slice;
         }
 
         // Must be function or global variable - need identifier
@@ -426,7 +440,7 @@ pub const Parser = struct {
                 break :blk null;
             };
 
-            return Decl{
+            const single_decl = Decl{
                 .function = .{
                     .return_type = final_type,
                     .name = name,
@@ -436,23 +450,74 @@ pub const Parser = struct {
                     .loc = name_loc,
                 },
             };
+            const decl_slice = try self.ast_allocator.alloc(Decl, 1);
+            decl_slice[0] = single_decl;
+            return decl_slice;
         } else {
-            // Global variable declaration
-            const init_expr: ?Expr = if (try self.match(.op_equal))
-                try self.parseExpression()
-            else
-                null;
+            // Global variable declaration(s) - may be comma-separated
+            const empty_slice = try self.ast_allocator.alloc(Decl, 0);
+            var decls = std.ArrayList(Decl).fromOwnedSlice(empty_slice);
+            
+            // Add first variable
+            var current_type = final_type;
+            var current_name = name;
+            
+            while (true) {
+                // Optional initializer
+                const init_expr: ?Expr = if (try self.match(.op_equal))
+                    try self.parseExpression()
+                else
+                    null;
+                
+                // Add this variable declaration
+                try decls.append(self.ast_allocator, Decl{
+                    .global_var = .{
+                        .type = current_type,
+                        .name = current_name,
+                        .init = init_expr,
+                        .loc = name_loc,
+                    },
+                });
+                
+                // Check for comma (more variables) or semicolon (end)
+                if (try self.match(.comma)) {
+                    // Parse next variable name
+                    try self.consume(.identifier, "Expected variable name after ','");
+                    current_name = self.previous.lexeme;
+                    
+                    // Reset type to base type (arrays must be declared separately)
+                    current_type = decl_type;
+                    
+                    // Check for array suffix on this variable
+                    if (try self.match(.lbracket)) {
+                        const element_type_ptr = try self.ast_allocator.create(ast.Type);
+                        element_type_ptr.* = decl_type;
 
-            try self.consume(.semicolon, "Expected ';' after variable declaration");
+                        const size_expr = try self.parseExpression();
+                        if (size_expr != .integer) {
+                            self.reportErrorAtCurrent("Array size must be a constant integer");
+                            return error.ParseError;
+                        }
+                        const size: u64 = @intCast(size_expr.integer.value);
 
-            return Decl{
-                .global_var = .{
-                    .type = final_type,
-                    .name = name,
-                    .init = init_expr,
-                    .loc = name_loc,
-                },
-            };
+                        try self.consume(.rbracket, "Expected ']' after array size");
+
+                        current_type = ast.Type{
+                            .array = .{
+                                .element_type = element_type_ptr,
+                                .size = size,
+                            },
+                        };
+                    }
+                    continue;
+                } else {
+                    // Must be semicolon
+                    try self.consume(.semicolon, "Expected ';' or ',' after variable declaration");
+                    break;
+                }
+            }
+            
+            return try decls.toOwnedSlice(self.ast_allocator);
         }
     }
 

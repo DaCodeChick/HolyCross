@@ -168,4 +168,96 @@ Tests cover:
 - Interface abstraction
 - Register name/ID lookups
 - Architecture switching
-- Future: Parser and encoder tests
+- Parser and encoder functionality
+
+## Inline Assembly in HolyC
+
+The HolyCross compiler supports inline assembly using `asm { ... }` blocks, following TempleOS HolyC conventions.
+
+### Basic Usage
+
+```c
+I64 GetFortyTwo()
+{
+    asm {
+        MOV RAX, 42
+    }
+    return 0;  // Compiler-generated return (not using inline asm result)
+}
+```
+
+### Current Behavior
+
+Inline assembly is **"raw"** - it emits machine code bytes directly without integration with the compiler's register allocator or calling conventions. This matches TempleOS's inline assembly model.
+
+**What works:**
+- ✅ Parse assembly instructions (MOV, PUSH, POP, NOP, etc.)
+- ✅ Encode to x64 machine code bytes
+- ✅ Emit as `.byte` directives in generated assembly
+- ✅ Execute inline assembly within functions
+
+**Limitations:**
+- ⚠️ **No register allocation coordination** - The compiler doesn't know which registers you modify
+- ⚠️ **No automatic save/restore** - You must preserve registers according to calling conventions
+- ⚠️ **No constraint syntax** - Cannot specify inputs/outputs like GCC's extended asm
+- ⚠️ **RAX is return value** - If you modify RAX, the function will return that value
+- ⚠️ **No compiler integration** - Assembly is "opaque" to optimization and analysis
+
+### Register Usage Guidelines
+
+When writing inline assembly:
+
+1. **Preserve callee-saved registers**: RBX, R12-R15, RBP
+2. **RAX is the return value** - Last value in RAX will be the function's return
+3. **Caller-saved registers** can be freely modified: RAX, RCX, RDX, RSI, RDI, R8-R11
+4. **Stack alignment**: Maintain 16-byte alignment if calling functions
+5. **No automatic spilling**: The compiler won't save your values around the asm block
+
+### Examples
+
+**✅ Good: Using scratch registers**
+```c
+I64 AddFortyTwo(I64 x)
+{
+    // x is passed in via calling convention (not visible in asm block)
+    asm {
+        MOV RBX, 42  // RBX is callee-saved, should be preserved!
+        ADD RAX, RBX // RAX is caller-saved, ok to modify
+    }
+    return x + 42;  // Compiler handles actual addition
+}
+```
+
+**❌ Bad: Clobbering without restore**
+```c
+I64 BadExample()
+{
+    asm {
+        MOV RBX, 100  // Clobbers callee-saved RBX without restoring!
+    }
+    return 0;
+}
+```
+
+**✅ Good: Proper save/restore**
+```c
+I64 GoodExample()
+{
+    asm {
+        PUSH RBX      // Save callee-saved register
+        MOV RBX, 100  // Use it
+        POP RBX       // Restore before return
+    }
+    return 0;
+}
+```
+
+### Future Enhancements
+
+For full compiler integration (like GCC's extended inline assembly), we would need:
+- **Input/output constraints**: `asm("mov %0, %1" : "=r"(output) : "r"(input))`
+- **Clobber lists**: Tell compiler which registers are modified
+- **Register allocation**: Compiler assigns registers automatically
+- **Optimization awareness**: Compiler can reason about asm blocks
+
+These features are not currently planned, as the raw assembly model matches TempleOS conventions and is simpler to implement and understand.
