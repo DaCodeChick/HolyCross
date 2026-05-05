@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ir = @import("ir.zig");
+const assembler = @import("../assembler.zig");
 
 // Import our modular components
 const helpers = @import("x64/helpers.zig");
@@ -337,7 +338,61 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         // Functions
         .call => try instruction_gen.Functions.genCall(ctx, instr),
         .print => try instruction_gen.Functions.genPrint(ctx, instr),
+        
+        // Inline assembly
+        .inline_asm => try genInlineAsm(ctx, instr),
     }
+}
+
+/// Generate inline assembly code
+fn genInlineAsm(ctx: *GenContext, instr: *const ir.Instruction) !void {
+    // Get the assembly source code from the instruction
+    const asm_code = switch (instr.src1) {
+        .string => |s| s,
+        else => return error.InvalidInlineAsmOperand,
+    };
+    
+    // Create an x64 assembler instance
+    var asm_generator = assembler.X64Assembler.init(ctx.allocator);
+    defer asm_generator.deinit();
+    
+    // Parse the assembly code
+    const instructions = asm_generator.parse(asm_code, ctx.allocator) catch |err| {
+        std.debug.print("Error parsing inline assembly: {}\n", .{err});
+        return err;
+    };
+    
+    defer {
+        for (instructions) |parsed_instr| {
+            ctx.allocator.free(parsed_instr.operands);
+        }
+        ctx.allocator.free(instructions);
+    }
+    
+    // Encode the instructions to machine code
+    const machine_code = asm_generator.encode(instructions, ctx.allocator) catch |err| {
+        std.debug.print("Error encoding inline assembly: {}\n", .{err});
+        return err;
+    };
+    defer ctx.allocator.free(machine_code);
+    
+    // Emit the assembly code as comments for debugging
+    try ctx.output.appendSlice(ctx.allocator, "    # Inline assembly block\n");
+    
+    // For now, we'll emit the raw bytes as .byte directives
+    // A more sophisticated approach would be to emit actual assembly mnemonics
+    if (machine_code.len > 0) {
+        try ctx.output.appendSlice(ctx.allocator, "    .byte ");
+        for (machine_code, 0..) |byte, i| {
+            if (i > 0) try ctx.output.appendSlice(ctx.allocator, ", ");
+            const byte_str = try std.fmt.allocPrint(ctx.allocator, "0x{x:0>2}", .{byte});
+            defer ctx.allocator.free(byte_str);
+            try ctx.output.appendSlice(ctx.allocator, byte_str);
+        }
+        try ctx.output.append(ctx.allocator, '\n');
+    }
+    
+    try ctx.output.appendSlice(ctx.allocator, "    # End inline assembly\n");
 }
 
 /// Instruction dispatcher for param instructions (needs parameter index)

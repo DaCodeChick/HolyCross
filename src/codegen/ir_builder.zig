@@ -105,16 +105,20 @@ pub const IRBuilder = struct {
 
     /// Build IR from AST root
     pub fn buildFromAST(self: *IRBuilder, root: *const ast.Program) !void {
-        // Check if there's a HolyC Main function
+        // Check if there's a HolyC Main function or a C main function
         var has_main = false;
+        var has_c_main = false;
         for (root.decls) |decl| {
-            if (decl == .function and std.mem.eql(u8, decl.function.name, "Main")) {
-                has_main = true;
-                break;
+            if (decl == .function) {
+                if (std.mem.eql(u8, decl.function.name, "Main")) {
+                    has_main = true;
+                } else if (std.mem.eql(u8, decl.function.name, "main")) {
+                    has_c_main = true;
+                }
             }
         }
 
-        // First, process all declarations (including Main if it exists)
+        // First, process all declarations (including Main/main if they exist)
         for (root.decls) |decl| {
             try self.buildDeclaration(decl);
         }
@@ -122,7 +126,10 @@ pub const IRBuilder = struct {
         // Create C's main() function that:
         // 1. Executes top-level statements (if any)
         // 2. Calls HolyC Main() function (if it exists)
-        try self.buildCMainFunction(root.top_level_stmts, has_main);
+        // BUT: Only if user didn't define their own main() function
+        if (!has_c_main) {
+            try self.buildCMainFunction(root.top_level_stmts, has_main);
+        }
     }
 
     pub fn buildDeclaration(self: *IRBuilder, decl: ast.Decl) !void {
@@ -331,10 +338,11 @@ pub const IRBuilder = struct {
                 // Ignore catch block for now
             },
             .asm_block => |asm_block| {
-                // TODO: Emit inline assembly
-                // For now, just ignore - proper implementation would need
-                // to pass through the assembly code to the output
-                _ = asm_block;
+                // Emit inline assembly instruction
+                try self.emit(.{
+                    .opcode = .inline_asm,
+                    .src1 = .{ .string = asm_block.code },
+                });
             },
             .empty => {},
         }

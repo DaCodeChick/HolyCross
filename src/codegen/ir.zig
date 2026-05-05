@@ -63,6 +63,7 @@ pub const Opcode = enum {
     print, // HolyC print statement
     alloc_local, // Allocate local variable on stack
     param, // Function parameter
+    inline_asm, // Inline assembly block
 };
 
 /// Operand types for IR instructions
@@ -150,6 +151,7 @@ pub const Instruction = struct {
             .print => try writer.print("{any}", .{self.src1}),
             .alloc_local => try writer.print("{any}, size={any}", .{ self.dest, self.src1 }),
             .param => try writer.print("{any}", .{self.dest}),
+            .inline_asm => try writer.print("asm {any}", .{self.src1}),
             .load_const, .load_var, .move, .neg, .bit_not, .log_not => {
                 try writer.print("{any} = {any}", .{ self.dest, self.src1 });
             },

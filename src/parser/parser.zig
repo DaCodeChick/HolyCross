@@ -1180,6 +1180,11 @@ pub const Parser = struct {
             return try self.parseTryCatchStatement();
         }
 
+        // Inline assembly: asm { ... }
+        if (try self.match(.keyword_asm)) {
+            return try self.parseAsmBlock();
+        }
+
         // TODO: Handle labels (identifier:) - requires lexer lookahead
         // For now, labels will be parsed as expression statements and caught in semantic analysis
 
@@ -1587,6 +1592,80 @@ pub const Parser = struct {
                 .try_block = try_block_ptr,
                 .catch_block = catch_block_ptr,
                 .loc = try_loc,
+            },
+        };
+    }
+
+    /// Parse inline assembly block: asm { ... }
+    fn parseAsmBlock(self: *Parser) ParserError!Stmt {
+        const asm_loc = self.locationFromToken(self.previous);
+        
+        try self.consume(.lbrace, "Expected '{' after 'asm'");
+        
+        // Find the position of the '{' token we just consumed to calculate code_start
+        // The previous token is '{', so we need to find where it ends in the source
+        // Search backwards from current lexer position to find the '{'
+        var search_pos = if (self.lexer.position > 0) self.lexer.position - 1 else 0;
+        while (search_pos > 0 and self.lexer.source[search_pos] != '{') {
+            search_pos -= 1;
+        }
+        // Move past the '{'
+        const code_start = search_pos + 1;
+        
+        // Skip whitespace/newlines after the '{'
+        var code_start_trimmed = code_start;
+        while (code_start_trimmed < self.lexer.source.len) {
+            const c = self.lexer.source[code_start_trimmed];
+            if (c == ' ' or c == '\t' or c == '\n' or c == '\r') {
+                code_start_trimmed += 1;
+            } else {
+                break;
+            }
+        }
+        
+        // Now scan through tokens until we find the closing '}'
+        var brace_depth: i32 = 1;
+        
+        while (brace_depth > 0 and !self.check(.eof)) {
+            if (self.current.type == .lbrace) {
+                brace_depth += 1;
+            } else if (self.current.type == .rbrace) {
+                brace_depth -= 1;
+                if (brace_depth == 0) {
+                    // Found the closing brace
+                    break;
+                }
+            }
+            try self.advance();
+        }
+        
+        // Now we need to find the position of the '}' in the source
+        // Search backwards from current lexer position to find the '}'
+        search_pos = if (self.lexer.position > 0) self.lexer.position - 1 else 0;
+        while (search_pos > 0 and self.lexer.source[search_pos] != '}') {
+            search_pos -= 1;
+        }
+        const code_end = search_pos;
+        
+        // Trim trailing whitespace from code_end
+        var code_end_trimmed = code_end;
+        while (code_end_trimmed > code_start_trimmed) {
+            const c = self.lexer.source[code_end_trimmed - 1];
+            if (c == ' ' or c == '\t' or c == '\n' or c == '\r') {
+                code_end_trimmed -= 1;
+            } else {
+                break;
+            }
+        }
+        
+        const asm_code = self.lexer.source[code_start_trimmed..code_end_trimmed];
+        
+        try self.consume(.rbrace, "Expected '}' after asm block");
+        
+        return Stmt{
+            .asm_block = .{
+                .code = asm_code,
+                .loc = asm_loc,
             },
         };
     }
