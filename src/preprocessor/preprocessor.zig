@@ -16,7 +16,7 @@ pub const Preprocessor = struct {
     io: *const std.Io = undefined, // For file operations
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8, filename: []const u8) !Preprocessor {
-        return Preprocessor{
+        var preprocessor = Preprocessor{
             .allocator = allocator,
             .source = source,
             .filename = filename,
@@ -24,10 +24,12 @@ pub const Preprocessor = struct {
             .output = .{ .items = &.{}, .capacity = 0 },
             .include_depth = 0,
         };
+        try preprocessor.defineBuiltins();
+        return preprocessor;
     }
 
     pub fn initWithIo(allocator: std.mem.Allocator, source: []const u8, filename: []const u8, io: *const std.Io) !Preprocessor {
-        return Preprocessor{
+        var preprocessor = Preprocessor{
             .allocator = allocator,
             .source = source,
             .filename = filename,
@@ -36,6 +38,28 @@ pub const Preprocessor = struct {
             .include_depth = 0,
             .io = io,
         };
+        try preprocessor.defineBuiltins();
+        return preprocessor;
+    }
+
+    /// Create a preprocessor for an included file (shares defines with parent)
+    fn initForInclude(allocator: std.mem.Allocator, source: []const u8, filename: []const u8, io: *const std.Io, parent_defines: std.StringHashMap(void), depth: usize) !Preprocessor {
+        return Preprocessor{
+            .allocator = allocator,
+            .source = source,
+            .filename = filename,
+            .defines = parent_defines,
+            .output = .{ .items = &.{}, .capacity = 0 },
+            .include_depth = depth,
+            .io = io,
+        };
+    }
+
+    /// Define builtin preprocessor symbols
+    fn defineBuiltins(self: *Preprocessor) !void {
+        try self.defines.put("TRUE", {});
+        try self.defines.put("FALSE", {});
+        try self.defines.put("NULL", {});
     }
 
     pub fn deinit(self: *Preprocessor) void {
@@ -210,12 +234,15 @@ pub const Preprocessor = struct {
         };
         defer self.allocator.free(included_source);
         
-        // Create a new preprocessor for the included file
-        var include_preprocessor = try Preprocessor.initWithIo(self.allocator, included_source, include_path, self.io);
-        include_preprocessor.include_depth = self.include_depth + 1;
-        
-        // Share the defines with the included file
-        include_preprocessor.defines = self.defines;
+        // Create a new preprocessor for the included file, sharing defines
+        var include_preprocessor = try Preprocessor.initForInclude(
+            self.allocator,
+            included_source,
+            include_path,
+            self.io,
+            self.defines,
+            self.include_depth + 1
+        );
         defer include_preprocessor.defines = std.StringHashMap(void).init(self.allocator); // Prevent double-free
         
         // Process the included file
