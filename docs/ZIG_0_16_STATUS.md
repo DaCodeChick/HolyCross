@@ -1,8 +1,8 @@
 # Zig 0.16.0 Migration Status
 
-## Current Status: ✅ COMPLETE - All Tests Passing (211/211)
+## Current Status: ✅ COMPLETE - All Tests Passing (211/211) + Compiler Working
 
-The migration to Zig 0.16.0 is **COMPLETE**! All 211 tests are passing.
+The migration to Zig 0.16.0 is **COMPLETE**! All 211 tests are passing and the compiler successfully builds and runs HolyC programs.
 
 ## Solution: Use allocPrint + appendSlice Instead of ArrayList.print()
 
@@ -54,17 +54,46 @@ The compilation hang was caused by using `ArrayList.print()` method which intern
 
 ### 5. File System API Changes ✅
 - Replaced `std.fs.cwd()` with `std.Io.Dir.cwd()`
+- **File Operations**: All file operations now require `io: std.Io` parameter
 - **Old API**: `std.fs.cwd().openFile()`, `std.fs.cwd().createFile()`
 - **New API**: 
   ```zig
   const cwd = std.Io.Dir.cwd();
-  const file = try cwd.openFile(path, .{});
-  const file2 = try cwd.createFile(path, .{});
+  // Reading files
+  const content = try cwd.readFileAlloc(io, path, allocator, size_limit);
+  // Creating files
+  const file = try cwd.createFile(io, path, .{});
+  defer file.close(io);
+  try file.writeStreamingAll(io, data);
+  // Deleting files
+  try cwd.deleteFile(io, path);
   ```
+- **File size limits**: Use `std.Io.Limit.limited(bytes)` for size constraints
 
 ### 6. TypeChecker Test Fixes ✅  
 - Fixed all 14 TypeChecker test initializations
 - Added required class_members and class_bases HashMap parameters
+
+### 7. Process Spawning API Changes ✅
+- Replaced `std.process.Child.run()` with `std.process.spawn()` + `wait()`
+- **Old API**:
+  ```zig
+  const result = try std.process.Child.run(.{
+      .allocator = allocator,
+      .argv = &[_][]const u8{ "gcc", "file.c" },
+  });
+  defer allocator.free(result.stdout);
+  defer allocator.free(result.stderr);
+  if (result.term.Exited != 0) { ... }
+  ```
+- **New API**:
+  ```zig
+  var child = try std.process.spawn(io, .{
+      .argv = &[_][]const u8{ "gcc", "file.c" },
+  });
+  const term = try child.wait(io);
+  if (term != .exited or term.exited != 0) { ... }
+  ```
 
 ## Test Results ✅
 
