@@ -313,6 +313,14 @@ pub const X64MachineCodeGen = struct {
             .add => try self.genBinaryOp(instr, .add),
             .sub => try self.genBinaryOp(instr, .sub),
             .mul => try self.genMul(instr),
+            .div => try self.genDiv(instr),
+            .mod => try self.genMod(instr),
+            .neg => try self.genNeg(instr),
+            .bit_and => try self.genBinaryOp(instr, .bit_and),
+            .bit_or => try self.genBinaryOp(instr, .bit_or),
+            .bit_xor => try self.genBinaryOp(instr, .bit_xor),
+            .shl => try self.genShift(instr, .shl),
+            .shr => try self.genShift(instr, .shr),
             .call => try self.genCall(instr),
             .cmp_eq => try self.genComparison(instr, .eq),
             .cmp_ne => try self.genComparison(instr, .ne),
@@ -391,7 +399,7 @@ pub const X64MachineCodeGen = struct {
         try self.emitEpilogue();
     }
 
-    fn genBinaryOp(self: *X64MachineCodeGen, instr: *const ir.Instruction, op: enum { add, sub }) !void {
+    fn genBinaryOp(self: *X64MachineCodeGen, instr: *const ir.Instruction, op: enum { add, sub, bit_and, bit_or, bit_xor }) !void {
         // Load src1 into rax
         try self.loadOperandToRax(instr.src1);
 
@@ -402,6 +410,9 @@ pub const X64MachineCodeGen = struct {
                 switch (op) {
                     .add => try self.emitBytes(&[_]u8{ 0x48, 0x03 }), // add rax, [rbp+offset]
                     .sub => try self.emitBytes(&[_]u8{ 0x48, 0x2B }), // sub rax, [rbp+offset]
+                    .bit_and => try self.emitBytes(&[_]u8{ 0x48, 0x23 }), // and rax, [rbp+offset]
+                    .bit_or => try self.emitBytes(&[_]u8{ 0x48, 0x0B }), // or rax, [rbp+offset]
+                    .bit_xor => try self.emitBytes(&[_]u8{ 0x48, 0x33 }), // xor rax, [rbp+offset]
                 }
                 try self.emitModRM(0, 5, src2_offset);
             },
@@ -411,12 +422,18 @@ pub const X64MachineCodeGen = struct {
                         switch (op) {
                             .add => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC0 }), // add rax, imm8
                             .sub => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xE8 }), // sub rax, imm8
+                            .bit_and => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xE0 }), // and rax, imm8
+                            .bit_or => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC8 }), // or rax, imm8
+                            .bit_xor => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xF0 }), // xor rax, imm8
                         }
                         try self.emitByte(@intCast(val));
                     } else {
                         switch (op) {
                             .add => try self.emitBytes(&[_]u8{ 0x48, 0x05 }), // add rax, imm32
                             .sub => try self.emitBytes(&[_]u8{ 0x48, 0x2D }), // sub rax, imm32
+                            .bit_and => try self.emitBytes(&[_]u8{ 0x48, 0x25 }), // and rax, imm32
+                            .bit_or => try self.emitBytes(&[_]u8{ 0x48, 0x0D }), // or rax, imm32
+                            .bit_xor => try self.emitBytes(&[_]u8{ 0x48, 0x35 }), // xor rax, imm32
                         }
                         try self.emitDword(@intCast(val));
                     }
@@ -443,6 +460,107 @@ pub const X64MachineCodeGen = struct {
         try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xAF });
         try self.emitModRM(0, 5, src2_offset);
 
+        // Store result in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genDiv(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Signed division: rax = rax / operand, rdx = remainder
+        // idiv requires dividend in rdx:rax, divisor in memory or register
+        
+        // Load dividend (src1) into rax
+        const src1_offset = try self.getTempOffset(instr.src1);
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(0, 5, src1_offset);
+        
+        // Sign-extend rax into rdx:rax (cqo instruction)
+        try self.emitBytes(&[_]u8{ 0x48, 0x99 });
+        
+        // Load divisor (src2) into rcx
+        const src2_offset = try self.getTempOffset(instr.src2);
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(1, 5, src2_offset); // rcx = 1
+        
+        // idiv rcx (signed divide rdx:rax by rcx, quotient in rax, remainder in rdx)
+        try self.emitBytes(&[_]u8{ 0x48, 0xF7, 0xF9 });
+        
+        // Store quotient (rax) in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genMod(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Modulo: rdx = rax % operand
+        // idiv leaves remainder in rdx
+        
+        // Load dividend (src1) into rax
+        const src1_offset = try self.getTempOffset(instr.src1);
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(0, 5, src1_offset);
+        
+        // Sign-extend rax into rdx:rax (cqo instruction)
+        try self.emitBytes(&[_]u8{ 0x48, 0x99 });
+        
+        // Load divisor (src2) into rcx
+        const src2_offset = try self.getTempOffset(instr.src2);
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(1, 5, src2_offset); // rcx = 1
+        
+        // idiv rcx (signed divide rdx:rax by rcx, quotient in rax, remainder in rdx)
+        try self.emitBytes(&[_]u8{ 0x48, 0xF7, 0xF9 });
+        
+        // Store remainder (rdx) in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(2, 5, dest_offset); // rdx = 2
+    }
+
+    fn genNeg(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Load source into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // neg rax (two's complement negation)
+        try self.emitBytes(&[_]u8{ 0x48, 0xF7, 0xD8 });
+        
+        // Store result in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genShift(self: *X64MachineCodeGen, instr: *const ir.Instruction, op: enum { shl, shr }) !void {
+        // Load src1 into rax
+        const src1_offset = try self.getTempOffset(instr.src1);
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(0, 5, src1_offset);
+        
+        // Load shift amount into rcx (x64 requires shift amount in cl)
+        switch (instr.src2) {
+            .temp => {
+                const src2_offset = try self.getTempOffset(instr.src2);
+                try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+                try self.emitModRM(1, 5, src2_offset); // rcx = 1
+            },
+            .constant => |c| switch (c) {
+                .int => |val| {
+                    // mov cl, imm8
+                    try self.emitBytes(&[_]u8{ 0xB1 });
+                    try self.emitByte(@intCast(val & 0xFF));
+                },
+                else => return error.UnsupportedConstant,
+            },
+            else => return error.InvalidOperand,
+        }
+        
+        // Shift rax by cl
+        switch (op) {
+            .shl => try self.emitBytes(&[_]u8{ 0x48, 0xD3, 0xE0 }), // shl rax, cl
+            .shr => try self.emitBytes(&[_]u8{ 0x48, 0xD3, 0xE8 }), // shr rax, cl (logical shift)
+        }
+        
         // Store result in dest
         const dest_offset = try self.getTempOffset(instr.dest);
         try self.emitBytes(&[_]u8{ 0x48, 0x89 });
