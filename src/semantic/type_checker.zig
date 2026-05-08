@@ -93,8 +93,8 @@ pub const TypeChecker = struct {
             .unary => |un| try self.inferUnaryOpType(un.op, un.operand.*),
             .call => |call| try self.inferCallType(call.callee.*, call.args),
             .subscript => |sub| try self.inferSubscriptType(sub.array.*, sub.index.*),
-            .member => |mem| try self.inferMemberType(mem.object.*, mem.member),
-            .arrow => |arr| try self.inferMemberType(arr.object.*, arr.member),
+            .member => |mem| try self.inferMemberType(mem.object.*, mem.member, mem.loc),
+            .arrow => |arr| try self.inferMemberType(arr.object.*, arr.member, arr.loc),
             .cast => |c| c.type,
             .sizeof_expr, .sizeof_type => .u64, // sizeof returns U64
             .offset => .u64, // offset returns U64
@@ -136,10 +136,11 @@ pub const TypeChecker = struct {
     fn inferBinaryOpType(self: *TypeChecker, left: ast.Expr, op: ast.BinaryOp, right: ast.Expr) TypeCheckError!ast.Type {
         const left_type = try self.inferExprType(left);
         const right_type = try self.inferExprType(right);
+        const left_loc = left.getLocation();
 
         return switch (op) {
             // Arithmetic operators: return larger of the two types
-            .add, .subtract, .multiply, .divide, .modulo => try self.arithmeticResultType(left_type, right_type),
+            .add, .subtract, .multiply, .divide, .modulo => try self.arithmeticResultType(left_type, right_type, left_loc),
 
             // Bitwise operators: return integer type
             .bitwise_and, .bitwise_or, .bitwise_xor, .shift_left, .shift_right => blk: {
@@ -335,8 +336,8 @@ pub const TypeChecker = struct {
     }
 
     /// Infer type of member access
-    fn inferMemberType(self: *TypeChecker, object: ast.Expr, member: []const u8) TypeCheckError!ast.Type {
-        // First, infer the type of the object
+    fn inferMemberType(self: *TypeChecker, object: ast.Expr, member: []const u8, loc: ast.SourceLocation) TypeCheckError!ast.Type {
+        // Get the type of the object
         const object_type = try self.inferExprType(object);
 
         // Get the base type name (handle pointers, etc.)
@@ -345,12 +346,12 @@ pub const TypeChecker = struct {
             .pointer => |ptr_type| switch (ptr_type.*) {
                 .named => |name| name,
                 else => {
-                    try self.addError(.not_implemented, "Complex pointer member access not yet supported", ast.SourceLocation{ .line = 0, .column = 0 });
+                    try self.addError(.not_implemented, "Complex pointer member access not yet supported", loc);
                     return error.TypeError;
                 },
             },
             else => {
-                try self.addError(.not_implemented, "Member access on non-class/union type not supported", ast.SourceLocation{ .line = 0, .column = 0 });
+                try self.addError(.not_implemented, "Member access on non-class/union type not supported", loc);
                 return error.TypeError;
             },
         };
@@ -474,7 +475,7 @@ pub const TypeChecker = struct {
     // ============================================================================
 
     /// Get result type of arithmetic operation
-    pub fn arithmeticResultType(self: *TypeChecker, left: ast.Type, right: ast.Type) TypeCheckError!ast.Type {
+    pub fn arithmeticResultType(self: *TypeChecker, left: ast.Type, right: ast.Type, loc: ast.SourceLocation) TypeCheckError!ast.Type {
         // Float takes precedence
         if (self.isFloatType(left) or self.isFloatType(right)) return .f64;
 
@@ -487,7 +488,7 @@ pub const TypeChecker = struct {
         if (self.isPointerType(left) and self.isIntegerType(right)) return left;
         if (self.isIntegerType(left) and self.isPointerType(right)) return right;
 
-        try self.addError(.invalid_operation, "Invalid types for arithmetic", ast.SourceLocation{ .line = 0, .column = 0 });
+        try self.addError(.invalid_operation, "Invalid types for arithmetic", loc);
         return error.TypeError;
     }
 

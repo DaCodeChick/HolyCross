@@ -125,7 +125,12 @@ pub fn main(init: std.process.Init) !void {
         if (anal.errors.items.len > 0) {
             std.debug.print("Errors:\n", .{});
             for (anal.errors.items) |error_item| {
-                std.debug.print("  {s}\n", .{error_item.message});
+                std.debug.print("  {s}:{}:{}: {s}\n", .{ 
+                    input_file, 
+                    error_item.loc.line, 
+                    error_item.loc.column, 
+                    error_item.message 
+                });
             }
         }
         return err;

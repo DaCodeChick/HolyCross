@@ -282,9 +282,10 @@ test "TypeChecker: arithmetic with float returns float" {
     var checker = TypeChecker.init(testing.allocator, &sym_table, &class_members, &class_bases);
     defer checker.deinit();
 
-    const result = try checker.arithmeticResultType(.i64, .f64);
+    const dummy_loc = ast.SourceLocation{ .line = 1, .column = 1 };
+    const result = try checker.arithmeticResultType(.i64, .f64, dummy_loc);
     try testing.expectEqual(ast.Type.f64, result);
 
-    const result2 = try checker.arithmeticResultType(.f64, .i32);
+    const result2 = try checker.arithmeticResultType(.f64, .i32, dummy_loc);
     try testing.expectEqual(ast.Type.f64, result2);
 }
