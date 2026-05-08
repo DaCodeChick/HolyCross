@@ -8,6 +8,9 @@ const type_checker = @import("semantic/type_checker.zig");
 const analyzer = @import("semantic/analyzer.zig");
 const codegen_test = @import("codegen/tests/codegen_tests.zig");
 const Compiler = @import("codegen/compiler.zig").Compiler;
+const target_module = @import("codegen/target.zig");
+const Target = target_module.Target;
+const TargetConfig = target_module.TargetConfig;
 
 pub fn main(init: std.process.Init) !void {
     // Get allocator - use the one provided by init
@@ -30,12 +33,20 @@ pub fn main(init: std.process.Init) !void {
     var emit_asm_only = false;
     var input_file: []const u8 = "";
     var output_file: []const u8 = "";
+    var target: Target = .native_x64_linux;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "-S")) {
             emit_asm_only = true;
+        } else if (std.mem.startsWith(u8, arg, "--target=")) {
+            const target_str = arg["--target=".len..];
+            target = Target.fromString(target_str) catch {
+                std.debug.print("Error: Invalid target '{s}'\n", .{target_str});
+                std.debug.print("Valid targets: native, templeos, zealos\n", .{});
+                return error.InvalidTarget;
+            };
         } else if (input_file.len == 0) {
             input_file = arg;
         } else if (output_file.len == 0) {
@@ -49,11 +60,23 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (output_file.len == 0) {
-        output_file = if (emit_asm_only) "a.s" else "a.out";
+        if (emit_asm_only) {
+            output_file = "a.s";
+        } else {
+            // Use default extension based on target
+            const default_name = "a.out";
+            const extension = target.defaultExtension();
+            if (extension.len > 0) {
+                output_file = try std.fmt.allocPrint(arena.allocator(), "{s}{s}", .{ default_name, extension });
+            } else {
+                output_file = default_name;
+            }
+        }
     }
 
     // Print info
     std.debug.print("HolyCross Compiler v0.1.0\n", .{});
+    std.debug.print("Target: {s}\n", .{target.toString()});
     std.debug.print("Compiling: {s} -> {s}\n\n", .{ input_file, output_file });
 
     // Read input file
@@ -102,7 +125,8 @@ pub fn main(init: std.process.Init) !void {
 
     // Phase 4: Code generation
     std.debug.print("[Phase 4] Code Generation...\n", .{});
-    var compiler = Compiler.init(allocator);
+    const target_config = TargetConfig.init(target);
+    var compiler = Compiler.init(allocator, target_config);
     defer compiler.deinit();
 
     if (emit_asm_only) {
@@ -131,16 +155,20 @@ fn printUsage(program_name: []const u8) void {
     std.debug.print("HolyC Cross-Compiler - Compile HolyC to native binaries\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Options:\n", .{});
-    std.debug.print("  -S           Emit assembly code only\n", .{});
+    std.debug.print("  -S                 Emit assembly code only\n", .{});
+    std.debug.print("  --target=<target>  Set compilation target\n", .{});
+    std.debug.print("                     Valid targets: native, templeos, zealos\n", .{});
+    std.debug.print("                     Default: native\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Arguments:\n", .{});
-    std.debug.print("  <input.hc>   HolyC source file to compile\n", .{});
-    std.debug.print("  [output]     Output file name (default: a.out or a.s with -S)\n", .{});
+    std.debug.print("  <input.hc>         HolyC source file to compile\n", .{});
+    std.debug.print("  [output]           Output file name (default depends on target)\n", .{});
     std.debug.print("\n", .{});
     std.debug.print("Examples:\n", .{});
     std.debug.print("  {s} hello.hc\n", .{program_name});
     std.debug.print("  {s} program.hc myprogram\n", .{program_name});
     std.debug.print("  {s} -S hello.hc hello.s\n", .{program_name});
+    std.debug.print("  {s} --target=templeos hello.hc hello.BIN\n", .{program_name});
 }
 
 test "main module" {
