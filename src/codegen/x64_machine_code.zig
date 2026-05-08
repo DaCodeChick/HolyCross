@@ -354,7 +354,7 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genLoadConst(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // mov [rbp+offset], immediate
+        // Load immediate constant to a temp location
         const dest_offset = try self.getTempOffset(instr.dest);
         
         switch (instr.src1) {
@@ -373,7 +373,22 @@ pub const X64MachineCodeGen = struct {
                         try self.emitModRM(0, 5, dest_offset);
                     }
                 },
-                else => return error.UnsupportedConstant,
+                .float => |val| {
+                    // Store float constant using x87 FPU or direct memory store
+                    const float_bits: u64 = @bitCast(val);
+                    // movabs rax, float_bits
+                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                    try self.emitQword(float_bits);
+                    // mov [rbp+offset], rax
+                    try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+                    try self.emitModRM(0, 5, dest_offset);
+                },
+                .bool => |val| {
+                    // mov qword [rbp+offset], 0 or 1
+                    try self.emitBytes(&[_]u8{ 0x48, 0xC7 });
+                    try self.emitModRM(0, 5, dest_offset);
+                    try self.emitDword(if (val) 1 else 0);
+                },
             },
             else => return error.InvalidOperand,
         }
@@ -867,7 +882,18 @@ pub const X64MachineCodeGen = struct {
                         try self.emitQword(@bitCast(val));
                     }
                 },
-                else => return error.UnsupportedConstant,
+                .float => |val| {
+                    // Load float constant bits into rax
+                    const float_bits: u64 = @bitCast(val);
+                    // movabs rax, float_bits
+                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                    try self.emitQword(float_bits);
+                },
+                .bool => |val| {
+                    // mov rax, 0 or 1
+                    try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 });
+                    try self.emitDword(if (val) 1 else 0);
+                },
             },
             else => return error.InvalidStoreSource,
         }
