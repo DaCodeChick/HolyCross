@@ -36,6 +36,13 @@ pub const CodeBuffer = union(enum) {
             .elf => |writer| writer.code.items,
         };
     }
+    
+    pub fn patchByte(self: CodeBuffer, offset: u32, value: u8) void {
+        switch (self) {
+            .templeos => |writer| writer.code.items[offset] = value,
+            .elf => |writer| writer.code.items[offset] = value,
+        }
+    }
 };
 
 /// x64 Machine Code Generator
@@ -303,6 +310,7 @@ pub const X64MachineCodeGen = struct {
             .load_const => try self.genLoadConst(instr),
             .load_var => try self.genLoadVar(instr),
             .store_var => try self.genStoreVar(instr),
+            .move => try self.genMove(instr),
             .load_addr => try self.genLoadAddr(instr),
             .load_ptr => try self.genLoadPtr(instr),
             .store_ptr => try self.genStorePtr(instr),
@@ -319,8 +327,12 @@ pub const X64MachineCodeGen = struct {
             .bit_and => try self.genBinaryOp(instr, .bit_and),
             .bit_or => try self.genBinaryOp(instr, .bit_or),
             .bit_xor => try self.genBinaryOp(instr, .bit_xor),
+            .bit_not => try self.genBitNot(instr),
             .shl => try self.genShift(instr, .shl),
             .shr => try self.genShift(instr, .shr),
+            .log_and => try self.genLogicalOp(instr, .log_and),
+            .log_or => try self.genLogicalOp(instr, .log_or),
+            .log_not => try self.genLogNot(instr),
             .call => try self.genCall(instr),
             .cmp_eq => try self.genComparison(instr, .eq),
             .cmp_ne => try self.genComparison(instr, .ne),
@@ -527,6 +539,138 @@ pub const X64MachineCodeGen = struct {
         
         // Store result in dest
         const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genBitNot(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Load source into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // not rax (one's complement, bitwise NOT)
+        try self.emitBytes(&[_]u8{ 0x48, 0xF7, 0xD0 });
+        
+        // Store result in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genLogNot(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Logical NOT: !x = (x == 0) ? 1 : 0
+        // Load source into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // test rax, rax (set flags based on rax)
+        try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+        
+        // sete al (set al to 1 if zero flag is set, 0 otherwise)
+        try self.emitBytes(&[_]u8{ 0x0F, 0x94, 0xC0 });
+        
+        // movzx rax, al (zero-extend al to rax)
+        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+        
+        // Store result in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genMove(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Simple move: dest = src
+        try self.loadOperandToRax(instr.src1);
+        
+        // Store in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genLogicalOp(self: *X64MachineCodeGen, instr: *const ir.Instruction, op: enum { log_and, log_or }) !void {
+        // Logical operations need short-circuit evaluation
+        // For &&: if left is 0, result is 0; otherwise result is (right != 0)
+        // For ||: if left is non-zero, result is 1; otherwise result is (right != 0)
+        
+        // Load src1 into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // test rax, rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+        
+        const dest_offset = try self.getTempOffset(instr.dest);
+        
+        switch (op) {
+            .log_and => {
+                // For &&: if rax is 0, jump to short-circuit (result = 0)
+                // je short_circuit (jump if zero)
+                try self.emitBytes(&[_]u8{ 0x74, 0x00 }); // je rel8, offset patched later
+                const je_offset = self.code_buffer.getCurrentOffset() - 1;
+                
+                // Load src2 into rax
+                try self.loadOperandToRax(instr.src2);
+                
+                // test rax, rax
+                try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+                
+                // setne al (set al to 1 if not zero)
+                try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 });
+                
+                // movzx rax, al
+                try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+                
+                // jmp done
+                try self.emitBytes(&[_]u8{ 0xEB, 0x00 }); // jmp rel8
+                const jmp_offset = self.code_buffer.getCurrentOffset() - 1;
+                
+                // short_circuit: xor rax, rax (set rax to 0)
+                const short_circuit_offset = self.code_buffer.getCurrentOffset();
+                const je_displacement: i8 = @intCast(@as(i32, @intCast(short_circuit_offset)) - @as(i32, @intCast(je_offset)) - 1);
+                self.code_buffer.patchByte(je_offset, @bitCast(je_displacement));
+                
+                try self.emitBytes(&[_]u8{ 0x48, 0x31, 0xC0 }); // xor rax, rax
+                
+                // done:
+                const done_offset = self.code_buffer.getCurrentOffset();
+                const jmp_displacement: i8 = @intCast(@as(i32, @intCast(done_offset)) - @as(i32, @intCast(jmp_offset)) - 1);
+                self.code_buffer.patchByte(jmp_offset, @bitCast(jmp_displacement));
+            },
+            .log_or => {
+                // For ||: if rax is non-zero, jump to set_true (result = 1)
+                // jne set_true (jump if not zero)
+                try self.emitBytes(&[_]u8{ 0x75, 0x00 }); // jne rel8
+                const jne_offset = self.code_buffer.getCurrentOffset() - 1;
+                
+                // Load src2 into rax
+                try self.loadOperandToRax(instr.src2);
+                
+                // test rax, rax
+                try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+                
+                // setne al (set al to 1 if not zero)
+                try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 });
+                
+                // movzx rax, al
+                try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+                
+                // jmp done
+                try self.emitBytes(&[_]u8{ 0xEB, 0x00 }); // jmp rel8
+                const jmp_offset = self.code_buffer.getCurrentOffset() - 1;
+                
+                // set_true: mov rax, 1
+                const set_true_offset = self.code_buffer.getCurrentOffset();
+                const jne_displacement: i8 = @intCast(@as(i32, @intCast(set_true_offset)) - @as(i32, @intCast(jne_offset)) - 1);
+                self.code_buffer.patchByte(jne_offset, @bitCast(jne_displacement));
+                
+                try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00 }); // mov rax, 1
+                
+                // done:
+                const done_offset = self.code_buffer.getCurrentOffset();
+                const jmp_displacement: i8 = @intCast(@as(i32, @intCast(done_offset)) - @as(i32, @intCast(jmp_offset)) - 1);
+                self.code_buffer.patchByte(jmp_offset, @bitCast(jmp_displacement));
+            },
+        }
+        
+        // Store result in dest
         try self.emitBytes(&[_]u8{ 0x48, 0x89 });
         try self.emitModRM(0, 5, dest_offset);
     }
