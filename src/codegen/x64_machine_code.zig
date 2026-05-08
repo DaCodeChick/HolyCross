@@ -384,11 +384,12 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genRetVal(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // Load return value into rax (for integers) or xmm0 (for floats)
+        // Load return value into rax (for integers/pointers) or ST0 (for floats via x87 FPU)
         switch (instr.src1) {
             .temp => {
                 const src_offset = try self.getTempOffset(instr.src1);
                 // mov rax, [rbp+offset]
+                // TODO: Need to detect if temp is float type and use FLD instead
                 try self.emitBytes(&[_]u8{ 0x48, 0x8B });
                 try self.emitModRM(0, 5, src_offset);
             },
@@ -405,16 +406,26 @@ pub const X64MachineCodeGen = struct {
                     }
                 },
                 .float => |val| {
-                    // For float returns, we need to load into xmm0
-                    // Store float constant to stack temporarily
+                    // x87 FPU: Load float constant into ST0
+                    // We need to store the float in memory first, then FLD it
                     const float_bits: u64 = @bitCast(val);
+                    
+                    // Push the float value onto stack at [rsp-8]
+                    // sub rsp, 8
+                    try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xEC, 0x08 });
                     
                     // movabs rax, float_bits
                     try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
                     try self.emitQword(float_bits);
                     
-                    // movq xmm0, rax (move from rax to xmm0)
-                    try self.emitBytes(&[_]u8{ 0x66, 0x48, 0x0F, 0x6E, 0xC0 });
+                    // mov [rsp], rax (store float bits to stack)
+                    try self.emitBytes(&[_]u8{ 0x48, 0x89, 0x04, 0x24 });
+                    
+                    // fld qword [rsp] (load double from stack into ST0)
+                    try self.emitBytes(&[_]u8{ 0xDD, 0x04, 0x24 });
+                    
+                    // add rsp, 8 (restore stack)
+                    try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 });
                 },
                 .bool => |val| {
                     // mov eax, 0 or 1
