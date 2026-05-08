@@ -387,6 +387,9 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         .call => try instruction_gen.Functions.genCall(ctx, instr),
         .print => try instruction_gen.Functions.genPrint(ctx, instr),
         
+        // Type conversion
+        .cast => try instruction_gen.Memory.genCast(ctx, instr),
+        
         // Inline assembly
         .inline_asm => try genInlineAsm(ctx, instr),
     }

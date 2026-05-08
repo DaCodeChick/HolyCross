@@ -685,9 +685,24 @@ pub const IRBuilder = struct {
                 return try self.buildSubscript(sub);
             },
             .cast => |cast| {
-                // For now, just evaluate the expression
-                // TODO: Proper type casting
-                return try self.buildExpression(cast.expr.*);
+                // Build the expression being cast
+                const src_operand = try self.buildExpression(cast.expr.*);
+                
+                // Create a temporary for the cast result
+                const dest = self.newTemp();
+                
+                // Get type hint for codegen
+                const type_hint = self.typeToString(cast.type);
+                
+                // Emit cast instruction
+                try self.emit(.{
+                    .opcode = .cast,
+                    .dest = .{ .temp = dest },
+                    .src1 = src_operand,
+                    .type_hint = type_hint,
+                });
+                
+                return .{ .temp = dest };
             },
             .sizeof_expr, .sizeof_type, .offset => {
                 return try self.buildSizeofOrOffset(expr);

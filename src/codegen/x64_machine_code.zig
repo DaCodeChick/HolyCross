@@ -294,6 +294,7 @@ pub const X64MachineCodeGen = struct {
             .load_const => try self.genLoadConst(instr),
             .load_var => try self.genLoadVar(instr),
             .store_var => try self.genStoreVar(instr),
+            .load_addr => try self.genLoadAddr(instr),
             .alloc_local => {}, // Stack space already allocated in prologue
             .param => {}, // Parameters handled in function prologue
             .ret => try self.genRet(),
@@ -312,6 +313,7 @@ pub const X64MachineCodeGen = struct {
             .jump_if_zero => try self.genJumpIfZero(instr),
             .jump_if_not_zero => try self.genJumpIfNotZero(instr),
             .label => try self.genLabel(instr),
+            .cast => try self.genCast(instr),
             .inline_asm => try self.genInlineAsm(instr),
             else => {
                 std.debug.print("Unimplemented opcode: {s}\n", .{@tagName(instr.opcode)});
@@ -575,6 +577,29 @@ pub const X64MachineCodeGen = struct {
         try self.emitModRM(0, 5, var_offset);
     }
 
+    fn genLoadAddr(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Load address of a variable into a temp using LEA
+        const var_name = switch (instr.src1) {
+            .variable => |name| name,
+            else => return error.InvalidVariableOperand,
+        };
+        
+        const var_offset = self.variable_offsets.get(var_name) orelse {
+            std.debug.print("Error: Undefined variable '{s}'\n", .{var_name});
+            return error.UndefinedVariable;
+        };
+        
+        const dest_offset = try self.getTempOffset(instr.dest);
+        
+        // lea rax, [rbp+var_offset]
+        try self.emitBytes(&[_]u8{ 0x48, 0x8D });
+        try self.emitModRM(0, 5, var_offset);
+        
+        // mov [rbp+dest_offset], rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
     fn genComparison(self: *X64MachineCodeGen, instr: *const ir.Instruction, cond: enum { eq, ne, lt, le, gt, ge }) !void {
         // Load src1 into rax
         try self.loadOperandToRax(instr.src1);
@@ -638,6 +663,21 @@ pub const X64MachineCodeGen = struct {
         
         // Patch any forward jumps that target this label
         try self.patchForwardJumpsToLabel(label_id);
+    }
+
+    fn genCast(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // For most HolyC casts, we just move the value (weak typing)
+        // This is a reinterpretation cast in most cases
+        // Future: Add sign/zero extension for narrowing/widening integer casts
+        
+        // Load source value into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // Store to destination
+        const dest_offset = try self.getTempOffset(instr.dest);
+        // mov [rbp+offset], rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
     }
 
     fn genJump(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {

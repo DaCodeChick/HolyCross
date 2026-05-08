@@ -179,6 +179,25 @@ pub const Memory = struct {
         try Patterns.loadOperand(ctx, instr.src1, "RAX");
         try ctx.emit("\tMOV\t[RCX],RAX\n", .{});
     }
+
+    pub fn genCast(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        // For most HolyC casts, we just move the value (weak typing)
+        // The type_hint indicates the target type but in most cases it's a reinterpretation
+        if (instr.type_hint) |hint| {
+            try ctx.emitComment("cast to {s}", .{hint});
+        } else {
+            try ctx.emitComment("cast", .{});
+        }
+        
+        // Load source operand to RAX
+        try Patterns.loadOperand(ctx, instr.src1, "RAX");
+        
+        // For now, most casts are just moves (reinterpretation)
+        // Future: Add sign extension (MOVSX) or zero extension (MOVZX) for smaller types
+        
+        // Store result
+        try Patterns.storeOperand(ctx, instr.dest, "RAX");
+    }
 };
 
 /// Arithmetic Instructions

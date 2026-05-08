@@ -59,6 +59,9 @@ pub const Opcode = enum {
     load_ptr, // dest = *ptr (load from pointer)
     store_ptr, // *ptr = src (store to pointer)
 
+    // Type conversion
+    cast, // dest = (type)src - type conversion/reinterpretation
+
     // Special
     print, // HolyC print statement
     alloc_local, // Allocate local variable on stack
