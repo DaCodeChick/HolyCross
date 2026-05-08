@@ -1,4 +1,5 @@
 const std = @import("std");
+const interpreter = @import("interpreter.zig");
 
 /// Preprocessor for HolyC source code
 /// Handles conditional compilation (#ifdef, #ifndef, #else, #endif),
@@ -52,9 +53,10 @@ pub const Preprocessor = struct {
     }
 
     pub fn deinit(self: *Preprocessor) void {
-        // Free all macro values
+        // Free all macro keys and values
         var it = self.defines.iterator();
         while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.*);
         }
         self.defines.deinit();
@@ -121,6 +123,12 @@ pub const Preprocessor = struct {
                     // JIT (just-in-time) compilation - always false for now
                     try include_stack.append(self.allocator, currently_including and false);
                     self.skipToEndOfLine();
+                } else if (std.mem.eql(u8, directive, "exe")) {
+                    if (currently_including) {
+                        try self.handleExe();
+                    } else {
+                        self.skipToEndOfLine();
+                    }
                 } else if (std.mem.eql(u8, directive, "else")) {
                     if (include_stack.items.len <= 1) {
                         return self.reportError(directive_line, "#else without matching #ifdef/#ifndef/#ifaot/#ifjit");
@@ -210,8 +218,17 @@ pub const Preprocessor = struct {
             trimmed_value = trimmed_value[0..trimmed_value.len - 1];
         }
         
+        // Check if this macro already exists and free old memory if so
+        if (self.defines.get(macro_name)) |old_value| {
+            const old_key = self.defines.getKey(macro_name).?;
+            self.allocator.free(old_key);
+            self.allocator.free(old_value);
+            _ = self.defines.remove(macro_name);
+        }
+        
+        const name_copy = try self.allocator.dupe(u8, macro_name);
         const value_copy = try self.allocator.dupe(u8, trimmed_value);
-        try self.defines.put(macro_name, value_copy);
+        try self.defines.put(name_copy, value_copy);
     }
 
     /// Handle #include directive
@@ -275,6 +292,83 @@ pub const Preprocessor = struct {
         try self.output.appendSlice(self.allocator, processed_include);
         
         self.skipToEndOfLine();
+    }
+
+    /// Handle #exe directive - execute code at compile time
+    fn handleExe(self: *Preprocessor) PreprocessorError!void {
+        self.skipWhitespace();
+        
+        // Check if it's a block { ... } or single line
+        const is_block = self.peek() == '{';
+        
+        if (is_block) {
+            // Block form: #exe { code }
+            _ = self.advance(); // consume '{'
+            
+            const start_pos = self.pos;
+            var brace_depth: i32 = 1;
+            
+            // Find matching closing brace
+            while (self.pos < self.source.len and brace_depth > 0) {
+                const ch = self.peek();
+                if (ch == '{') {
+                    brace_depth += 1;
+                } else if (ch == '}') {
+                    brace_depth -= 1;
+                    if (brace_depth == 0) break;
+                }
+                _ = self.advance();
+            }
+            
+            if (brace_depth != 0) {
+                return self.reportError(self.line, "Unclosed #exe block");
+            }
+            
+            const exe_code = self.source[start_pos..self.pos];
+            _ = self.advance(); // consume '}'
+            
+            // Execute compile-time code
+            try self.executeCompileTime(exe_code);
+            
+            self.skipToEndOfLine();
+        } else {
+            // Single line form: #exe statement;
+            const start_pos = self.pos;
+            
+            // Read until end of line or semicolon
+            while (self.pos < self.source.len and self.peek() != '\n' and self.peek() != ';') {
+                _ = self.advance();
+            }
+            
+            if (self.peek() == ';') {
+                _ = self.advance(); // consume ';'
+            }
+            
+            const exe_code = self.source[start_pos..self.pos];
+            
+            // Execute compile-time code
+            try self.executeCompileTime(exe_code);
+            
+            self.skipToEndOfLine();
+        }
+    }
+
+    /// Execute code at compile time using the interpreter
+    fn executeCompileTime(self: *Preprocessor, code: []const u8) !void {
+        var interp = interpreter.Interpreter.init(self.allocator);
+        defer interp.deinit();
+        
+        // Execute the code and capture output
+        const output = interp.execute(code) catch |err| {
+            std.debug.print("Error executing #exe at line {d}: {}\n", .{ self.line, err });
+            return;
+        };
+        defer self.allocator.free(output);
+        
+        // Print the output to stderr (compile-time output)
+        if (output.len > 0) {
+            std.debug.print("{s}", .{output});
+        }
     }
 
     /// Expand an identifier if it's a defined macro
