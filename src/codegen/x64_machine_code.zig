@@ -16,6 +16,8 @@ pub const X64MachineCodeGen = struct {
     current_func: ?*const ir.Function = null,
     /// Stack layout: temp/local offset from rbp
     stack_offsets: std.AutoHashMap(u32, i32),
+    /// Variable name to stack offset mapping
+    variable_offsets: std.StringHashMap(i32),
     /// Call sites needing relocation (call_site_offset, target_function_name)
     call_sites: std.ArrayList(CallSite),
     
@@ -32,6 +34,7 @@ pub const X64MachineCodeGen = struct {
             .labels = std.AutoHashMap(u32, u32).init(allocator),
             .function_offsets = std.StringHashMap(u32).init(allocator),
             .stack_offsets = std.AutoHashMap(u32, i32).init(allocator),
+            .variable_offsets = std.StringHashMap(i32).init(allocator),
             .call_sites = std.ArrayList(CallSite).fromOwnedSlice(empty_call_sites),
         };
     }
@@ -45,6 +48,12 @@ pub const X64MachineCodeGen = struct {
         }
         self.function_offsets.deinit();
         self.stack_offsets.deinit();
+        
+        var var_iter = self.variable_offsets.keyIterator();
+        while (var_iter.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.variable_offsets.deinit();
         
         for (self.call_sites.items) |site| {
             self.allocator.free(site.target);
@@ -74,34 +83,67 @@ pub const X64MachineCodeGen = struct {
         // Clear label and stack offset maps for this function
         self.labels.clearRetainingCapacity();
         self.stack_offsets.clearRetainingCapacity();
+        
+        // Clear variable offsets for this function
+        var var_iter = self.variable_offsets.keyIterator();
+        while (var_iter.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.variable_offsets.clearRetainingCapacity();
 
         // Record function offset
         const func_start = self.bin_writer.getCurrentOffset();
         const owned_name = try self.allocator.dupe(u8, func.name);
         try self.function_offsets.put(owned_name, func_start);
 
-        // Calculate stack frame size
-        // parameters (saved on stack) + locals + temps, each 8 bytes, aligned to 16
-        const param_count = func.param_count;
-        const stack_size = (param_count + func.local_count + func.temp_count) * 8;
-        const aligned_stack = (stack_size + 15) & ~@as(u32, 15);
+        // First pass: collect all variables from alloc_local instructions
+        var var_sizes = std.StringHashMap(i64).init(self.allocator);
+        defer var_sizes.deinit();
+        
+        for (func.blocks.items) |*block| {
+            for (block.instructions.items) |*instr| {
+                if (instr.opcode == .alloc_local) {
+                    if (instr.dest == .variable and instr.src1 == .constant) {
+                        const var_name = instr.dest.variable;
+                        const size = instr.src1.constant.int;
+                        try var_sizes.put(var_name, size);
+                    }
+                }
+            }
+        }
 
         // Assign stack offsets
-        // Parameters come first (will be saved from registers)
+        // Layout: [rbp-8] param0, [rbp-16] param1, ..., [rbp-(p*8)] paramN-1, 
+        //         [rbp-(p*8+8)] local0, ..., [rbp-(p*8+l*8)] localN-1,
+        //         [rbp-(p*8+l*8+8)] temp0, ..., [rbp-total] tempM-1
         var offset: i32 = -8;
+        
+        // Parameters come first (will be saved from registers)
+        const param_count = func.param_count;
         var i: u32 = 0;
         while (i < param_count) : (i += 1) {
-            // Parameters use negative offsets starting at -8
-            // Note: In IR, parameters might use variable names, not temp IDs
             offset -= 8;
         }
         
-        // Temps come after parameters
+        // Variables (locals) come after parameters
+        var var_size_iter = var_sizes.iterator();
+        while (var_size_iter.next()) |entry| {
+            const size: i32 = @intCast(entry.value_ptr.*);
+            const owned_var_name = try self.allocator.dupe(u8, entry.key_ptr.*);
+            try self.variable_offsets.put(owned_var_name, offset);
+            offset -= size;
+        }
+        
+        // Temps come after variables
         i = 0;
         while (i < func.temp_count) : (i += 1) {
             try self.stack_offsets.put(i, offset);
             offset -= 8;
         }
+        
+        // Calculate aligned stack size
+        const total_stack: u32 = @intCast(-offset);
+        const aligned_stack = (total_stack + 15) & ~@as(u32, 15);
 
         // Function prologue
         try self.emitPrologue(aligned_stack);
@@ -155,6 +197,7 @@ pub const X64MachineCodeGen = struct {
             .load_const => try self.genLoadConst(instr),
             .load_var => try self.genLoadVar(instr),
             .store_var => try self.genStoreVar(instr),
+            .alloc_local => {}, // Stack space already allocated in prologue
             .param => {}, // Parameters handled in function prologue
             .ret => try self.genRet(),
             .ret_val => try self.genRetVal(instr),
@@ -362,14 +405,16 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genLoadVar(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // Load a variable (from parameter slot) into a temp
-        // For now, assume variables are at fixed offsets based on param index
-        // This is a simplified implementation - real one needs variable tracking
+        // Load a variable into a temp
+        const var_name = switch (instr.src1) {
+            .variable => |name| name,
+            else => return error.InvalidVariableOperand,
+        };
         
-        // Assume src1 is a variable name, but we don't have mapping yet
-        // For parameters, they're at -8, -16, -24, -32 etc
-        // Just load from -8 for now as a stub
-        const var_offset: i32 = -8; // TODO: Track variable offsets properly
+        const var_offset = self.variable_offsets.get(var_name) orelse {
+            std.debug.print("Error: Undefined variable '{s}'\n", .{var_name});
+            return error.UndefinedVariable;
+        };
         
         const dest_offset = try self.getTempOffset(instr.dest);
         
@@ -383,15 +428,41 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genStoreVar(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // Store a temp into a variable location
-        // This is symmetric to load_var
+        // Store a temp/constant into a variable location
+        const var_name = switch (instr.dest) {
+            .variable => |name| name,
+            else => return error.InvalidVariableOperand,
+        };
         
-        const src_offset = try self.getTempOffset(instr.src1);
-        const var_offset: i32 = -8; // TODO: Track variable offsets properly
+        const var_offset = self.variable_offsets.get(var_name) orelse {
+            std.debug.print("Error: Undefined variable '{s}'\n", .{var_name});
+            return error.UndefinedVariable;
+        };
         
-        // mov rax, [rbp+src_offset]
-        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
-        try self.emitModRM(0, 5, src_offset);
+        // Load source value into rax
+        switch (instr.src1) {
+            .temp => {
+                const src_offset = try self.getTempOffset(instr.src1);
+                // mov rax, [rbp+src_offset]
+                try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+                try self.emitModRM(0, 5, src_offset);
+            },
+            .constant => |c| switch (c) {
+                .int => |val| {
+                    if (val >= -2147483648 and val <= 2147483647) {
+                        // mov eax, imm32 (zero-extends to rax)
+                        try self.emitByte(0xB8);
+                        try self.emitDword(@intCast(val));
+                    } else {
+                        // movabs rax, imm64
+                        try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                        try self.emitQword(@bitCast(val));
+                    }
+                },
+                else => return error.UnsupportedConstant,
+            },
+            else => return error.InvalidStoreSource,
+        }
         
         // mov [rbp+var_offset], rax
         try self.emitBytes(&[_]u8{ 0x48, 0x89 });

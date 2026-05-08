@@ -40,6 +40,14 @@ pub fn main(init: std.process.Init) !void {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "-S")) {
             emit_asm_only = true;
+        } else if (std.mem.eql(u8, arg, "-o")) {
+            i += 1;
+            if (i < args.len) {
+                output_file = args[i];
+            } else {
+                std.debug.print("Error: -o flag requires an argument\n", .{});
+                return error.MissingOutputFile;
+            }
         } else if (std.mem.startsWith(u8, arg, "--target=")) {
             const target_str = arg["--target=".len..];
             target = Target.fromString(target_str) catch {
