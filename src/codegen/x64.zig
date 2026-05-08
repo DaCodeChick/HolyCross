@@ -113,12 +113,12 @@ pub const X64Generator = struct {
                         },
                         else => {
                             // Fallback to zero initialization for complex cases
-                            try self.output.appendSlice(self.allocator, "    .quad 0\n");
+                            try self.emitGlobalZeroInit(global.type_hint);
                         },
                     }
                 } else {
-                    // No initializer - zero initialize
-                    try self.output.appendSlice(self.allocator, "    .quad 0\n");
+                    // No initializer - zero initialize based on type
+                    try self.emitGlobalZeroInit(global.type_hint);
                 }
             }
             try self.output.append(self.allocator, '\n');
@@ -276,6 +276,50 @@ pub const X64Generator = struct {
         }
 
         return layout;
+    }
+
+    /// Emit zero-initialized data for a global variable based on its type hint
+    fn emitGlobalZeroInit(self: *X64Generator, type_hint: ?[]const u8) !void {
+        if (type_hint) |hint| {
+            // Check if it's an array type like "I64[3]"
+            if (std.mem.indexOf(u8, hint, "[")) |bracket_pos| {
+                // Extract the size from the type hint
+                const size_start = bracket_pos + 1;
+                if (std.mem.indexOf(u8, hint[size_start..], "]")) |size_end| {
+                    const size_str = hint[size_start..][0..size_end];
+                    if (std.fmt.parseInt(usize, size_str, 10)) |array_size| {
+                        // Determine element size from type prefix
+                        const element_size: usize = if (std.mem.startsWith(u8, hint, "I64") or 
+                                                         std.mem.startsWith(u8, hint, "U64") or
+                                                         std.mem.startsWith(u8, hint, "F64"))
+                            8
+                        else if (std.mem.startsWith(u8, hint, "I32") or 
+                                 std.mem.startsWith(u8, hint, "U32"))
+                            4
+                        else if (std.mem.startsWith(u8, hint, "I16") or 
+                                 std.mem.startsWith(u8, hint, "U16"))
+                            2
+                        else if (std.mem.startsWith(u8, hint, "I8") or 
+                                 std.mem.startsWith(u8, hint, "U8") or
+                                 std.mem.startsWith(u8, hint, "Bool"))
+                            1
+                        else
+                            8; // Default to 8 bytes for unknown types
+                        
+                        const total_bytes = array_size * element_size;
+                        const directive = try std.fmt.allocPrint(self.allocator, "    .zero {d}\n", .{total_bytes});
+                        defer self.allocator.free(directive);
+                        try self.output.appendSlice(self.allocator, directive);
+                        return;
+                    } else |_| {
+                        // Failed to parse size, fall through
+                    }
+                }
+            }
+        }
+        
+        // Default: single .quad for scalar types
+        try self.output.appendSlice(self.allocator, "    .quad 0\n");
     }
 
     pub fn getOutput(self: *X64Generator) []const u8 {
