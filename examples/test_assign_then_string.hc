@@ -9,3 +9,5 @@ U0 Main() {
     p.x = 10;
     "After x\n";
 }
+
+Main;

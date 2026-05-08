@@ -14,3 +14,5 @@ U0 Main() {
     a = p.x;
     b = p.y;
 }
+
+Main;

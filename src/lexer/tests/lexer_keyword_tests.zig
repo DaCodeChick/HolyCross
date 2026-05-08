@@ -96,6 +96,22 @@ test "scan identifier with underscores" {
     try testing.expectEqualStrings("_my_var_", token.lexeme);
 }
 
+test "I0 and U0 are synonymous void keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // I0 and U0 both map to keyword_void (they're synonyms)
+    var lexer1 = Lexer.init(allocator, "I0");
+    const token1 = try lexer1.nextToken();
+    try testing.expect(token1.type == .keyword_void);
+    try testing.expectEqualStrings("I0", token1.lexeme);
+
+    var lexer2 = Lexer.init(allocator, "U0");
+    const token2 = try lexer2.nextToken();
+    try testing.expect(token2.type == .keyword_void); // Both map to keyword_void
+    try testing.expectEqualStrings("U0", token2.lexeme);
+}
+
 test "scan type keywords" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -104,7 +120,7 @@ test "scan type keywords" {
         .{ "I64", TokenType.keyword_i64 },
         .{ "U8", TokenType.keyword_u8 },
         .{ "F64", TokenType.keyword_f64 },
-        .{ "U0", TokenType.keyword_u0 },
+        .{ "U0", TokenType.keyword_void },
         .{ "I32", TokenType.keyword_i32 },
     };
 
@@ -208,12 +224,28 @@ test "scan multiple tokens" {
     try testing.expect(tok3.type == .eof);
 }
 
+test "pad and reserved are synonymous keywords" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    // pad and reserved both map to keyword_pad (they're synonyms)
+    var lexer1 = Lexer.init(allocator, "pad");
+    const token1 = try lexer1.nextToken();
+    try testing.expect(token1.type == .keyword_pad);
+    try testing.expectEqualStrings("pad", token1.lexeme);
+
+    var lexer2 = Lexer.init(allocator, "reserved");
+    const token2 = try lexer2.nextToken();
+    try testing.expect(token2.type == .keyword_pad); // Both map to keyword_pad
+    try testing.expectEqualStrings("reserved", token2.lexeme);
+}
+
 test "special identifiers are not keywords" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    // pad, reserved, _anon_ should be identifiers, not keywords
-    const test_cases = [_][]const u8{ "pad", "reserved", "_anon_" };
+    // _anon_ should be an identifier, not a keyword
+    const test_cases = [_][]const u8{"_anon_"};
 
     for (test_cases) |name| {
         var lexer = Lexer.init(allocator, name);

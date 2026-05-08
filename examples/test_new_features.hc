@@ -57,3 +57,5 @@ U0 Main() {
     TestIncrementDecrement();
     TestGlobals();
 }
+
+Main;

@@ -244,3 +244,5 @@ U0 Main() {
     // and Factorial is defined after Main
     I64 result = x + y;
 }
+
+Main;

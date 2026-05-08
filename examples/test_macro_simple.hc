@@ -5,3 +5,5 @@
 U0 Main() {
     I64 x = SIZE;
 }
+
+Main;

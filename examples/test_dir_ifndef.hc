@@ -9,3 +9,5 @@ U0 ShouldNotExist() {
 U0 Main() {
 }
 #endif
+
+Main;

@@ -11,3 +11,5 @@ U0 TestAsm() {
 U0 Main() {
     TestAsm();
 }
+
+Main;

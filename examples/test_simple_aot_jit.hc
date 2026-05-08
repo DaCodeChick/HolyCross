@@ -23,3 +23,5 @@ U0 Main() {
     AotFunction();
     AotDebugFunction();
 }
+
+Main;

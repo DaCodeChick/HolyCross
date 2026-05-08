@@ -11,3 +11,5 @@ U0 Main() {
     // Expected result: 1+2+3+4+5+6+7+8 = 36
     "Sum of 8 parameters calculated\n";
 }
+
+Main;

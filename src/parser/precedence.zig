@@ -69,12 +69,11 @@ pub fn tokenToUnaryOp(token_type: TokenType) ?UnaryOp {
 /// This is used to disambiguate between statements and declarations
 pub fn isTypeStartToken(token_type: TokenType) bool {
     return switch (token_type) {
-        .keyword_i0,
+        .keyword_void,
         .keyword_i8,
         .keyword_i16,
         .keyword_i32,
         .keyword_i64,
-        .keyword_u0,
         .keyword_u8,
         .keyword_u16,
         .keyword_u32,

@@ -10,3 +10,5 @@ U0 Main() {
     // This should not be here
 }
 #endif
+
+Main;

@@ -8,3 +8,5 @@ U0 TestFromSubdir() {
 U0 Main() {
     TestFromSubdir();
 }
+
+Main;

@@ -9,3 +9,5 @@ U0 TestFunc() {
 U0 Main() {
     TestFunc();
 }
+
+Main;

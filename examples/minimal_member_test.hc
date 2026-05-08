@@ -8,3 +8,5 @@ U0 Main() {
     p.x = 42;
     "Done\n";
 }
+
+Main;

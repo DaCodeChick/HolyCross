@@ -11,3 +11,5 @@ U0 Main() {
     
     PrintBanner("Test complete");
 }
+
+Main;

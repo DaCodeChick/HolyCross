@@ -24,3 +24,5 @@ U0 Main() {
     I64 d3 = GetDayNumber(5);  // Should return 999 (default)
     "Switch test completed\n";
 }
+
+Main;

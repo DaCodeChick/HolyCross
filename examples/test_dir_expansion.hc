@@ -9,3 +9,5 @@ U0 TestDirExpansion() {
 U0 Main() {
     TestDirExpansion();
 }
+
+Main;

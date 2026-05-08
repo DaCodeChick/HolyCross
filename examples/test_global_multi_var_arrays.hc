@@ -2,7 +2,7 @@
 
 I64 arr1[3], scalar, arr2[2];
 
-I64 main()
+I64 Main()
 {
     arr1[0] = 1;
     arr1[1] = 2;
@@ -15,3 +15,5 @@ I64 main()
     
     return arr1[0] + arr1[1] + arr1[2] + scalar + arr2[0] + arr2[1];  // 1+2+3+10+4+5 = 25
 }
+
+Main;

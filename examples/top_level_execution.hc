@@ -17,3 +17,5 @@ U0 Main() {
 // These statements execute when the file is loaded, BEFORE Main() is called:
 InitSystem;
 LoadConfig;
+
+Main;

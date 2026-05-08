@@ -14,3 +14,5 @@ U0 Main() {
     
     "Array test\n";
 }
+
+Main;

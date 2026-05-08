@@ -55,3 +55,5 @@ U0 Main() {
     
     "\nAll tests passed!\n";
 }
+
+Main;

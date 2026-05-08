@@ -13,3 +13,5 @@ U0 Main() {
     obj.z = 30;  // Own member should work
     "Own member works\n";
 }
+
+Main;

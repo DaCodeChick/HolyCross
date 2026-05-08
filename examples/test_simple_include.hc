@@ -6,3 +6,5 @@ U0 Main() {
     "Testing simple include\n";
     "Include worked!\n";
 }
+
+Main;

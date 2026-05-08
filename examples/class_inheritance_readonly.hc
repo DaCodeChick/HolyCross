@@ -18,3 +18,5 @@ U0 TestFunc(Derived obj) {
 U0 Main() {
     "Class inheritance test compiled successfully\n";
 }
+
+Main;

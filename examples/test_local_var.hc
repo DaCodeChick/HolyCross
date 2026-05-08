@@ -1,6 +1,9 @@
 // Test with local variable
-I64 main() {
+U0 Main() {
     I64 x;
     x = 20;
-    return x + 5;
+    I64 result = x + 5;
+    // In real HolyC we'd print or use result, but for now just compute it
 }
+
+Main;

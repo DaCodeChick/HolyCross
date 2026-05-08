@@ -9,9 +9,11 @@ I64 TestBSwap()
     return 1;
 }
 
-I64 main()
+I64 Main()
 {
     I64 a;
     a = TestBSwap();
     return a;
 }
+
+Main;

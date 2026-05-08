@@ -12,3 +12,5 @@ U0 Main() {
         "Bool works!\n";
     }
 }
+
+Main;

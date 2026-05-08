@@ -21,3 +21,5 @@ U0 Main() {
     TestArrays;
     "Advanced array test\n";
 }
+
+Main;

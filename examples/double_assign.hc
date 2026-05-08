@@ -11,3 +11,5 @@ U0 Main() {
     p.y = 20;
     "Second done\n";
 }
+
+Main;

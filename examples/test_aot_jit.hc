@@ -35,3 +35,5 @@ U0 Main() {
     InAotBranch();
     NotInJitBranch();
 }
+
+Main;

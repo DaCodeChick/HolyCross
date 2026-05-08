@@ -10,3 +10,5 @@ U0 Main() {
     p.y = 20;
     "Member assignment test\n";
 }
+
+Main;

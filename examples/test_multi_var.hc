@@ -1,6 +1,6 @@
 // Test multi-variable declarations
 
-I64 main()
+I64 Main()
 {
     I64 a, b, c;
     a = 1;
@@ -8,3 +8,5 @@ I64 main()
     c = 3;
     return a + b + c;
 }
+
+Main;

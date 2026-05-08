@@ -6,3 +6,5 @@ U0 Main() {
     *ptr = 100;
     "Pointer test completed\n";
 }
+
+Main;

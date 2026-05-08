@@ -256,3 +256,5 @@ U0 Main() {
     TestBreak();
     TestComplex();
 }
+
+Main;

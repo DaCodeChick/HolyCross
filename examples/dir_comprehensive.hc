@@ -40,3 +40,5 @@ U0 Main() {
     InIfdefBranch();
     BothDefined();
 }
+
+Main;

@@ -18,7 +18,7 @@ test "tokenize complete HolyC program" {
 
     // U0
     const tok1 = try lexer.nextToken();
-    try testing.expect(tok1.type == .keyword_u0);
+    try testing.expect(tok1.type == .keyword_void);
 
     // Main
     const tok2 = try lexer.nextToken();

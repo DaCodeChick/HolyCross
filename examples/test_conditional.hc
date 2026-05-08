@@ -25,3 +25,5 @@ U0 Main() {
     DebugFunction();
     NotReleaseFunction();
 }
+
+Main;

@@ -6,3 +6,5 @@ U0 Main() {
     "Testing backward compatibility\n";
     "Include with .hc suffix still works!\n";
 }
+
+Main;

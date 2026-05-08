@@ -14,3 +14,5 @@ U0 Main() {
     printf("After second assign, p.y = %ld\n", p.y);
     printf("p.x = %ld, p.y = %ld\n", p.x, p.y);
 }
+
+Main;

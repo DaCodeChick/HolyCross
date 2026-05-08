@@ -46,7 +46,7 @@ I64 TestUnary()
     return 4;
 }
 
-I64 main()
+I64 Main()
 {
     // Just verify the functions compile and can be called
     I64 a, b, c, d;
@@ -58,3 +58,5 @@ I64 main()
     // Return sum: 12 + 0 + 8 + 4 = 24
     return a + b + c + d;
 }
+
+Main;

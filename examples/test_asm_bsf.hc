@@ -9,7 +9,9 @@ I64 TestBSF()
     return 1;
 }
 
-I64 main()
+I64 Main()
 {
     return TestBSF();
 }
+
+Main;

@@ -135,10 +135,11 @@ test "X64: generate simple function" {
     try gen.generateFromIR(&module);
     const output = gen.getOutput();
 
-    // Verify output contains function declaration
-    try testing.expect(std.mem.find(u8, output, "test_func:") != null);
-    try testing.expect(std.mem.find(u8, output, "push rbp") != null);
-    try testing.expect(std.mem.find(u8, output, "ret") != null);
+    // Verify output contains function declaration (TempleOS syntax)
+    try testing.expect(std.mem.find(u8, output, "test_func:") != null or 
+                      std.mem.find(u8, output, "_test_func::") != null);
+    try testing.expect(std.mem.find(u8, output, "PUSH") != null);
+    try testing.expect(std.mem.find(u8, output, "RET") != null);
 }
 
 test "X64: generate function with constant" {
@@ -168,8 +169,9 @@ test "X64: generate function with constant" {
     try gen.generateFromIR(&module);
     const output = gen.getOutput();
 
-    // Verify output contains constant load
-    try testing.expect(std.mem.find(u8, output, "mov rax, 42") != null);
+    // Verify output contains constant load (TempleOS syntax)
+    try testing.expect(std.mem.find(u8, output, "MOV\tRAX,42") != null or
+                      std.mem.find(u8, output, "MOV RAX,42") != null);
 
     // Print output for inspection (commented out normally)
     // std.debug.print("\n=== Generated x64 Assembly ===\n{s}\n", .{output});

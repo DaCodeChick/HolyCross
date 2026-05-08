@@ -1165,12 +1165,11 @@ pub const Parser = struct {
     /// Parse base type (primitive or named type)
     fn parseBaseType(self: *Parser) ParserError!Type {
         // Primitive types
-        if (try self.match(.keyword_i0)) return .i0;
+        if (try self.match(.keyword_void)) return .i0; // I0 and U0 both map to void
         if (try self.match(.keyword_i8)) return .i8;
         if (try self.match(.keyword_i16)) return .i16;
         if (try self.match(.keyword_i32)) return .i32;
         if (try self.match(.keyword_i64)) return .i64;
-        if (try self.match(.keyword_u0)) return .u0;
         if (try self.match(.keyword_u8)) return .u8;
         if (try self.match(.keyword_u16)) return .u16;
         if (try self.match(.keyword_u32)) return .u32;
@@ -1412,7 +1411,24 @@ pub const Parser = struct {
     /// Parse expression statement: expr;
     fn parseExpressionStatement(self: *Parser) ParserError!Stmt {
         const stmt_loc = self.locationFromToken(self.current);
-        const expr = try self.parseExpression();
+        var expr = try self.parseExpression();
+        
+        // HolyC feature: bare identifier followed by semicolon is a zero-argument function call
+        // Example: "Main;" is equivalent to "Main();"
+        if (expr == .identifier) {
+            // Convert identifier to call expression with zero arguments
+            const callee_ptr = try self.ast_allocator.create(Expr);
+            callee_ptr.* = expr;
+            const empty_args = try self.ast_allocator.alloc(Expr, 0);
+            expr = Expr{
+                .call = .{
+                    .callee = callee_ptr,
+                    .args = empty_args,
+                    .loc = expr.identifier.loc,
+                },
+            };
+        }
+        
         try self.consume(.semicolon, "Expected ';' after expression");
 
         return Stmt{

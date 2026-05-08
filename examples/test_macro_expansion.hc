@@ -12,3 +12,5 @@ U0 TestMacros() {
 U0 Main() {
     TestMacros();
 }
+
+Main;

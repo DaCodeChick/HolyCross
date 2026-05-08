@@ -67,3 +67,5 @@ U0 Main() {
     I64 condResult = ConditionalTest();
     Bool cmpResult = ComparisonTest(42, 42);
 }
+
+Main;

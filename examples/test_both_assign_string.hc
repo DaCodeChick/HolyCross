@@ -10,3 +10,5 @@ U0 Main() {
     p.y = 20;
     "After both\n";
 }
+
+Main;

@@ -62,3 +62,5 @@ ADDITIONAL EXPRESSION EXAMPLES (not yet fully supported):
 // Logical XOR (HolyC-specific)
 a ^^ b
 x ^^ y ^^ z
+
+Main;

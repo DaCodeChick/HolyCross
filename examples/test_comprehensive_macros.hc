@@ -43,3 +43,5 @@ U0 Main() {
     NullIsDefined();
     DirIsDefined();
 }
+
+Main;

@@ -11,9 +11,11 @@ I64 GetFortyTwo()
     return 42;  // The inline assembly doesn't actually affect the return yet
 }
 
-I64 main()
+I64 Main()
 {
     I64 x;
     x = GetFortyTwo();
     return x;
 }
+
+Main;

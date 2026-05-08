@@ -10,12 +10,11 @@ pub const TokenType = enum {
     char_literal,
 
     // Type Keywords (I0-I64, U0-U64, F64, Bool)
-    keyword_i0, // void signed (zero-sized)
+    keyword_void, // void type (I0 and U0 are synonyms)
     keyword_i8,
     keyword_i16,
     keyword_i32,
     keyword_i64,
-    keyword_u0, // void unsigned (zero-sized)
     keyword_u8,
     keyword_u16,
     keyword_u32,
@@ -42,6 +41,7 @@ pub const TokenType = enum {
     keyword_sizeof,
     keyword_offset,
     keyword_lastclass,
+    keyword_pad, // Class alignment padding (pad and reserved are synonyms)
 
     // Exception Handling
     keyword_try,

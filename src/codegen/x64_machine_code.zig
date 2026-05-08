@@ -2,12 +2,47 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ir = @import("ir.zig");
 const templeos_bin = @import("templeos_bin.zig");
+const elf_writer = @import("elf_writer.zig");
 
-/// x64 Machine Code Generator for TempleOS/ZealOS .BIN format
-/// Generates raw machine code instead of assembly text
+/// Generic code buffer interface - works with both ELF and TempleOS writers
+pub const CodeBuffer = union(enum) {
+    templeos: *templeos_bin.TempleOSBinWriter,
+    elf: *elf_writer.ELFWriter,
+    
+    pub fn appendCode(self: CodeBuffer, bytes: []const u8) !void {
+        switch (self) {
+            .templeos => |writer| try writer.appendCode(bytes),
+            .elf => |writer| try writer.appendCode(bytes),
+        }
+    }
+    
+    pub fn getCurrentOffset(self: CodeBuffer) u32 {
+        return switch (self) {
+            .templeos => |writer| writer.getCurrentOffset(),
+            .elf => |writer| writer.getCurrentOffset(),
+        };
+    }
+    
+    pub fn setEntryPoint(self: CodeBuffer, offset: u32) !void {
+        switch (self) {
+            .templeos => |writer| try writer.setEntryPoint(offset),
+            .elf => |writer| try writer.setEntryPoint(offset),
+        }
+    }
+    
+    pub fn getCodeItems(self: CodeBuffer) []u8 {
+        return switch (self) {
+            .templeos => |writer| writer.code.items,
+            .elf => |writer| writer.code.items,
+        };
+    }
+};
+
+/// x64 Machine Code Generator
+/// Generates raw machine code for both TempleOS and native Linux
 pub const X64MachineCodeGen = struct {
     allocator: Allocator,
-    bin_writer: *templeos_bin.TempleOSBinWriter,
+    code_buffer: CodeBuffer,
     /// Label ID to offset mapping
     labels: std.AutoHashMap(u32, u32),
     /// Function name to offset mapping
@@ -33,12 +68,12 @@ pub const X64MachineCodeGen = struct {
         target_label: u32, // Target label ID
     };
     
-    pub fn init(allocator: Allocator, bin_writer: *templeos_bin.TempleOSBinWriter) !X64MachineCodeGen {
+    pub fn init(allocator: Allocator, code_buffer: CodeBuffer) !X64MachineCodeGen {
         const empty_call_sites = try allocator.alloc(CallSite, 0);
         const empty_forward_jumps = try allocator.alloc(ForwardJump, 0);
         return .{
             .allocator = allocator,
-            .bin_writer = bin_writer,
+            .code_buffer = code_buffer,
             .labels = std.AutoHashMap(u32, u32).init(allocator),
             .function_offsets = std.StringHashMap(u32).init(allocator),
             .stack_offsets = std.AutoHashMap(u32, i32).init(allocator),
@@ -73,6 +108,17 @@ pub const X64MachineCodeGen = struct {
 
     /// Generate machine code from IR module
     pub fn generateFromIR(self: *X64MachineCodeGen, module: *const ir.Module) !void {
+        // For native executables, generate _start wrapper first
+        const is_native = switch (self.code_buffer) {
+            .elf => true,
+            .templeos => false,
+        };
+        
+        const start_offset = if (is_native) blk: {
+            const offset = try self.generateStartWrapper();
+            break :blk offset;
+        } else 0;
+        
         // Generate code for all functions
         for (module.functions.items) |*func| {
             try self.generateFunction(func);
@@ -81,9 +127,46 @@ pub const X64MachineCodeGen = struct {
         // Patch all call sites now that we know all function offsets
         try self.patchCallSites();
 
-        // Find main function and set as entry point
-        const main_offset = self.function_offsets.get("main") orelse return error.NoMainFunction;
-        try self.bin_writer.setEntryPoint(main_offset);
+        // Set entry point
+        if (is_native) {
+            // For native executables, entry is _start
+            try self.code_buffer.setEntryPoint(start_offset);
+        } else {
+            // For TempleOS, entry is main
+            const main_offset = self.function_offsets.get("main") orelse return error.NoMainFunction;
+            try self.code_buffer.setEntryPoint(main_offset);
+        }
+    }
+
+    /// Generate _start wrapper for native executables
+    /// _start calls main() and then exits with the return value
+    fn generateStartWrapper(self: *X64MachineCodeGen) !u32 {
+        const start_offset = self.code_buffer.getCurrentOffset();
+        
+        // Record the call site for main - we'll patch it later
+        // CALL rel32 = E8 xx xx xx xx
+        try self.code_buffer.appendCode(&[_]u8{ 0xE8, 0x00, 0x00, 0x00, 0x00 });
+        const call_site_offset = self.code_buffer.getCurrentOffset() - 4;
+        
+        // Save the call site for later patching
+        const target_name = try self.allocator.dupe(u8, "main");
+        try self.call_sites.append(self.allocator, .{
+            .offset = call_site_offset,
+            .target = target_name,
+        });
+        
+        // Move return value (in rax) to rdi for exit syscall
+        // MOV rdi, rax = 48 89 C7
+        try self.code_buffer.appendCode(&[_]u8{ 0x48, 0x89, 0xC7 });
+        
+        // Exit syscall: mov rax, 60; syscall
+        // MOV rax, 60 = 48 C7 C0 3C 00 00 00
+        try self.code_buffer.appendCode(&[_]u8{ 0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00 });
+        
+        // SYSCALL = 0F 05
+        try self.code_buffer.appendCode(&[_]u8{ 0x0F, 0x05 });
+        
+        return start_offset;
     }
 
     fn generateFunction(self: *X64MachineCodeGen, func: *const ir.Function) !void {
@@ -103,7 +186,7 @@ pub const X64MachineCodeGen = struct {
         self.variable_offsets.clearRetainingCapacity();
 
         // Record function offset
-        const func_start = self.bin_writer.getCurrentOffset();
+        const func_start = self.code_buffer.getCurrentOffset();
         const owned_name = try self.allocator.dupe(u8, func.name);
         try self.function_offsets.put(owned_name, func_start);
 
@@ -194,7 +277,7 @@ pub const X64MachineCodeGen = struct {
 
     fn generateBlock(self: *X64MachineCodeGen, block: *const ir.BasicBlock) !void {
         // Define label for this block
-        const block_offset = self.bin_writer.getCurrentOffset();
+        const block_offset = self.code_buffer.getCurrentOffset();
         try self.labels.put(block.id, block_offset);
         
         // Patch any forward jumps that target this label
@@ -228,7 +311,7 @@ pub const X64MachineCodeGen = struct {
             .jump => try self.genJump(instr),
             .jump_if_zero => try self.genJumpIfZero(instr),
             .jump_if_not_zero => try self.genJumpIfNotZero(instr),
-            .label => {}, // Already handled in generateBlock
+            .label => try self.genLabel(instr),
             .inline_asm => try self.genInlineAsm(instr),
             else => {
                 std.debug.print("Unimplemented opcode: {s}\n", .{@tagName(instr.opcode)});
@@ -400,7 +483,7 @@ pub const X64MachineCodeGen = struct {
 
         // Emit call instruction with placeholder offset
         try self.emitByte(0xE8);
-        const call_site = self.bin_writer.getCurrentOffset();
+        const call_site = self.code_buffer.getCurrentOffset();
         try self.emitDword(0); // Placeholder - will be patched
 
         // Track this call site for later patching
@@ -473,9 +556,9 @@ pub const X64MachineCodeGen = struct {
             .constant => |c| switch (c) {
                 .int => |val| {
                     if (val >= -2147483648 and val <= 2147483647) {
-                        // mov eax, imm32 (zero-extends to rax)
-                        try self.emitByte(0xB8);
-                        try self.emitDword(@intCast(val));
+                        // mov rax, imm32 (sign-extends to rax)
+                        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 });
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
                     } else {
                         // movabs rax, imm64
                         try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
@@ -543,6 +626,20 @@ pub const X64MachineCodeGen = struct {
         try self.emitModRM(0, 5, dest_offset);
     }
 
+    fn genLabel(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        const label_id = switch (instr.dest) {
+            .label => |l| l,
+            else => return error.InvalidLabelOperand,
+        };
+        
+        // Define the label at the current code offset
+        const current_offset = self.code_buffer.getCurrentOffset();
+        try self.labels.put(label_id, current_offset);
+        
+        // Patch any forward jumps that target this label
+        try self.patchForwardJumpsToLabel(label_id);
+    }
+
     fn genJump(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
         const label_id = switch (instr.dest) {
             .label => |l| l,
@@ -551,7 +648,7 @@ pub const X64MachineCodeGen = struct {
         
         // Check if label is already defined (backward jump)
         if (self.labels.get(label_id)) |target_offset| {
-            const current_offset = self.bin_writer.getCurrentOffset();
+            const current_offset = self.code_buffer.getCurrentOffset();
             const next_instr = current_offset + 5; // jmp instruction is 5 bytes
             const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
             
@@ -561,7 +658,7 @@ pub const X64MachineCodeGen = struct {
         } else {
             // Forward jump - emit placeholder and track for later patching
             try self.emitByte(0xE9);
-            const jump_offset = self.bin_writer.getCurrentOffset();
+            const jump_offset = self.code_buffer.getCurrentOffset();
             try self.emitDword(0); // Placeholder
             
             try self.forward_jumps.append(self.allocator, .{
@@ -585,7 +682,7 @@ pub const X64MachineCodeGen = struct {
         
         // Check if label is already defined (backward jump)
         if (self.labels.get(label_id)) |target_offset| {
-            const current_offset = self.bin_writer.getCurrentOffset();
+            const current_offset = self.code_buffer.getCurrentOffset();
             const next_instr = current_offset + 6; // jz instruction is 6 bytes (0F 84 + 4-byte disp)
             const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
             
@@ -595,7 +692,7 @@ pub const X64MachineCodeGen = struct {
         } else {
             // Forward jump - emit placeholder and track for later patching
             try self.emitBytes(&[_]u8{ 0x0F, 0x84 });
-            const jump_offset = self.bin_writer.getCurrentOffset();
+            const jump_offset = self.code_buffer.getCurrentOffset();
             try self.emitDword(0); // Placeholder
             
             try self.forward_jumps.append(self.allocator, .{
@@ -619,7 +716,7 @@ pub const X64MachineCodeGen = struct {
         
         // Check if label is already defined (backward jump)
         if (self.labels.get(label_id)) |target_offset| {
-            const current_offset = self.bin_writer.getCurrentOffset();
+            const current_offset = self.code_buffer.getCurrentOffset();
             const next_instr = current_offset + 6; // jnz instruction is 6 bytes
             const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
             
@@ -629,7 +726,7 @@ pub const X64MachineCodeGen = struct {
         } else {
             // Forward jump - emit placeholder and track for later patching
             try self.emitBytes(&[_]u8{ 0x0F, 0x85 });
-            const jump_offset = self.bin_writer.getCurrentOffset();
+            const jump_offset = self.code_buffer.getCurrentOffset();
             try self.emitDword(0); // Placeholder
             
             try self.forward_jumps.append(self.allocator, .{
@@ -658,7 +755,7 @@ pub const X64MachineCodeGen = struct {
             
             // We need to modify the code buffer directly
             // The code is in bin_writer.code.items[site.offset..site.offset+4]
-            @memcpy(self.bin_writer.code.items[site.offset..][0..4], &disp_bytes);
+            @memcpy(self.code_buffer.getCodeItems()[site.offset..][0..4], &disp_bytes);
         }
     }
 
@@ -678,7 +775,7 @@ pub const X64MachineCodeGen = struct {
                 
                 // Patch the displacement in the code buffer
                 const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
-                @memcpy(self.bin_writer.code.items[jump.offset..][0..4], &disp_bytes);
+                @memcpy(self.code_buffer.getCodeItems()[jump.offset..][0..4], &disp_bytes);
                 
                 // Remove this jump from the list (swap with last element)
                 _ = self.forward_jumps.swapRemove(i);
@@ -754,11 +851,11 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn emitByte(self: *X64MachineCodeGen, byte: u8) !void {
-        try self.bin_writer.appendCode(&[_]u8{byte});
+        try self.code_buffer.appendCode(&[_]u8{byte});
     }
 
     fn emitBytes(self: *X64MachineCodeGen, bytes: []const u8) !void {
-        try self.bin_writer.appendCode(bytes);
+        try self.code_buffer.appendCode(bytes);
     }
 
     fn emitDword(self: *X64MachineCodeGen, val: u32) !void {

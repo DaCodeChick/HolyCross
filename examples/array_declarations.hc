@@ -27,3 +27,5 @@ U0 Main() {
     numbers[0] = 42;
     numbers[1] = 100;
 }
+
+Main;

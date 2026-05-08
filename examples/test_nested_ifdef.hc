@@ -25,3 +25,5 @@ U0 Main() {
     
     "Nested conditionals work!\n";
 }
+
+Main;

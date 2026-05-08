@@ -19,7 +19,7 @@ pub const GenContext = struct {
 
     /// Emit assembly comment
     pub fn emitComment(self: *GenContext, comptime fmt: []const u8, args: anytype) !void {
-        try self.output.appendSlice(self.allocator, "    # ");
+        try self.output.appendSlice(self.allocator, "\t//");
         const formatted = try std.fmt.allocPrint(self.allocator, fmt, args);
         defer self.allocator.free(formatted);
         try self.output.appendSlice(self.allocator, formatted);
@@ -107,27 +107,26 @@ pub const StackLayout = struct {
 pub const Patterns = struct {
     /// Emit function prologue
     pub fn emitFunctionPrologue(ctx: *GenContext, func_name: []const u8, stack_size: usize) !void {
-        try ctx.emit(".globl {s}\n", .{func_name});
-        try ctx.emit(".type {s}, @function\n", .{func_name});
-        try ctx.emit("{s}:\n", .{func_name});
-        try ctx.emit("    push rbp\n", .{});
-        try ctx.emit("    mov rbp, rsp\n", .{});
+        // TempleOS syntax: _NAME:: for C-callable functions
+        try ctx.emit("_{s}::\n", .{func_name});
+        try ctx.emit("\tPUSH\tRBP\n", .{});
+        try ctx.emit("\tMOV\tRBP,RSP\n", .{});
         if (stack_size > 0) {
-            try ctx.emit("    sub rsp, {d}\n", .{stack_size});
+            try ctx.emit("\tSUB\tRSP,{d}\n", .{stack_size});
         }
     }
 
     /// Emit function epilogue
     pub fn emitFunctionEpilogue(ctx: *GenContext) !void {
-        try ctx.emit("    mov rsp, rbp\n", .{});
-        try ctx.emit("    pop rbp\n", .{});
-        try ctx.emit("    ret\n", .{});
+        try ctx.emit("\tMOV\tRSP,RBP\n", .{});
+        try ctx.emit("\tPOP\tRBP\n", .{});
+        try ctx.emit("\tRET\n", .{});
     }
 
     /// Emit conditional jump (test rax and jump if condition)
     pub fn emitConditionalJump(ctx: *GenContext, condition: []const u8, label: u32) !void {
-        try ctx.emit("    test rax, rax\n", .{});
-        try ctx.emit("    {s} .L{d}\n", .{ condition, label });
+        try ctx.emit("\tTEST\tRAX,RAX\n", .{});
+        try ctx.emit("\t{s}\t@@{d:0>2}\n", .{ condition, label });
     }
 
     /// Load operand into register
@@ -136,39 +135,38 @@ pub const Patterns = struct {
             .none => {},
             .temp => |t| {
                 const offset = ctx.getTempOffset(t);
-                try ctx.emit("    mov {s}, [rbp-{d}]  # t{d}\n", .{ dest_reg, offset, t });
+                try ctx.emit("\tMOV\t{s},[RBP-{d}]\t//t{d}\n", .{ dest_reg, offset, t });
             },
             .variable => |v| {
                 const offset = ctx.getVarOffset(v);
-                try ctx.emit("    mov {s}, [rbp-{d}]  # {s}\n", .{ dest_reg, offset, v });
+                try ctx.emit("\tMOV\t{s},[RBP-{d}]\t//{s}\n", .{ dest_reg, offset, v });
             },
             .constant => |c| switch (c) {
                 .int => |i| {
-                    try ctx.emit("    mov {s}, {d}\n", .{ dest_reg, i });
+                    try ctx.emit("\tMOV\t{s},{d}\n", .{ dest_reg, i });
                 },
                 .float => |f| {
-                    try ctx.emit("    movq {s}, {d}\n", .{ dest_reg, @as(i64, @bitCast(f)) });
+                    try ctx.emit("\tMOV\t{s},{d}\n", .{ dest_reg, @as(i64, @bitCast(f)) });
                 },
                 .bool => |b| {
-                    try ctx.emit("    mov {s}, {d}\n", .{ dest_reg, if (b) @as(i64, 1) else @as(i64, 0) });
+                    try ctx.emit("\tMOV\t{s},{d}\n", .{ dest_reg, if (b) @as(i64, 1) else @as(i64, 0) });
                 },
             },
-            .label => {},
-            .function => {},
-            .string => {},
+            else => {},
         }
     }
 
     /// Store register to operand
     pub fn storeOperand(ctx: *GenContext, operand: ir.Operand, src_reg: []const u8) !void {
         switch (operand) {
+            .none => {},
             .temp => |t| {
                 const offset = ctx.getTempOffset(t);
-                try ctx.emit("    mov [rbp-{d}], {s}  # t{d}\n", .{ offset, src_reg, t });
+                try ctx.emit("\tMOV\t[RBP-{d}],{s}\t//t{d}\n", .{ offset, src_reg, t });
             },
             .variable => |v| {
                 const offset = ctx.getVarOffset(v);
-                try ctx.emit("    mov [rbp-{d}], {s}  # {s}\n", .{ offset, src_reg, v });
+                try ctx.emit("\tMOV\t[RBP-{d}],{s}\t//{s}\n", .{ offset, src_reg, v });
             },
             else => {},
         }

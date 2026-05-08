@@ -52,7 +52,8 @@ pub const X64Generator = struct {
     }
 
     fn emitHeader(self: *X64Generator) !void {
-        try self.output.appendSlice(self.allocator, ".intel_syntax noprefix\n");
+        // TempleOS assembly - no syntax directives needed
+        try self.output.appendSlice(self.allocator, "//TempleOS-style x64 Assembly\n");
         try self.output.append(self.allocator, '\n');
     }
 
@@ -64,13 +65,13 @@ pub const X64Generator = struct {
 
         // Emit read-only data (strings)
         if (has_strings) {
-            try self.output.appendSlice(self.allocator, ".section .rodata\n");
+            try self.output.appendSlice(self.allocator, "//Read-only data section\n");
             for (module.string_table.items, 0..) |str, i| {
                 const label = try std.fmt.allocPrint(self.allocator, ".str{d}:\n", .{i});
                 defer self.allocator.free(label);
                 try self.output.appendSlice(self.allocator, label);
                 
-                const str_directive = try std.fmt.allocPrint(self.allocator, "    .string \"{s}\"\n", .{str});
+                const str_directive = try std.fmt.allocPrint(self.allocator, "\tDU8\t\"{s}\",0\n", .{str});
                 defer self.allocator.free(str_directive);
                 try self.output.appendSlice(self.allocator, str_directive);
             }
@@ -79,13 +80,10 @@ pub const X64Generator = struct {
 
         // Emit global variables
         if (has_globals) {
-            try self.output.appendSlice(self.allocator, ".section .data\n");
+            try self.output.appendSlice(self.allocator, "//Data section\n");
             for (module.globals.items) |global| {
-                const globl_directive = try std.fmt.allocPrint(self.allocator, ".globl {s}\n", .{global.name});
-                defer self.allocator.free(globl_directive);
-                try self.output.appendSlice(self.allocator, globl_directive);
-                
-                const label = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{global.name});
+                // TempleOS global label syntax: NAME:: for exported symbols
+                const label = try std.fmt.allocPrint(self.allocator, "{s}::\n", .{global.name});
                 defer self.allocator.free(label);
                 try self.output.appendSlice(self.allocator, label);
 
@@ -94,19 +92,19 @@ pub const X64Generator = struct {
                     switch (init_val) {
                         .constant => |c| switch (c) {
                             .int => |val| {
-                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad {d}\n", .{val});
+                                const directive = try std.fmt.allocPrint(self.allocator, "\tDU64\t{d}\n", .{val});
                                 defer self.allocator.free(directive);
                                 try self.output.appendSlice(self.allocator, directive);
                             },
                             .float => |val| {
                                 // Convert float to hex representation for assembly
                                 const int_bits: u64 = @bitCast(val);
-                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad 0x{x}\n", .{int_bits});
+                                const directive = try std.fmt.allocPrint(self.allocator, "\tDU64\t0x{x}\n", .{int_bits});
                                 defer self.allocator.free(directive);
                                 try self.output.appendSlice(self.allocator, directive);
                             },
                             .bool => |val| {
-                                const directive = try std.fmt.allocPrint(self.allocator, "    .quad {d}\n", .{@as(i64, if (val) 1 else 0)});
+                                const directive = try std.fmt.allocPrint(self.allocator, "\tDU64\t{d}\n", .{@as(i64, if (val) 1 else 0)});
                                 defer self.allocator.free(directive);
                                 try self.output.appendSlice(self.allocator, directive);
                             },
@@ -126,7 +124,7 @@ pub const X64Generator = struct {
     }
 
     fn emitTextSection(self: *X64Generator, module: *const ir.Module) !void {
-        try self.output.appendSlice(self.allocator, ".section .text\n");
+        try self.output.appendSlice(self.allocator, "//Code section\n");
 
         for (module.functions.items) |*func| {
             try self.generateFunction(func);
@@ -163,7 +161,7 @@ pub const X64Generator = struct {
         }
 
         // Function epilogue (fallthrough case)
-        try ctx.emit(".Lend_{s}:\n", .{func.name});
+        try ctx.emit("@@end_{s}:\n", .{func.name});
         try Patterns.emitFunctionEpilogue(&ctx);
         try ctx.emit("\n", .{});
 
@@ -172,7 +170,7 @@ pub const X64Generator = struct {
 
     fn generateBasicBlock(self: *X64Generator, ctx: *GenContext, block: *const ir.BasicBlock, func_name: []const u8) !void {
         _ = self;
-        try ctx.emit(".L{s}_block{d}:\n", .{ func_name, block.id });
+        try ctx.emit("@@{s}_block{d}:\n", .{ func_name, block.id });
 
         var param_idx: u32 = 0;
         for (block.instructions.items) |*instr| {
@@ -307,9 +305,15 @@ pub const X64Generator = struct {
                             8; // Default to 8 bytes for unknown types
                         
                         const total_bytes = array_size * element_size;
-                        const directive = try std.fmt.allocPrint(self.allocator, "    .zero {d}\n", .{total_bytes});
+                        const directive = try std.fmt.allocPrint(self.allocator, "\tDU8\t", .{});
                         defer self.allocator.free(directive);
                         try self.output.appendSlice(self.allocator, directive);
+                        // Emit comma-separated zeros
+                        for (0..total_bytes) |byte_idx| {
+                            if (byte_idx > 0) try self.output.appendSlice(self.allocator, ",");
+                            try self.output.appendSlice(self.allocator, "0");
+                        }
+                        try self.output.appendSlice(self.allocator, "\n");
                         return;
                     } else |_| {
                         // Failed to parse size, fall through
@@ -318,8 +322,8 @@ pub const X64Generator = struct {
             }
         }
         
-        // Default: single .quad for scalar types
-        try self.output.appendSlice(self.allocator, "    .quad 0\n");
+        // Default: single DU64 for scalar types
+        try self.output.appendSlice(self.allocator, "\tDU64\t0\n");
     }
 
     pub fn getOutput(self: *X64Generator) []const u8 {
@@ -421,14 +425,14 @@ fn genInlineAsm(ctx: *GenContext, instr: *const ir.Instruction) !void {
     defer ctx.allocator.free(machine_code);
     
     // Emit the assembly code as comments for debugging
-    try ctx.output.appendSlice(ctx.allocator, "    # Inline assembly block\n");
+    try ctx.output.appendSlice(ctx.allocator, "\t//Inline assembly block\n");
     
-    // For now, we'll emit the raw bytes as .byte directives
+    // For now, we'll emit the raw bytes as DU8 directives
     // A more sophisticated approach would be to emit actual assembly mnemonics
     if (machine_code.len > 0) {
-        try ctx.output.appendSlice(ctx.allocator, "    .byte ");
+        try ctx.output.appendSlice(ctx.allocator, "\tDU8\t");
         for (machine_code, 0..) |byte, i| {
-            if (i > 0) try ctx.output.appendSlice(ctx.allocator, ", ");
+            if (i > 0) try ctx.output.appendSlice(ctx.allocator, ",");
             const byte_str = try std.fmt.allocPrint(ctx.allocator, "0x{x:0>2}", .{byte});
             defer ctx.allocator.free(byte_str);
             try ctx.output.appendSlice(ctx.allocator, byte_str);
@@ -436,7 +440,7 @@ fn genInlineAsm(ctx: *GenContext, instr: *const ir.Instruction) !void {
         try ctx.output.append(ctx.allocator, '\n');
     }
     
-    try ctx.output.appendSlice(ctx.allocator, "    # End inline assembly\n");
+    try ctx.output.appendSlice(ctx.allocator, "\t//End inline assembly\n");
 }
 
 /// Instruction dispatcher for param instructions (needs parameter index)

@@ -21,3 +21,5 @@
 U0 Main() {
     // Runtime code would go here
 }
+
+Main;

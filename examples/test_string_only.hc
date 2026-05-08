@@ -2,3 +2,5 @@
 U0 Main() {
     "Hello\n";
 }
+
+Main;

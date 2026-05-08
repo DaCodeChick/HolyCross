@@ -21,3 +21,5 @@ U0 TestFunc(Derived obj) {
 U0 Main() {
     "Multi-level inheritance test compiled successfully\n";
 }
+
+Main;

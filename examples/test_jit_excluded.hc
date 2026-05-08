@@ -14,3 +14,5 @@ U0 Main() {
     ShouldExist();
     // If we tried to call ShouldNotExist(), compilation would fail
 }
+
+Main;

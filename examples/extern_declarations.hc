@@ -23,3 +23,5 @@ U0 Main() {
     HelperFunction;
     LocalFunction;
 }
+
+Main;

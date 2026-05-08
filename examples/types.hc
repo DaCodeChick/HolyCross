@@ -32,3 +32,5 @@ NOT YET SUPPORTED:
 - Named types without definition: CDate date (unless CDate is defined)
 - Complex array/pointer combinations: I64* array[5], I64 (*ptr)[10]
 */
+
+Main;

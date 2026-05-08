@@ -86,3 +86,5 @@ This includes:
 - Array of pointers: I64* ptr_array[5]
 - Pointer to array: I64 (*array_ptr)[10]
 */
+
+Main;

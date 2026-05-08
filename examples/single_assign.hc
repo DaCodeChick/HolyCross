@@ -9,3 +9,5 @@ U0 Main() {
     p.x = 10;
     "Single assignment done\n";
 }
+
+Main;

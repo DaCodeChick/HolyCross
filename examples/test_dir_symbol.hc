@@ -15,3 +15,5 @@ U0 DirNotDefined() {
 U0 Main() {
     DirIsDefined();
 }
+
+Main;

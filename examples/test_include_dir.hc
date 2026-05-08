@@ -5,3 +5,5 @@
 U0 Main() {
     HeaderFunction();
 }
+
+Main;

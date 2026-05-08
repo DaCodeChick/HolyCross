@@ -8,3 +8,5 @@ U0 JitOnlyFunction() {
 U0 Main() {
     JitOnlyFunction(); // Error: this function doesn't exist
 }
+
+Main;

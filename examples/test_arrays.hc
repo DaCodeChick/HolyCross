@@ -7,3 +7,5 @@ U0 Main() {
     I64 y = arr[2];
     "Array test completed\n";
 }
+
+Main;

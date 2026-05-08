@@ -7,12 +7,12 @@ const KeywordMap = std.StaticStringMap(TokenType);
 /// All HolyC keywords mapped to their token types (72 total)
 pub const keywords = KeywordMap.initComptime(.{
     // Type keywords
-    .{ "I0", .keyword_i0 },
+    .{ "I0", .keyword_void },
     .{ "I8", .keyword_i8 },
     .{ "I16", .keyword_i16 },
     .{ "I32", .keyword_i32 },
     .{ "I64", .keyword_i64 },
-    .{ "U0", .keyword_u0 },
+    .{ "U0", .keyword_void }, // synonym for I0
     .{ "U8", .keyword_u8 },
     .{ "U16", .keyword_u16 },
     .{ "U32", .keyword_u32 },
@@ -39,6 +39,8 @@ pub const keywords = KeywordMap.initComptime(.{
     .{ "sizeof", .keyword_sizeof },
     .{ "offset", .keyword_offset },
     .{ "lastclass", .keyword_lastclass },
+    .{ "pad", .keyword_pad },
+    .{ "reserved", .keyword_pad }, // synonym for pad
 
     // Exception handling
     .{ "try", .keyword_try },

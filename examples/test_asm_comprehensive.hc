@@ -23,7 +23,7 @@ I64 TestWithWhitespace()
     return 2;
 }
 
-I64 main()
+I64 Main()
 {
     I64 a;
     I64 b;
@@ -31,3 +31,5 @@ I64 main()
     b = TestWithWhitespace();
     return a + b;  // Should return 3
 }
+
+Main;

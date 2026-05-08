@@ -8,6 +8,7 @@ const type_checker_module = @import("../semantic/type_checker.zig");
 const type_layout_module = @import("../semantic/type_layout.zig");
 const target_module = @import("target.zig");
 const templeos_bin = @import("templeos_bin.zig");
+const elf_writer = @import("elf_writer.zig");
 const x64_machine_code = @import("x64_machine_code.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
@@ -68,7 +69,7 @@ pub const Compiler = struct {
         }
     }
 
-    /// Compile to native Linux x64 executable via GCC
+    /// Compile to native Linux x64 executable using machine code generator
     fn compileToNativeExecutable(
         self: *Compiler,
         program: *const ast.Program,
@@ -77,33 +78,31 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
         io: std.Io,
     ) !void {
-        // Generate assembly
-        const asm_code = try self.compileToAssembly(program, type_checker, type_layouts);
-        defer self.allocator.free(asm_code);
+        // Build IR from AST
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        defer builder.deinit();
 
-        // Write assembly to temporary file
-        const asm_path = try std.fmt.allocPrint(self.allocator, "{s}.s", .{output_path});
-        defer self.allocator.free(asm_path);
+        try builder.buildFromAST(program);
+        const module = try builder.finish();
+        var mod = module;
+        defer mod.deinit();
 
-        const cwd = std.Io.Dir.cwd();
-        const asm_file = try cwd.createFile(io, asm_path, .{});
-        defer asm_file.close(io);
-        try asm_file.writeStreamingAll(io, asm_code);
+        // Initialize ELF writer
+        var elf = try elf_writer.ELFWriter.init(self.allocator);
+        defer elf.deinit();
 
-        // Use gcc to assemble and link (simpler than using as + ld directly)
-        var child = try std.process.spawn(io, .{
-            .argv = &[_][]const u8{ "gcc", "-o", output_path, asm_path, "-no-pie" },
-        });
+        // Initialize machine code generator
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .elf = &elf }
+        );
+        defer machine_gen.deinit();
 
-        const term = try child.wait(io);
+        // Generate machine code from IR
+        try machine_gen.generateFromIR(&mod);
 
-        if (term != .exited or term.exited != 0) {
-            std.debug.print("GCC compilation failed with exit code: {}\n", .{term});
-            return error.CompilationFailed;
-        }
-
-        // Clean up intermediate files
-        try cwd.deleteFile(io, asm_path);
+        // Write ELF file
+        try elf.writeToFile(io, output_path);
     }
 
     /// Compile to TempleOS/ZealOS .BIN format
@@ -128,8 +127,11 @@ pub const Compiler = struct {
         var bin_writer = try templeos_bin.TempleOSBinWriter.init(self.allocator);
         defer bin_writer.deinit();
 
-        // Generate machine code
-        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(self.allocator, &bin_writer);
+        // Initialize machine code generator
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .templeos = &bin_writer }
+        );
         defer machine_gen.deinit();
 
         try machine_gen.generateFromIR(&mod);

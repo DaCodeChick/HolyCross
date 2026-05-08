@@ -7,3 +7,5 @@ U0 Main() {
     // If __DIR__ wasn't expanded, this would fail as an undefined identifier
     // If it is expanded, it becomes a string literal "examples"
 }
+
+Main;

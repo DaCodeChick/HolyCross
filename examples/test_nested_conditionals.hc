@@ -30,3 +30,5 @@ U0 Main() {
     AotDebugOuter();
     // AotDebug() is local to AotMain
 }
+
+Main;

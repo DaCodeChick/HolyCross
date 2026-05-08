@@ -30,3 +30,5 @@ U0 Main() {
     
     "All conditional branches tested!\n";
 }
+
+Main;

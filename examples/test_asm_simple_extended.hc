@@ -1,6 +1,6 @@
 // Simple test of extended x64 instructions
 
-I64 main()
+I64 Main()
 {
     I64 result;
     
@@ -21,3 +21,5 @@ I64 main()
     result = 42;
     return result;
 }
+
+Main;

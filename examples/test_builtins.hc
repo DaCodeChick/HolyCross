@@ -21,3 +21,5 @@ U0 Main() {
     
     "All builtins work!\n";
 }
+
+Main;

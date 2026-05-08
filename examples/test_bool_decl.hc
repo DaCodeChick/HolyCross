@@ -9,3 +9,5 @@ U0 Main() {
     
     "Bool and I64 declared successfully\n";
 }
+
+Main;

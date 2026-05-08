@@ -30,7 +30,7 @@ I64 TestSetCC()
     return 2;
 }
 
-I64 main()
+I64 Main()
 {
     I64 a, b;
     a = TestLeave();
@@ -39,3 +39,5 @@ I64 main()
     // Return sum: 1 + 2 = 3
     return a + b;
 }
+
+Main;

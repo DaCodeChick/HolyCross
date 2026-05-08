@@ -114,31 +114,15 @@ pub const IRBuilder = struct {
 
     /// Build IR from AST root
     pub fn buildFromAST(self: *IRBuilder, root: *const ast.Program) !void {
-        // Check if there's a HolyC Main function or a C main function
-        var has_main = false;
-        var has_c_main = false;
-        for (root.decls) |decl| {
-            if (decl == .function) {
-                if (std.mem.eql(u8, decl.function.name, "Main")) {
-                    has_main = true;
-                } else if (std.mem.eql(u8, decl.function.name, "main")) {
-                    has_c_main = true;
-                }
-            }
-        }
-
-        // First, process all declarations (including Main/main if they exist)
+        // Process all declarations
         for (root.decls) |decl| {
             try self.buildDeclaration(decl);
         }
 
-        // Create C's main() function that:
-        // 1. Executes top-level statements (if any)
-        // 2. Calls HolyC Main() function (if it exists)
-        // BUT: Only if user didn't define their own main() function
-        if (!has_c_main) {
-            try self.buildCMainFunction(root.top_level_stmts, has_main);
-        }
+        // Create wrapper main() function that executes top-level statements
+        // This wrapper is needed for native executables to have a 'main' entry point
+        // In HolyC, top-level statements execute when the file is loaded
+        try self.buildMainWrapper(root.top_level_stmts);
     }
 
     pub fn buildDeclaration(self: *IRBuilder, decl: ast.Decl) !void {
@@ -204,9 +188,10 @@ pub const IRBuilder = struct {
         self.current_block = null;
     }
 
-    /// Build C's main() function that executes top-level statements and calls HolyC Main()
-    fn buildCMainFunction(self: *IRBuilder, top_level_stmts: []const ast.Stmt, has_holys_main: bool) !void {
-        // Create IR function for C's main entry point
+    /// Build wrapper main() function that executes top-level statements
+    /// In HolyC, top-level statements execute like a script when the file is loaded
+    fn buildMainWrapper(self: *IRBuilder, top_level_stmts: []const ast.Stmt) !void {
+        // Create IR function for main entry point (wrapper for native executables)
         const ir_func = try self.module.createFunction("main");
         self.current_function = ir_func;
         self.temp_counter = 0;
@@ -214,33 +199,20 @@ pub const IRBuilder = struct {
         // Clear label map for new function
         self.label_map.clearRetainingCapacity();
 
-        // Set function metadata (no parameters for now - TODO: handle argc/argv)
+        // Set function metadata (no parameters)
         ir_func.param_count = 0;
 
         // Create entry block
         const entry = try ir_func.createBlock();
         self.current_block = entry;
 
-        // First, execute all top-level statements
+        // Execute all top-level statements
+        // This includes any function calls like "Main;" or "InitSystem;"
         for (top_level_stmts) |stmt| {
             try self.buildStatement(stmt);
         }
-
-        // Then, if there's a HolyC Main function, call it
-        if (has_holys_main) {
-            // Create call to Main() with no arguments
-            const temp = self.newTemp();
-            const empty_args = try self.allocator.alloc(ir.Operand, 0);
-
-            try self.emit(.{
-                .opcode = .call,
-                .dest = .{ .temp = temp },
-                .src1 = .{ .function = "Main" },
-                .args = empty_args,
-            });
-        }
-
-        // Return 0 from main
+        
+        // Always return 0 from main
         try self.emit(.{
             .opcode = .ret_val,
             .src1 = .{ .constant = .{ .int = 0 } },
@@ -890,6 +862,14 @@ pub const IRBuilder = struct {
 
         const left = try self.buildExpression(bin.left.*);
         const right = try self.buildExpression(bin.right.*);
+
+        // Try constant folding if both operands are constants
+        if (left == .constant and right == .constant) {
+            if (try self.foldConstantBinaryOp(bin.op, left.constant, right.constant)) |result| {
+                return .{ .constant = result };
+            }
+        }
+
         const temp = self.newTemp();
 
         const opcode: ir.Opcode = switch (bin.op) {
@@ -926,14 +906,13 @@ pub const IRBuilder = struct {
     }
 
     fn buildUnaryOp(self: *IRBuilder, un: @TypeOf(@as(ast.Expr, undefined).unary)) !ir.Operand {
-        const temp = self.newTemp();
-
         // Handle address-of specially - we need the variable name, not its value
         if (un.op == .address_of) {
             const var_name = switch (un.operand.*) {
                 .identifier => |ident| ident.name,
                 else => return error.InvalidAddressOfOperand,
             };
+            const temp = self.newTemp();
             try self.emit(.{
                 .opcode = .load_addr,
                 .dest = .{ .temp = temp },
@@ -945,6 +924,7 @@ pub const IRBuilder = struct {
         // Handle dereference specially - load from pointer
         if (un.op == .dereference) {
             const ptr = try self.buildExpression(un.operand.*);
+            const temp = self.newTemp();
             try self.emit(.{
                 .opcode = .load_ptr,
                 .dest = .{ .temp = temp },
@@ -965,6 +945,13 @@ pub const IRBuilder = struct {
         // For other unary operators, evaluate operand first
         const operand = try self.buildExpression(un.operand.*);
 
+        // Try constant folding for constants
+        if (operand == .constant) {
+            if (self.foldConstantUnaryOp(un.op, operand.constant)) |result| {
+                return .{ .constant = result };
+            }
+        }
+
         const opcode: ir.Opcode = switch (un.op) {
             .negate => .neg,
             .bitwise_not => .bit_not,
@@ -973,6 +960,7 @@ pub const IRBuilder = struct {
             else => return error.UnhandledUnaryOperator,
         };
 
+        const temp = self.newTemp();
         try self.emit(.{
             .opcode = opcode,
             .dest = .{ .temp = temp },
@@ -1289,6 +1277,72 @@ pub const IRBuilder = struct {
         };
 
         return .{ .constant = .{ .int = size } };
+    }
+
+    /// Fold constant unary operations at compile time
+    fn foldConstantUnaryOp(self: *IRBuilder, op: ast.UnaryOp, operand: ir.Operand.Constant) ?ir.Operand.Constant {
+        _ = self;
+        
+        // Only fold integer constants for now
+        if (operand != .int) {
+            return null;
+        }
+
+        const val = operand.int;
+
+        return switch (op) {
+            .negate => .{ .int = -val },
+            .bitwise_not => .{ .int = ~val },
+            .logical_not => .{ .int = if (val == 0) 1 else 0 },
+            .plus => .{ .int = val }, // Unary plus is identity
+            else => null, // Don't fold other operators (address-of, dereference, inc/dec)
+        };
+    }
+
+    /// Fold constant binary operations at compile time
+    fn foldConstantBinaryOp(self: *IRBuilder, op: ast.BinaryOp, left: ir.Operand.Constant, right: ir.Operand.Constant) !?ir.Operand.Constant {
+        _ = self;
+        
+        // Only fold integer constants for now
+        // TODO: Add float constant folding
+        if (left != .int or right != .int) {
+            return null;
+        }
+
+        const l = left.int;
+        const r = right.int;
+
+        return switch (op) {
+            // Arithmetic
+            .add => .{ .int = l + r },
+            .subtract => .{ .int = l - r },
+            .multiply => .{ .int = l * r },
+            .divide => if (r == 0) null else .{ .int = @divTrunc(l, r) },
+            .modulo => if (r == 0) null else .{ .int = @rem(l, r) },
+            
+            // Bitwise
+            .bitwise_and => .{ .int = l & r },
+            .bitwise_or => .{ .int = l | r },
+            .bitwise_xor => .{ .int = l ^ r },
+            .shift_left => if (r < 0 or r >= 64) null else .{ .int = l << @intCast(r) },
+            .shift_right => if (r < 0 or r >= 64) null else .{ .int = l >> @intCast(r) },
+            
+            // Logical (treat 0 as false, non-zero as true)
+            .logical_and => .{ .int = if (l != 0 and r != 0) 1 else 0 },
+            .logical_or => .{ .int = if (l != 0 or r != 0) 1 else 0 },
+            .logical_xor => .{ .int = if ((l != 0) != (r != 0)) 1 else 0 },
+            
+            // Comparison
+            .equal => .{ .int = if (l == r) 1 else 0 },
+            .not_equal => .{ .int = if (l != r) 1 else 0 },
+            .less => .{ .int = if (l < r) 1 else 0 },
+            .less_equal => .{ .int = if (l <= r) 1 else 0 },
+            .greater => .{ .int = if (l > r) 1 else 0 },
+            .greater_equal => .{ .int = if (l >= r) 1 else 0 },
+            
+            // Don't fold assignment operators
+            else => null,
+        };
     }
 
     /// Calculate size of a type

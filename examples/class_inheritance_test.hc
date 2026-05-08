@@ -14,3 +14,5 @@ U0 Main() {
     obj.y = 20;  // Should access inherited member
     obj.z = 30;  // Should access own member
 }
+
+Main;

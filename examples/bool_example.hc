@@ -15,3 +15,5 @@ U0 Main() {
         is_done = 1;  // Mark done if pointer is null
     }
 }
+
+Main;

@@ -13,3 +13,5 @@ U0 Main() {
     
     "Test complete!\n";
 }
+
+Main;

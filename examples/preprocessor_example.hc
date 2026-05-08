@@ -27,3 +27,5 @@ U0 Main() {
     "Testing preprocessor defines...\n";
     TestDefines;
 }
+
+Main;
