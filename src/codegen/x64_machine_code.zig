@@ -339,6 +339,7 @@ pub const X64MachineCodeGen = struct {
             .log_or => try self.genLogicalOp(instr, .log_or),
             .log_not => try self.genLogNot(instr),
             .call => try self.genCall(instr),
+            .print => try self.genPrint(instr),
             .cmp_eq => try self.genComparison(instr, .eq),
             .cmp_ne => try self.genComparison(instr, .ne),
             .cmp_lt => try self.genComparison(instr, .lt),
@@ -883,6 +884,34 @@ pub const X64MachineCodeGen = struct {
             try self.emitBytes(&[_]u8{ 0x48, 0x89 });
             try self.emitModRM(0, 5, dest_offset);
         }
+    }
+
+    fn genPrint(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Print a string using write syscall (Linux)
+        // syscall number 1 (write) with fd=1 (stdout)
+        
+        const string_ptr = switch (instr.src1) {
+            .string => |s| s,
+            else => return error.InvalidPrintOperand,
+        };
+        
+        // For machine code generation, proper string literal handling needs data section support
+        // This is a stub implementation that emits valid code but doesn't actually print
+        
+        // mov rdi, 1 (stdout)
+        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00 });
+        
+        // mov rax, 1 (sys_write)
+        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00 });
+        
+        // syscall (will fail with EFAULT but won't crash)
+        try self.emitBytes(&[_]u8{ 0x0F, 0x05 });
+        
+        // TODO: Implement proper string literal storage and addressing
+        // For now, just suppress the unused warning
+        _ = string_ptr;
+        
+        std.debug.print("Warning: Print opcode not fully implemented in machine code gen yet\n", .{});
     }
 
     fn genInlineAsm(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
