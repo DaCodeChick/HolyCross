@@ -21,6 +21,13 @@ pub const Opcode = enum {
     mod, // dest = left % right
     neg, // dest = -src
 
+    // Floating-point arithmetic (x87 FPU)
+    fadd, // dest = left + right (float)
+    fsub, // dest = left - right (float)
+    fmul, // dest = left * right (float)
+    fdiv, // dest = left / right (float)
+    fneg, // dest = -src (float)
+
     // Bitwise
     bit_and, // dest = left & right
     bit_or, // dest = left | right
@@ -155,7 +162,7 @@ pub const Instruction = struct {
             .alloc_local => try writer.print("{any}, size={any}", .{ self.dest, self.src1 }),
             .param => try writer.print("{any}", .{self.dest}),
             .inline_asm => try writer.print("asm {any}", .{self.src1}),
-            .load_const, .load_var, .move, .neg, .bit_not, .log_not => {
+            .load_const, .load_var, .move, .neg, .bit_not, .log_not, .fneg => {
                 try writer.print("{any} = {any}", .{ self.dest, self.src1 });
             },
             else => {

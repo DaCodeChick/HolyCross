@@ -240,6 +240,52 @@ pub const Arithmetic = struct {
         try Patterns.storeOperand(ctx, instr.dest, "RAX");
     }
 
+    pub fn genFAdd(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try genFloatBinaryOp(ctx, instr, "FADD");
+    }
+
+    pub fn genFSub(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try genFloatBinaryOp(ctx, instr, "FSUB");
+    }
+
+    pub fn genFMul(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try genFloatBinaryOp(ctx, instr, "FMUL");
+    }
+
+    pub fn genFDiv(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try genFloatBinaryOp(ctx, instr, "FDIV");
+    }
+
+    pub fn genFNeg(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        try Patterns.loadFloatToST0(ctx, instr.src1);
+        try ctx.emit("\tFCHS\n", .{});
+        try Patterns.storeFloatFromST0(ctx, instr.dest);
+    }
+
+    fn genFloatBinaryOp(ctx: *GenContext, instr: *const ir.Instruction, op: []const u8) !void {
+        // x87 FPU: load src1 to ST0, perform operation with src2 from memory
+        try Patterns.loadFloatToST0(ctx, instr.src1);
+        
+        // Emit the FPU operation with memory operand
+        switch (instr.src2) {
+            .temp => |t| {
+                const offset = ctx.getTempOffset(t);
+                try ctx.emit("\t{s}\tU64 [RBP-{d}]\t//t{d}\n", .{ op, offset, t });
+            },
+            .variable => |v| {
+                const offset = ctx.getVarOffset(v);
+                try ctx.emit("\t{s}\tU64 [RBP-{d}]\t//{s}\n", .{ op, offset, v });
+            },
+            else => {
+                // For constants, need to load to memory first or use ST stack
+                try Patterns.loadFloatToST0(ctx, instr.src2);
+                try ctx.emit("\t{s}P\tST1,ST0\n", .{op}); // Operation with pop
+            },
+        }
+        
+        try Patterns.storeFloatFromST0(ctx, instr.dest);
+    }
+
     fn genBinaryOp(ctx: *GenContext, instr: *const ir.Instruction, op: []const u8) !void {
         try Patterns.loadOperand(ctx, instr.src1, "RAX");
         try Patterns.loadOperand(ctx, instr.src2, "RCX");

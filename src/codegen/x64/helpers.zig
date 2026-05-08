@@ -171,4 +171,45 @@ pub const Patterns = struct {
             else => {},
         }
     }
+
+    /// Load float operand to x87 FPU stack (ST0)
+    pub fn loadFloatToST0(ctx: *GenContext, operand: ir.Operand) !void {
+        switch (operand) {
+            .temp => |t| {
+                const offset = ctx.getTempOffset(t);
+                try ctx.emit("\tFLD\tU64 [RBP-{d}]\t//t{d}\n", .{ offset, t });
+            },
+            .variable => |v| {
+                const offset = ctx.getVarOffset(v);
+                try ctx.emit("\tFLD\tU64 [RBP-{d}]\t//{s}\n", .{ offset, v });
+            },
+            .constant => |c| switch (c) {
+                .float => |f| {
+                    // For float constants, we need to emit them as 64-bit bit pattern
+                    const bits: u64 = @bitCast(f);
+                    try ctx.emit("\tMOV\tRAX,0x{X}\n", .{bits});
+                    try ctx.emit("\tPUSH\tRAX\n", .{});
+                    try ctx.emit("\tFLD\tU64 [RSP]\n", .{});
+                    try ctx.emit("\tADD\tRSP,8\n", .{});
+                },
+                else => {},
+            },
+            else => {},
+        }
+    }
+
+    /// Store float from x87 FPU stack (ST0) to operand and pop
+    pub fn storeFloatFromST0(ctx: *GenContext, operand: ir.Operand) !void {
+        switch (operand) {
+            .temp => |t| {
+                const offset = ctx.getTempOffset(t);
+                try ctx.emit("\tFSTP\tU64 [RBP-{d}]\t//t{d}\n", .{ offset, t });
+            },
+            .variable => |v| {
+                const offset = ctx.getVarOffset(v);
+                try ctx.emit("\tFSTP\tU64 [RBP-{d}]\t//{s}\n", .{ offset, v });
+            },
+            else => {},
+        }
+    }
 };

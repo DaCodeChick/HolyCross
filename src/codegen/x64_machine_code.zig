@@ -324,6 +324,11 @@ pub const X64MachineCodeGen = struct {
             .div => try self.genDiv(instr),
             .mod => try self.genMod(instr),
             .neg => try self.genNeg(instr),
+            .fadd => try self.genFloatBinaryOp(instr, .fadd),
+            .fsub => try self.genFloatBinaryOp(instr, .fsub),
+            .fmul => try self.genFloatBinaryOp(instr, .fmul),
+            .fdiv => try self.genFloatBinaryOp(instr, .fdiv),
+            .fneg => try self.genFloatNeg(instr),
             .bit_and => try self.genBinaryOp(instr, .bit_and),
             .bit_or => try self.genBinaryOp(instr, .bit_or),
             .bit_xor => try self.genBinaryOp(instr, .bit_xor),
@@ -583,6 +588,67 @@ pub const X64MachineCodeGen = struct {
         const dest_offset = try self.getTempOffset(instr.dest);
         try self.emitBytes(&[_]u8{ 0x48, 0x89 });
         try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genFloatBinaryOp(self: *X64MachineCodeGen, instr: *const ir.Instruction, op: enum { fadd, fsub, fmul, fdiv }) !void {
+        // x87 FPU binary operation: dest = src1 op src2
+        // FPU uses stack-based architecture (ST0, ST1, etc.)
+        
+        // Load src1 into ST0
+        const src1_offset = try self.getTempOffset(instr.src1);
+        // fld qword [rbp+src1_offset]
+        try self.emitBytes(&[_]u8{ 0xDD });
+        try self.emitModRM(0, 5, src1_offset);
+        
+        // Load src2 and perform operation
+        const src2_offset = try self.getTempOffset(instr.src2);
+        switch (op) {
+            .fadd => {
+                // fadd qword [rbp+src2_offset]  (ST0 = ST0 + mem)
+                try self.emitBytes(&[_]u8{ 0xDC });
+                try self.emitModRM(0, 5, src2_offset);
+            },
+            .fsub => {
+                // fsub qword [rbp+src2_offset]  (ST0 = ST0 - mem)
+                try self.emitBytes(&[_]u8{ 0xDC });
+                try self.emitModRM(4, 5, src2_offset);
+            },
+            .fmul => {
+                // fmul qword [rbp+src2_offset]  (ST0 = ST0 * mem)
+                try self.emitBytes(&[_]u8{ 0xDC });
+                try self.emitModRM(1, 5, src2_offset);
+            },
+            .fdiv => {
+                // fdiv qword [rbp+src2_offset]  (ST0 = ST0 / mem)
+                try self.emitBytes(&[_]u8{ 0xDC });
+                try self.emitModRM(6, 5, src2_offset);
+            },
+        }
+        
+        // Store result from ST0 to dest and pop
+        const dest_offset = try self.getTempOffset(instr.dest);
+        // fstp qword [rbp+dest_offset]  (store ST0 to memory and pop)
+        try self.emitBytes(&[_]u8{ 0xDD });
+        try self.emitModRM(3, 5, dest_offset);
+    }
+
+    fn genFloatNeg(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // x87 FPU negation: dest = -src
+        
+        // Load src into ST0
+        const src_offset = try self.getTempOffset(instr.src1);
+        // fld qword [rbp+src_offset]
+        try self.emitBytes(&[_]u8{ 0xDD });
+        try self.emitModRM(0, 5, src_offset);
+        
+        // fchs (change sign of ST0)
+        try self.emitBytes(&[_]u8{ 0xD9, 0xE0 });
+        
+        // Store result from ST0 to dest and pop
+        const dest_offset = try self.getTempOffset(instr.dest);
+        // fstp qword [rbp+dest_offset]
+        try self.emitBytes(&[_]u8{ 0xDD });
+        try self.emitModRM(3, 5, dest_offset);
     }
 
     fn genBitNot(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {

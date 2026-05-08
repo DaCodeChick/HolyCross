@@ -910,8 +910,26 @@ pub const IRBuilder = struct {
             else => .add, // TODO: Handle other operators
         };
 
+        // Check if we should use float operations based on operand types
+        const is_float_op = blk: {
+            // Check if either operand is a float constant
+            if (left == .constant and left.constant == .float) break :blk true;
+            if (right == .constant and right.constant == .float) break :blk true;
+            // TODO: Check variable/temp types from type checker when available
+            break :blk false;
+        };
+
+        // Use float-specific opcodes for float arithmetic
+        const final_opcode = if (is_float_op) switch (opcode) {
+            .add => .fadd,
+            .sub => .fsub,
+            .mul => .fmul,
+            .div => .fdiv,
+            else => opcode, // Non-arithmetic ops stay the same
+        } else opcode;
+
         try self.emit(.{
-            .opcode = opcode,
+            .opcode = final_opcode,
             .dest = .{ .temp = temp },
             .src1 = left,
             .src2 = right,
@@ -975,9 +993,18 @@ pub const IRBuilder = struct {
             else => return error.UnhandledUnaryOperator,
         };
 
+        // Check if we should use float negation
+        const is_float_op = blk: {
+            if (operand == .constant and operand.constant == .float) break :blk true;
+            // TODO: Check variable/temp types from type checker when available
+            break :blk false;
+        };
+
+        const final_opcode = if (is_float_op and opcode == .neg) .fneg else opcode;
+
         const temp = self.newTemp();
         try self.emit(.{
-            .opcode = opcode,
+            .opcode = final_opcode,
             .dest = .{ .temp = temp },
             .src1 = operand,
         });

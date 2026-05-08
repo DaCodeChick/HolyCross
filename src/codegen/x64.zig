@@ -361,6 +361,13 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
         .mod => try instruction_gen.Arithmetic.genMod(ctx, instr),
         .neg => try instruction_gen.Arithmetic.genNeg(ctx, instr),
 
+        // Floating-point arithmetic (x87 FPU)
+        .fadd => try instruction_gen.Arithmetic.genFAdd(ctx, instr),
+        .fsub => try instruction_gen.Arithmetic.genFSub(ctx, instr),
+        .fmul => try instruction_gen.Arithmetic.genFMul(ctx, instr),
+        .fdiv => try instruction_gen.Arithmetic.genFDiv(ctx, instr),
+        .fneg => try instruction_gen.Arithmetic.genFNeg(ctx, instr),
+
         // Bitwise
         .bit_and => try instruction_gen.Bitwise.genBitAnd(ctx, instr),
         .bit_or => try instruction_gen.Bitwise.genBitOr(ctx, instr),
