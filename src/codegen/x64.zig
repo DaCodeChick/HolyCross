@@ -264,8 +264,8 @@ pub const X64Generator = struct {
         std.mem.sort(u32, temp_ids, {}, comptime std.sort.asc(u32));
 
         for (temp_ids) |temp_id| {
+            offset += 8; // Increment BEFORE assigning to avoid offset 0
             try layout.temp_offsets.put(temp_id, offset);
-            offset += 8;
         }
 
         layout.total_size = @intCast(offset);

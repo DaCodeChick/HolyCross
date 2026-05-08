@@ -39,9 +39,11 @@ pub const IRBuilder = struct {
     label_map: std.StringHashMap(u32), // Map label names to label IDs (per function)
     type_checker: ?*TypeChecker, // Optional type checker for type inference
     type_layouts: ?*const std.StringHashMap(TypeLayout), // Optional type layout map
+    allocated_type_hints: std.ArrayList([]const u8), // Track allocated type hint strings for cleanup
 
     pub fn init(allocator: Allocator, type_checker: ?*TypeChecker, type_layouts: ?*const std.StringHashMap(TypeLayout)) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
+        const empty_hints = try allocator.alloc([]const u8, 0);
         return .{
             .allocator = allocator,
             .module = try ir.Module.init(allocator),
@@ -53,10 +55,17 @@ pub const IRBuilder = struct {
             .label_map = std.StringHashMap(u32).init(allocator),
             .type_checker = type_checker,
             .type_layouts = type_layouts,
+            .allocated_type_hints = std.ArrayList([]const u8).fromOwnedSlice(empty_hints),
         };
     }
 
     pub fn deinit(self: *IRBuilder) void {
+        // Free allocated type hint strings
+        for (self.allocated_type_hints.items) |hint| {
+            self.allocator.free(hint);
+        }
+        self.allocated_type_hints.deinit(self.allocator);
+        
         self.module.deinit();
         self.break_label_stack.deinit(self.allocator);
         self.label_map.deinit();
@@ -1335,18 +1344,21 @@ pub const IRBuilder = struct {
             .pointer => |ptr| {
                 // Format as "T*" where T is the pointed-to type
                 if (self.typeToString(ptr.*)) |inner| {
-                    return std.fmt.allocPrint(self.allocator, "{s}*", .{inner}) catch null;
+                    const result = std.fmt.allocPrint(self.allocator, "{s}*", .{inner}) catch return null;
+                    self.allocated_type_hints.append(self.allocator, result) catch return null;
+                    return result;
                 }
                 return "PTR"; // Fallback for complex pointer types
             },
             .array => |arr| {
                 // Format as "T[n]" or "T[]"
                 if (self.typeToString(arr.element_type.*)) |elem_type| {
-                    if (arr.size) |size| {
-                        return std.fmt.allocPrint(self.allocator, "{s}[{d}]", .{ elem_type, size }) catch null;
-                    } else {
-                        return std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_type}) catch null;
-                    }
+                    const result = if (arr.size) |size|
+                        std.fmt.allocPrint(self.allocator, "{s}[{d}]", .{ elem_type, size }) catch return null
+                    else
+                        std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_type}) catch return null;
+                    self.allocated_type_hints.append(self.allocator, result) catch return null;
+                    return result;
                 }
                 return "ARRAY"; // Fallback
             },
