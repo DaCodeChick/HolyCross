@@ -361,10 +361,15 @@ pub const Analyzer = struct {
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(init_type, gvar.type);
             if (!compatible) {
+                const gvar_type_str = try self.typeToString(gvar.type);
+                defer self.allocator.free(gvar_type_str);
+                const init_type_str = try self.typeToString(init_type);
+                defer self.allocator.free(init_type_str);
+                
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
                     "Cannot initialize global variable of type '{s}' with value of type '{s}'",
-                    .{ @tagName(gvar.type), @tagName(init_type) },
+                    .{ gvar_type_str, init_type_str },
                 );
                 try self.addError(.type_mismatch, msg, gvar.loc);
             }
@@ -415,6 +420,11 @@ pub const Analyzer = struct {
             loc,
             &self.errors,
         );
+    }
+
+    /// Convert a type to a human-readable string for error messages
+    fn typeToString(self: *Analyzer, typ: ast.Type) ![]const u8 {
+        return self.type_checker.typeToString(typ);
     }
 
     /// Look up a function symbol by name
@@ -502,11 +512,15 @@ pub const Analyzer = struct {
         }
 
         // Check if non-void function is missing return statement
-        if (func.return_type != .u0 and !self.has_return_statement) {
+        // Both I0 and U0 are void types
+        if (func.return_type != .u0 and func.return_type != .i0 and !self.has_return_statement) {
+            const ret_type_str = try self.typeToString(func.return_type);
+            defer self.allocator.free(ret_type_str);
+            
             const msg = try std.fmt.allocPrint(
                 self.allocator,
                 "Function '{s}' with return type '{s}' is missing return statement",
-                .{ func.name, @tagName(func.return_type) },
+                .{ func.name, ret_type_str },
             );
             try self.addError(.missing_return, msg, func.loc);
         }
@@ -630,10 +644,15 @@ pub const Analyzer = struct {
 
             const compatible = try self.type_checker.areTypesCompatible(arg_type, param.type);
             if (!compatible) {
+                const param_type_str = try self.typeToString(param.type);
+                defer self.allocator.free(param_type_str);
+                const arg_type_str = try self.typeToString(arg_type);
+                defer self.allocator.free(arg_type_str);
+                
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
                     "Argument {d} to function '{s}': expected type '{s}', got '{s}'",
-                    .{ i + 1, func_name, @tagName(param.type), @tagName(arg_type) },
+                    .{ i + 1, func_name, param_type_str, arg_type_str },
                 );
                 try self.addError(.argument_type_mismatch, msg, loc);
             }
@@ -742,15 +761,23 @@ pub const Analyzer = struct {
 
         // If there's an initializer, check type compatibility
         if (initializer) |init_expr| {
+            // Validate the initializer expression (including function calls)
+            try self.validateExpression(init_expr);
+            
             const init_type = try self.inferExprTypeOrPropagate(init_expr);
 
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(init_type, var_type);
             if (!compatible) {
+                const var_type_str = try self.typeToString(var_type);
+                defer self.allocator.free(var_type_str);
+                const init_type_str = try self.typeToString(init_type);
+                defer self.allocator.free(init_type_str);
+                
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
                     "Cannot initialize variable of type '{s}' with value of type '{s}'",
-                    .{ @tagName(var_type), @tagName(init_type) },
+                    .{ var_type_str, init_type_str },
                 );
                 try self.addError(.type_mismatch, msg, loc);
             }
@@ -919,26 +946,37 @@ pub const Analyzer = struct {
 
         // Check if we have a return value
         if (expr) |ret_expr| {
+            // Validate the return expression (including function calls, subscripts, etc.)
+            try self.validateExpression(ret_expr);
+            
             // Infer return expression type
             const ret_type = try self.inferExprTypeOrPropagate(ret_expr);
 
             // Check type compatibility
             const compatible = try self.type_checker.areTypesCompatible(ret_type, expected_type);
             if (!compatible) {
+                const ret_type_str = try self.typeToString(ret_type);
+                defer self.allocator.free(ret_type_str);
+                const expected_type_str = try self.typeToString(expected_type);
+                defer self.allocator.free(expected_type_str);
+                
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
                     "Return type '{s}' does not match function return type '{s}'",
-                    .{ @tagName(ret_type), @tagName(expected_type) },
+                    .{ ret_type_str, expected_type_str },
                 );
                 try self.addError(.type_mismatch, msg, loc);
             }
         } else {
             // No return value - check if function expects U0 (void)
             if (expected_type != .u0) {
+                const expected_type_str = try self.typeToString(expected_type);
+                defer self.allocator.free(expected_type_str);
+                
                 const msg = try std.fmt.allocPrint(
                     self.allocator,
                     "Function expects return type '{s}' but got no return value",
-                    .{@tagName(expected_type)},
+                    .{expected_type_str},
                 );
                 try self.addError(.invalid_return, msg, loc);
             }

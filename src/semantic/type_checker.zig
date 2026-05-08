@@ -242,8 +242,59 @@ pub const TypeChecker = struct {
 
     /// Infer type of function call
     fn inferCallType(self: *TypeChecker, callee: ast.Expr, args: []const ast.Expr) TypeCheckError!ast.Type {
-        _ = args; // TODO: validate argument types
         const callee_type = try self.inferExprType(callee);
+
+        // Get function symbol for parameter information
+        const func_symbol = switch (callee) {
+            .identifier => |ident| blk: {
+                if (self.symbol_table.lookupSymbol(ident.name)) |symbol| {
+                    switch (symbol) {
+                        .function => |f| break :blk f,
+                        else => break :blk null,
+                    }
+                }
+                break :blk null;
+            },
+            else => null,
+        };
+
+        // Validate argument count and types if we have function info
+        if (func_symbol) |func| {
+            // Check argument count
+            if (args.len != func.params.len) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Function '{s}' expects {d} argument(s), but {d} provided",
+                    .{ func.name, func.params.len, args.len },
+                );
+                defer self.allocator.free(msg);
+                try self.addError(.argument_count_mismatch, msg, callee.getLocation());
+                // Continue checking types of provided arguments
+            }
+
+            // Check each argument type
+            const param_count = @min(args.len, func.params.len);
+            for (0..param_count) |i| {
+                const arg_type = try self.inferExprType(args[i]);
+                const param_type = func.params[i].type;
+
+                // Check if argument type is compatible with parameter type
+                if (!try self.areTypesCompatible(arg_type, param_type)) {
+                    const arg_type_str = try self.typeToString(arg_type);
+                    defer self.allocator.free(arg_type_str);
+                    const param_type_str = try self.typeToString(param_type);
+                    defer self.allocator.free(param_type_str);
+
+                    const msg = try std.fmt.allocPrint(
+                        self.allocator,
+                        "Argument {d} to '{s}': incompatible type '{s}', expected '{s}'",
+                        .{ i + 1, func.name, arg_type_str, param_type_str },
+                    );
+                    defer self.allocator.free(msg);
+                    try self.addError(.type_mismatch, msg, args[i].getLocation());
+                }
+            }
+        }
 
         return switch (callee_type) {
             .function => |func| func.return_type.*,
@@ -256,8 +307,22 @@ pub const TypeChecker = struct {
 
     /// Infer type of array subscript
     fn inferSubscriptType(self: *TypeChecker, array: ast.Expr, index: ast.Expr) TypeCheckError!ast.Type {
-        _ = index; // TODO: validate index is integer
         const array_type = try self.inferExprType(array);
+        const index_type = try self.inferExprType(index);
+
+        // Validate that index is an integer type
+        if (!self.isIntegerType(index_type)) {
+            const index_type_str = try self.typeToString(index_type);
+            defer self.allocator.free(index_type_str);
+            
+            const msg = try std.fmt.allocPrint(
+                self.allocator,
+                "Array subscript must be an integer type, got '{s}'",
+                .{index_type_str},
+            );
+            defer self.allocator.free(msg);
+            try self.addError(.invalid_subscript, msg, index.getLocation());
+        }
 
         return switch (array_type) {
             .array => |arr| arr.element_type.*,
@@ -433,6 +498,44 @@ pub const TypeChecker = struct {
 
         if (left_size >= right_size) return left;
         return right;
+    }
+
+    /// Convert a type to a human-readable string
+    pub fn typeToString(self: *TypeChecker, typ: ast.Type) ![]const u8 {
+        return switch (typ) {
+            .i0 => try self.allocator.dupe(u8, "I0"),
+            .i8 => try self.allocator.dupe(u8, "I8"),
+            .i16 => try self.allocator.dupe(u8, "I16"),
+            .i32 => try self.allocator.dupe(u8, "I32"),
+            .i64 => try self.allocator.dupe(u8, "I64"),
+            .u0 => try self.allocator.dupe(u8, "U0"),
+            .u8 => try self.allocator.dupe(u8, "U8"),
+            .u16 => try self.allocator.dupe(u8, "U16"),
+            .u32 => try self.allocator.dupe(u8, "U32"),
+            .u64 => try self.allocator.dupe(u8, "U64"),
+            .f64 => try self.allocator.dupe(u8, "F64"),
+            .bool => try self.allocator.dupe(u8, "Bool"),
+            .pointer => |ptr| blk: {
+                const inner = try self.typeToString(ptr.*);
+                defer self.allocator.free(inner);
+                break :blk try std.fmt.allocPrint(self.allocator, "{s}*", .{inner});
+            },
+            .array => |arr| blk: {
+                const elem = try self.typeToString(arr.element_type.*);
+                defer self.allocator.free(elem);
+                if (arr.size) |size| {
+                    break :blk try std.fmt.allocPrint(self.allocator, "{s}[{d}]", .{ elem, size });
+                } else {
+                    break :blk try std.fmt.allocPrint(self.allocator, "{s}[]", .{elem});
+                }
+            },
+            .named => |name| try self.allocator.dupe(u8, name),
+            .function => |func| blk: {
+                const ret = try self.typeToString(func.return_type.*);
+                defer self.allocator.free(ret);
+                break :blk try std.fmt.allocPrint(self.allocator, "function returning {s}", .{ret});
+            },
+        };
     }
 };
 
