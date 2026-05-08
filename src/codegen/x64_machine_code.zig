@@ -190,13 +190,21 @@ pub const X64MachineCodeGen = struct {
         const owned_name = try self.allocator.dupe(u8, func.name);
         try self.function_offsets.put(owned_name, func_start);
 
-        // First pass: collect all variables from alloc_local instructions
+        // First pass: collect parameters and variables
+        const empty_params = try self.allocator.alloc([]const u8, 0);
+        var param_names = std.ArrayList([]const u8).fromOwnedSlice(empty_params);
+        defer param_names.deinit(self.allocator);
+        
         var var_sizes = std.StringHashMap(i64).init(self.allocator);
         defer var_sizes.deinit();
         
         for (func.blocks.items) |*block| {
             for (block.instructions.items) |*instr| {
-                if (instr.opcode == .alloc_local) {
+                if (instr.opcode == .param) {
+                    if (instr.dest == .variable) {
+                        try param_names.append(self.allocator, instr.dest.variable);
+                    }
+                } else if (instr.opcode == .alloc_local) {
                     if (instr.dest == .variable and instr.src1 == .constant) {
                         const var_name = instr.dest.variable;
                         const size = instr.src1.constant.int;
@@ -210,13 +218,13 @@ pub const X64MachineCodeGen = struct {
         // Layout: [rbp-8] param0, [rbp-16] param1, ..., [rbp-(p*8)] paramN-1, 
         //         [rbp-(p*8+8)] local0, ..., [rbp-(p*8+l*8)] localN-1,
         //         [rbp-(p*8+l*8+8)] temp0, ..., [rbp-total] tempM-1
-        var offset: i32 = -8;
+        var offset: i32 = 0;
         
         // Parameters come first (will be saved from registers)
-        const param_count = func.param_count;
-        var i: u32 = 0;
-        while (i < param_count) : (i += 1) {
+        for (param_names.items) |param_name| {
             offset -= 8;
+            const owned_param_name = try self.allocator.dupe(u8, param_name);
+            try self.variable_offsets.put(owned_param_name, offset);
         }
         
         // Variables (locals) come after parameters
@@ -229,7 +237,7 @@ pub const X64MachineCodeGen = struct {
         }
         
         // Temps come after variables
-        i = 0;
+        var i: u32 = 0;
         while (i < func.temp_count) : (i += 1) {
             try self.stack_offsets.put(i, offset);
             offset -= 8;
@@ -244,6 +252,7 @@ pub const X64MachineCodeGen = struct {
 
         // Save parameters from registers to stack
         // x64 calling convention: rdi, rsi, rdx, rcx, r8, r9
+        const param_count = param_names.items.len;
         if (param_count >= 1) {
             // mov [rbp-8], rdi
             try self.emitBytes(&[_]u8{ 0x48, 0x89 });
