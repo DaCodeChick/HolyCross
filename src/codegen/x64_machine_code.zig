@@ -231,16 +231,16 @@ pub const X64MachineCodeGen = struct {
         var var_size_iter = var_sizes.iterator();
         while (var_size_iter.next()) |entry| {
             const size: i32 = @intCast(entry.value_ptr.*);
+            offset -= size;
             const owned_var_name = try self.allocator.dupe(u8, entry.key_ptr.*);
             try self.variable_offsets.put(owned_var_name, offset);
-            offset -= size;
         }
         
         // Temps come after variables
         var i: u32 = 0;
         while (i < func.temp_count) : (i += 1) {
-            try self.stack_offsets.put(i, offset);
             offset -= 8;
+            try self.stack_offsets.put(i, offset);
         }
         
         // Calculate aligned stack size
