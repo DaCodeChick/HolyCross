@@ -337,6 +337,7 @@ pub const X64MachineCodeGen = struct {
             .shr => try self.genShift(instr, .shr),
             .log_and => try self.genLogicalOp(instr, .log_and),
             .log_or => try self.genLogicalOp(instr, .log_or),
+            .log_xor => try self.genLogXor(instr),
             .log_not => try self.genLogNot(instr),
             .call => try self.genCall(instr),
             .print => try self.genPrint(instr),
@@ -352,10 +353,6 @@ pub const X64MachineCodeGen = struct {
             .label => try self.genLabel(instr),
             .cast => try self.genCast(instr),
             .inline_asm => try self.genInlineAsm(instr),
-            else => {
-                std.debug.print("Unimplemented opcode: {s}\n", .{@tagName(instr.opcode)});
-                return error.UnimplementedOpcode;
-            },
         }
     }
 
@@ -715,6 +712,43 @@ pub const X64MachineCodeGen = struct {
         
         // movzx rax, al (zero-extend al to rax)
         try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+        
+        // Store result in dest
+        const dest_offset = try self.getTempOffset(instr.dest);
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genLogXor(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Logical XOR: a ^^ b = (!a != !b) = (a != 0) ^ (b != 0)
+        // Convert both operands to boolean (0 or 1), then XOR them
+        
+        // Load src1 into rax and convert to boolean
+        try self.loadOperandToRax(instr.src1);
+        // test rax, rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+        // setne al (set al to 1 if not zero)
+        try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 });
+        // movzx rax, al
+        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+        
+        // Save boolean src1 to stack temporarily (push rax)
+        try self.emitByte(0x50);
+        
+        // Load src2 into rax and convert to boolean
+        try self.loadOperandToRax(instr.src2);
+        // test rax, rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x85, 0xC0 });
+        // setne al
+        try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 });
+        // movzx rax, al
+        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+        
+        // Pop src1 boolean into rcx
+        try self.emitByte(0x59); // pop rcx
+        
+        // XOR rax with rcx (boolean XOR)
+        try self.emitBytes(&[_]u8{ 0x48, 0x31, 0xC8 }); // xor rax, rcx
         
         // Store result in dest
         const dest_offset = try self.getTempOffset(instr.dest);
