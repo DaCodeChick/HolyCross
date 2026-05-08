@@ -4,17 +4,25 @@ A modern cross-platform HolyC compiler written in Zig that enables developers to
 
 ## Project Status
 
-🚧 **Under Active Development** 🚧
+🚀 **Functional Compiler** 🚀
 
-Currently in Phase 0: Foundation. The compiler infrastructure is being built. See [PLAN.md](PLAN.md) for the complete development roadmap.
+The HolyCross compiler can now compile HolyC programs to working x64 Linux executables!
 
 ### Current Capabilities
-- ✅ Project structure and build system
-- ✅ Basic CLI interface
-- ⏳ Lexer (in progress)
-- ⏳ Parser (planned)
-- ⏳ Code generation (planned)
-- ⏳ Binary output (planned)
+- ✅ Full lexer with all HolyC token types
+- ✅ Complete recursive descent parser with Pratt expression parsing
+- ✅ Preprocessor with #define, #ifdef, #include support
+- ✅ Semantic analysis with type checking and symbol resolution
+- ✅ IR generation and x64 code generation
+- ✅ Inline assembly support (asm { } blocks)
+- ✅ Multi-variable declarations (I64 a, b, c;)
+- ✅ Classes, unions, arrays, pointers
+- ✅ Control flow (if, while, for, do-while, switch)
+- ✅ Function calls and returns
+- ✅ Binary operators, unary operators, assignments
+- ⏳ Full TempleOS compatibility (in progress)
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed compiler architecture and design.
 
 ## About
 
@@ -56,12 +64,68 @@ zig build fmt
 
 ## Usage
 
+### Quick Start
+
+Create a simple HolyC program:
+
+```c
+// hello.hc
+I64 main()
+{
+    return 42;
+}
+```
+
+Compile and run:
+
+```bash
+# Compile
+./zig-out/bin/holycc hello.hc
+
+# Run
+./a.out
+echo $?  # Should print: 42
+```
+
+### More Examples
+
+```c
+// Multi-variable declarations
+I64 x = 10, y = 20, z = 30;
+
+// Inline assembly
+I64 GetValue()
+{
+    asm {
+        MOV RAX, 42
+    }
+    return 0;
+}
+
+// Classes
+class Point
+{
+    I64 x, y;
+};
+
+// Functions
+I64 Add(I64 a, I64 b)
+{
+    return a + b;
+}
+```
+
+### Command Line Options
+
 ```bash
 # Compile a HolyC file
 holycc input.hc
 
-# Specify output file
+# Specify output file  
 holycc input.hc -o output
+
+# Show version
+holycc --version
 
 # Show help
 holycc --help
@@ -73,33 +137,39 @@ holycc --help
 HolyCross/
 ├── src/                    # Source code
 │   ├── main.zig           # Entry point
+│   ├── preprocessor/      # Preprocessor (#define, #ifdef, etc.)
 │   ├── lexer/             # Lexical analysis
-│   ├── parser/            # Parsing
-│   ├── semantic/          # Semantic analysis
-│   ├── ir/                # Intermediate representation
-│   ├── codegen/           # Code generation
-│   ├── binary/            # Binary format writers
-│   └── runtime/           # Runtime support
+│   ├── parser/            # Syntax analysis (AST generation)
+│   ├── semantic/          # Semantic analysis & type checking
+│   ├── codegen/           # IR generation & x64 code generation
+│   ├── assembler/         # Inline assembly support
+│   └── runtime/           # Runtime support (planned)
 ├── tests/                  # Test suites
 ├── examples/               # Example HolyC programs
-├── docs/                   # Documentation
-├── PLAN.md                # Detailed project plan
+├── ARCHITECTURE.md         # Compiler architecture documentation
+├── PLAN.md                # Development roadmap
 ├── LICENSE                # LGPL v3
 └── README.md              # This file
 ```
 
-## Development Phases
+## Development Status
 
-The project follows an incremental development approach:
+The project has moved beyond the initial phases:
 
-- **Phase 0**: Foundation (✅ Complete)
-- **Phase 1**: Expression Evaluator (⏳ In Progress)
-- **Phase 2**: Hello World (Native Linux)
-- **Phase 3-7**: Core language features
-- **Phase 8**: TempleOS binary format
-- **Phase 9+**: Advanced features
+- **Phase 0-2**: Foundation & Hello World (✅ Complete)
+- **Phase 3-5**: Core Language Features (✅ Complete)
+- **Phase 6-7**: Advanced Features (🚧 In Progress)
+- **Phase 8**: TempleOS Binary Format (⏳ Planned)
+- **Phase 9+**: Optimization & Polish (⏳ Planned)
 
-See [PLAN.md](PLAN.md) for detailed milestones and timelines.
+### Recent Accomplishments
+- Inline assembly support with `asm { }` blocks
+- Multi-variable declarations (local and global)
+- Full preprocessor with conditional compilation
+- Complete x64 code generation pipeline
+- Comprehensive test suite
+
+See [PLAN.md](PLAN.md) for detailed roadmap and [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
 
 ## Contributing
 
@@ -117,9 +187,11 @@ This project is licensed under the GNU Lesser General Public License v3.0 (LGPL-
 
 ## Resources
 
-- [TempleOS GitHub](https://github.com/cia-foundation/TempleOS)
-- [ZealOS GitHub](https://github.com/Zeal-Operating-System/ZealOS)
-- [Project Documentation](docs/)
+- [Compiler Architecture](ARCHITECTURE.md) - Detailed technical documentation
+- [Development Plan](PLAN.md) - Roadmap and milestones
+- [TempleOS Archive](https://github.com/cia-foundation/TempleOS) - Original TempleOS source
+- [ZealOS](https://github.com/Zeal-Operating-System/ZealOS) - Modern TempleOS continuation
+- [HolyC Language Reference](src/assembler/README.md) - Inline assembly documentation
 
 ---
 
