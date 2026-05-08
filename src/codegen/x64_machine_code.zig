@@ -384,7 +384,7 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genRetVal(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // Load return value into rax
+        // Load return value into rax (for integers) or xmm0 (for floats)
         switch (instr.src1) {
             .temp => {
                 const src_offset = try self.getTempOffset(instr.src1);
@@ -404,7 +404,23 @@ pub const X64MachineCodeGen = struct {
                         try self.emitQword(@bitCast(val));
                     }
                 },
-                else => return error.UnsupportedConstant,
+                .float => |val| {
+                    // For float returns, we need to load into xmm0
+                    // Store float constant to stack temporarily
+                    const float_bits: u64 = @bitCast(val);
+                    
+                    // movabs rax, float_bits
+                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                    try self.emitQword(float_bits);
+                    
+                    // movq xmm0, rax (move from rax to xmm0)
+                    try self.emitBytes(&[_]u8{ 0x66, 0x48, 0x0F, 0x6E, 0xC0 });
+                },
+                .bool => |val| {
+                    // mov eax, 0 or 1
+                    try self.emitByte(0xB8);
+                    try self.emitDword(if (val) 1 else 0);
+                },
             },
             else => return error.InvalidOperand,
         }
