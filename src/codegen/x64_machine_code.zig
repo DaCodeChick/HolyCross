@@ -367,10 +367,10 @@ pub const X64MachineCodeGen = struct {
             .constant => |c| switch (c) {
                 .int => |val| {
                     if (val >= -2147483648 and val <= 2147483647) {
-                        // mov qword [rbp+offset], imm32
+                        // mov qword [rbp+offset], imm32 (sign-extends)
                         try self.emitBytes(&[_]u8{ 0x48, 0xC7 });
                         try self.emitModRM(0, 5, dest_offset);
-                        try self.emitDword(@intCast(val));
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
                     } else {
                         // movabs rax, imm64; mov [rbp+offset], rax
                         try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
@@ -417,9 +417,9 @@ pub const X64MachineCodeGen = struct {
             .constant => |c| switch (c) {
                 .int => |val| {
                     if (val >= -2147483648 and val <= 2147483647) {
-                        // mov eax, imm32 (zero-extends to rax)
-                        try self.emitByte(0xB8);
-                        try self.emitDword(@intCast(val));
+                        // mov rax, imm32 (sign-extends to rax)
+                        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 });
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
                     } else {
                         // movabs rax, imm64
                         try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
@@ -454,6 +454,13 @@ pub const X64MachineCodeGen = struct {
                     try self.emitDword(if (val) 1 else 0);
                 },
             },
+            .string => |str_lit| {
+                // For now, return the string literal address as a pointer
+                // TODO: Implement proper data section for string literals
+                _ = str_lit;
+                // mov rax, 0 (return null for now)
+                try self.emitBytes(&[_]u8{ 0x48, 0x31, 0xC0 }); // xor rax, rax
+            },
             else => return error.InvalidOperand,
         }
         try self.emitEpilogue();
@@ -487,7 +494,7 @@ pub const X64MachineCodeGen = struct {
                             .bit_xor => try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xF0 }), // xor rax, imm8
                         }
                         try self.emitByte(@intCast(val));
-                    } else {
+                    } else if (val >= -2147483648 and val <= 2147483647) {
                         switch (op) {
                             .add => try self.emitBytes(&[_]u8{ 0x48, 0x05 }), // add rax, imm32
                             .sub => try self.emitBytes(&[_]u8{ 0x48, 0x2D }), // sub rax, imm32
@@ -495,7 +502,18 @@ pub const X64MachineCodeGen = struct {
                             .bit_or => try self.emitBytes(&[_]u8{ 0x48, 0x0D }), // or rax, imm32
                             .bit_xor => try self.emitBytes(&[_]u8{ 0x48, 0x35 }), // xor rax, imm32
                         }
-                        try self.emitDword(@intCast(val));
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
+                    } else {
+                        // For values outside i32 range, load to register first
+                        try self.emitBytes(&[_]u8{ 0x49, 0xB8 }); // movabs r8, imm64
+                        try self.emitQword(@bitCast(val));
+                        switch (op) {
+                            .add => try self.emitBytes(&[_]u8{ 0x4C, 0x01, 0xC0 }), // add rax, r8
+                            .sub => try self.emitBytes(&[_]u8{ 0x4C, 0x29, 0xC0 }), // sub rax, r8
+                            .bit_and => try self.emitBytes(&[_]u8{ 0x4C, 0x21, 0xC0 }), // and rax, r8
+                            .bit_or => try self.emitBytes(&[_]u8{ 0x4C, 0x09, 0xC0 }), // or rax, r8
+                            .bit_xor => try self.emitBytes(&[_]u8{ 0x4C, 0x31, 0xC0 }), // xor rax, r8
+                        }
                     }
                 },
                 else => return error.UnsupportedConstant,
@@ -511,14 +529,33 @@ pub const X64MachineCodeGen = struct {
 
     fn genMul(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
         // Load src1 into rax
-        const src1_offset = try self.getTempOffset(instr.src1);
-        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
-        try self.emitModRM(0, 5, src1_offset);
+        try self.loadOperandToRax(instr.src1);
 
-        // imul rax, [rbp+offset]
-        const src2_offset = try self.getTempOffset(instr.src2);
-        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xAF });
-        try self.emitModRM(0, 5, src2_offset);
+        // Load src2 into rcx
+        switch (instr.src2) {
+            .temp => {
+                const src2_offset = try self.getTempOffset(instr.src2);
+                // imul rax, [rbp+offset]
+                try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xAF });
+                try self.emitModRM(0, 5, src2_offset);
+            },
+            .constant => |c| switch (c) {
+                .int => |val| {
+                    if (val >= -2147483648 and val <= 2147483647) {
+                        // imul rax, rax, imm32
+                        try self.emitBytes(&[_]u8{ 0x48, 0x69, 0xC0 });
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
+                    } else {
+                        // Load large constant into rcx and multiply
+                        try self.emitBytes(&[_]u8{ 0x48, 0xB9 }); // movabs rcx, imm64
+                        try self.emitQword(@bitCast(val));
+                        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xAF, 0xC1 }); // imul rax, rcx
+                    }
+                },
+                else => return error.UnsupportedConstant,
+            },
+            else => return error.InvalidOperand,
+        }
 
         // Store result in dest
         const dest_offset = try self.getTempOffset(instr.dest);
@@ -837,14 +874,25 @@ pub const X64MachineCodeGen = struct {
                     .constant => |c| switch (c) {
                         .int => |val| {
                             // mov reg, immediate
-                            if (i < 4) {
-                                // rdi, rsi, rdx, rcx - use simple encoding
-                                try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 | (arg_regs[i] & 7) });
-                                try self.emitDword(@intCast(val));
+                            if (val >= -2147483648 and val <= 2147483647) {
+                                const imm32 = @as(i32, @intCast(val));
+                                if (i < 4) {
+                                    // rdi, rsi, rdx, rcx - use simple encoding
+                                    try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 | (arg_regs[i] & 7) });
+                                    try self.emitDword(@bitCast(imm32));
+                                } else {
+                                    // r8, r9 - need REX.B
+                                    try self.emitBytes(&[_]u8{ 0x49, 0xC7, 0xC0 | (arg_regs[i] & 7) });
+                                    try self.emitDword(@bitCast(imm32));
+                                }
                             } else {
-                                // r8, r9 - need REX.B
-                                try self.emitBytes(&[_]u8{ 0x49, 0xC7, 0xC0 | (arg_regs[i] & 7) });
-                                try self.emitDword(@intCast(val));
+                                // movabs reg, imm64
+                                if (i < 4) {
+                                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                                } else {
+                                    try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                                }
+                                try self.emitQword(@bitCast(val));
                             }
                         },
                         else => return error.UnsupportedArgument,
@@ -1068,9 +1116,9 @@ pub const X64MachineCodeGen = struct {
             .constant => |c| switch (c) {
                 .int => |val| {
                     if (val >= -2147483648 and val <= 2147483647) {
-                        // mov ecx, imm32
-                        try self.emitByte(0xB9);
-                        try self.emitDword(@intCast(val));
+                        // mov rcx, imm32 (sign-extends to rcx)
+                        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC1 });
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
                     } else {
                         // movabs rcx, imm64
                         try self.emitBytes(&[_]u8{ 0x48, 0xB9 });
@@ -1328,9 +1376,9 @@ pub const X64MachineCodeGen = struct {
             .constant => |c| switch (c) {
                 .int => |val| {
                     if (val >= -2147483648 and val <= 2147483647) {
-                        // mov eax, imm32 (zero-extends to rax)
-                        try self.emitByte(0xB8);
-                        try self.emitDword(@intCast(val));
+                        // mov rax, imm32 (sign-extends to rax)
+                        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 });
+                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
                     } else {
                         // movabs rax, imm64
                         try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
