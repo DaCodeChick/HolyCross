@@ -1249,9 +1249,6 @@ pub const Parser = struct {
             return try self.parseAsmBlock();
         }
 
-        // TODO: Handle labels (identifier:) - requires lexer lookahead
-        // For now, labels will be parsed as expression statements and caught in semantic analysis
-
         // Variable declaration: Type name = expr;
         // We need to distinguish between declarations and expressions
         // If current token is a type keyword, it's a declaration
@@ -1384,10 +1381,16 @@ pub const Parser = struct {
     /// Uses peek to distinguish without consuming tokens
     fn parseIdentifierStatement(self: *Parser) ParserError!Stmt {
         // We're at an identifier. Peek at the next token to distinguish:
+        // - identifier : -> label (label_name:)
         // - identifier identifier [* or ; or =] -> likely declaration (Point p; or Point* p;)
         // - identifier [anything else] -> expression (x = 5; or foo(); or x.y;)
 
         const next_token = try self.peek();
+
+        // Check for label: identifier :
+        if (next_token.type == .colon) {
+            return try self.parseLabelStatement();
+        }
 
         // Check for patterns that indicate a declaration:
         // 1. identifier identifier -> Point p
@@ -1681,6 +1684,25 @@ pub const Parser = struct {
             .goto_stmt = .{
                 .label = label,
                 .loc = goto_loc,
+            },
+        };
+    }
+
+    /// Parse label statement: label_name:
+    fn parseLabelStatement(self: *Parser) ParserError!Stmt {
+        const label_loc = self.locationFromToken(self.current);
+        
+        // Current token is the identifier (label name)
+        const label_name = self.current.lexeme;
+        try self.advance();
+        
+        // Consume the colon
+        try self.consume(.colon, "Expected ':' after label name");
+        
+        return Stmt{
+            .label = .{
+                .name = label_name,
+                .loc = label_loc,
             },
         };
     }

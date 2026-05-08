@@ -154,6 +154,21 @@ test "Parse goto statement: goto finish;" {
     try testing.expectEqualStrings("finish", stmt.goto_stmt.label);
 }
 
+test "Parse label statement: label_name:" {
+    const testing = std.testing;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const source = "my_label:";
+    var lex = Lexer.init(allocator, source);
+    var parser = try Parser.init(allocator, &lex);
+
+    const stmt = try parser.parseStatement();
+    try testing.expect(stmt == .label);
+    try testing.expectEqualStrings("my_label", stmt.label.name);
+}
+
 test "Parse try-catch: try { } catch { }" {
     const testing = std.testing;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
