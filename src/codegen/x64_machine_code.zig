@@ -304,6 +304,8 @@ pub const X64MachineCodeGen = struct {
             .load_var => try self.genLoadVar(instr),
             .store_var => try self.genStoreVar(instr),
             .load_addr => try self.genLoadAddr(instr),
+            .load_ptr => try self.genLoadPtr(instr),
+            .store_ptr => try self.genStorePtr(instr),
             .alloc_local => {}, // Stack space already allocated in prologue
             .param => {}, // Parameters handled in function prologue
             .ret => try self.genRet(),
@@ -607,6 +609,38 @@ pub const X64MachineCodeGen = struct {
         // mov [rbp+dest_offset], rax
         try self.emitBytes(&[_]u8{ 0x48, 0x89 });
         try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genLoadPtr(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Load value from pointer: dest = *ptr
+        // Load pointer address into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // Load value from [rax] into rax
+        // mov rax, [rax]
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B, 0x00 });
+        
+        // Store to destination
+        const dest_offset = try self.getTempOffset(instr.dest);
+        // mov [rbp+dest_offset], rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, dest_offset);
+    }
+
+    fn genStorePtr(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
+        // Store value to pointer: *ptr = src
+        // Load pointer address into rcx
+        const dest_offset = try self.getTempOffset(instr.dest);
+        // mov rcx, [rbp+dest_offset]
+        try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+        try self.emitModRM(1, 5, dest_offset); // rcx = 1
+        
+        // Load source value into rax
+        try self.loadOperandToRax(instr.src1);
+        
+        // Store rax to [rcx]
+        // mov [rcx], rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x89, 0x01 });
     }
 
     fn genComparison(self: *X64MachineCodeGen, instr: *const ir.Instruction, cond: enum { eq, ne, lt, le, gt, ge }) !void {
