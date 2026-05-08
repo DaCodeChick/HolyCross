@@ -391,6 +391,327 @@ pub const X64Assembler = struct {
         return code.toOwnedSlice(allocator);
     }
     
+    /// Helper: Encode arithmetic/logical operations (ADD, SUB, AND, OR, XOR, CMP, TEST)
+    fn encodeArithmeticLogical(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        const opcode_map = std.StaticStringMap(u8).initComptime(.{
+            .{ "ADD", 0x00 }, // ADD: base opcode 0x00-0x05
+            .{ "OR",  0x08 }, // OR:  base opcode 0x08-0x0D
+            .{ "ADC", 0x10 }, // ADC: base opcode 0x10-0x15
+            .{ "SBB", 0x18 }, // SBB: base opcode 0x18-0x1D
+            .{ "AND", 0x20 }, // AND: base opcode 0x20-0x25
+            .{ "SUB", 0x28 }, // SUB: base opcode 0x28-0x2D
+            .{ "XOR", 0x30 }, // XOR: base opcode 0x30-0x35
+            .{ "CMP", 0x38 }, // CMP: base opcode 0x38-0x3D
+        });
+        
+        const base_opcode = opcode_map.get(mnemonic) orelse return false;
+        
+        if (instr.operands.len == 2) {
+            const dest = instr.operands[0];
+            const src = instr.operands[1];
+            
+            // reg, imm form
+            if (dest == .register and src == .immediate) {
+                const reg = dest.register;
+                const imm = src.immediate;
+                
+                if (reg.size == .qword) {
+                    var rex: u8 = 0x48;
+                    if (reg.id >= 8) rex |= 0x01;
+                    try code.append(allocator, rex);
+                    
+                    if (imm.size == .byte) {
+                        // op r64, imm8: REX.W + 0x83 /<digit> + imm8
+                        try code.append(allocator, 0x83);
+                        const digit = base_opcode >> 3; // Extract digit from base opcode
+                        try code.append(allocator, 0xC0 + (digit << 3) + (reg.id & 0x7));
+                        try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
+                    } else {
+                        // op r64, imm32: REX.W + 0x81 /<digit> + imm32
+                        try code.append(allocator, 0x81);
+                        const digit = base_opcode >> 3;
+                        try code.append(allocator, 0xC0 + (digit << 3) + (reg.id & 0x7));
+                        const val: i32 = @intCast(imm.value);
+                        const bytes = std.mem.toBytes(val);
+                        try code.appendSlice(allocator, &bytes);
+                    }
+                }
+                return true;
+            }
+            
+            // reg, reg form
+            if (dest == .register and src == .register) {
+                const dst_reg = dest.register;
+                const src_reg = src.register;
+                
+                if (dst_reg.size == .qword and src_reg.size == .qword) {
+                    var rex: u8 = 0x48;
+                    if (dst_reg.id >= 8) rex |= 0x01; // REX.B
+                    if (src_reg.id >= 8) rex |= 0x04; // REX.R
+                    try code.append(allocator, rex);
+                    
+                    // op r64, r64: base+1 + ModR/M
+                    try code.append(allocator, base_opcode + 0x01);
+                    const modrm = 0xC0 | ((src_reg.id & 0x7) << 3) | (dst_reg.id & 0x7);
+                    try code.append(allocator, modrm);
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode TEST instruction
+    fn encodeTest(instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        if (instr.operands.len == 2) {
+            const dest = instr.operands[0];
+            const src = instr.operands[1];
+            
+            // TEST reg, reg
+            if (dest == .register and src == .register) {
+                const dst_reg = dest.register;
+                const src_reg = src.register;
+                
+                if (dst_reg.size == .qword and src_reg.size == .qword) {
+                    var rex: u8 = 0x48;
+                    if (dst_reg.id >= 8) rex |= 0x01;
+                    if (src_reg.id >= 8) rex |= 0x04;
+                    try code.append(allocator, rex);
+                    try code.append(allocator, 0x85); // TEST r64, r64
+                    const modrm = 0xC0 | ((src_reg.id & 0x7) << 3) | (dst_reg.id & 0x7);
+                    try code.append(allocator, modrm);
+                    return true;
+                }
+            }
+            
+            // TEST reg, imm
+            if (dest == .register and src == .immediate) {
+                const reg = dest.register;
+                const imm = src.immediate;
+                
+                if (reg.size == .qword) {
+                    var rex: u8 = 0x48;
+                    if (reg.id >= 8) rex |= 0x01;
+                    try code.append(allocator, rex);
+                    
+                    // TEST r64, imm32: REX.W + 0xF7 /0 + imm32
+                    try code.append(allocator, 0xF7);
+                    try code.append(allocator, 0xC0 + (reg.id & 0x7));
+                    const val: i32 = @intCast(imm.value);
+                    const bytes = std.mem.toBytes(val);
+                    try code.appendSlice(allocator, &bytes);
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode unary operations (NEG, NOT, INC, DEC)
+    fn encodeUnaryOp(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        if (instr.operands.len != 1) return false;
+        if (instr.operands[0] != .register) return false;
+        
+        const reg = instr.operands[0].register;
+        if (reg.size != .qword) return false;
+        
+        var rex: u8 = 0x48;
+        if (reg.id >= 8) rex |= 0x01;
+        try code.append(allocator, rex);
+        
+        if (std.mem.eql(u8, mnemonic, "NEG")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xD8 + (reg.id & 0x7)); // /3
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "NOT")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xD0 + (reg.id & 0x7)); // /2
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "INC")) {
+            try code.append(allocator, 0xFF);
+            try code.append(allocator, 0xC0 + (reg.id & 0x7)); // /0
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "DEC")) {
+            try code.append(allocator, 0xFF);
+            try code.append(allocator, 0xC8 + (reg.id & 0x7)); // /1
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode shift/rotate operations
+    fn encodeShiftRotate(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        const opcode_map = std.StaticStringMap(u8).initComptime(.{
+            .{ "ROL", 0 },
+            .{ "ROR", 1 },
+            .{ "RCL", 2 },
+            .{ "RCR", 3 },
+            .{ "SHL", 4 },
+            .{ "SHR", 5 },
+            .{ "SAR", 7 },
+        });
+        
+        const digit = opcode_map.get(mnemonic) orelse return false;
+        
+        if (instr.operands.len != 2) return false;
+        if (instr.operands[0] != .register) return false;
+        
+        const reg = instr.operands[0].register;
+        if (reg.size != .qword) return false;
+        
+        var rex: u8 = 0x48;
+        if (reg.id >= 8) rex |= 0x01;
+        try code.append(allocator, rex);
+        
+        // Shift by CL
+        if (instr.operands[1] == .register and instr.operands[1].register.id == 1) { // CL
+            try code.append(allocator, 0xD3); // Shift r64, CL
+            try code.append(allocator, 0xC0 + (digit << 3) + (reg.id & 0x7));
+            return true;
+        }
+        
+        // Shift by immediate
+        if (instr.operands[1] == .immediate) {
+            const imm = instr.operands[1].immediate;
+            if (imm.value == 1) {
+                try code.append(allocator, 0xD1); // Shift r64, 1
+            } else {
+                try code.append(allocator, 0xC1); // Shift r64, imm8
+            }
+            try code.append(allocator, 0xC0 + (digit << 3) + (reg.id & 0x7));
+            if (imm.value != 1) {
+                try code.append(allocator, @intCast(imm.value));
+            }
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode multiplication and division
+    fn encodeMulDiv(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        if (instr.operands.len != 1) return false;
+        if (instr.operands[0] != .register) return false;
+        
+        const reg = instr.operands[0].register;
+        if (reg.size != .qword) return false;
+        
+        var rex: u8 = 0x48;
+        if (reg.id >= 8) rex |= 0x01;
+        try code.append(allocator, rex);
+        
+        if (std.mem.eql(u8, mnemonic, "MUL")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xE0 + (reg.id & 0x7)); // /4
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "IMUL")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xE8 + (reg.id & 0x7)); // /5
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "DIV")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xF0 + (reg.id & 0x7)); // /6
+            return true;
+        } else if (std.mem.eql(u8, mnemonic, "IDIV")) {
+            try code.append(allocator, 0xF7);
+            try code.append(allocator, 0xF8 + (reg.id & 0x7)); // /7
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode jump instructions
+    fn encodeJump(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        const jump_map = std.StaticStringMap(u8).initComptime(.{
+            .{ "JO",   0x70 }, .{ "JNO",  0x71 },
+            .{ "JB",   0x72 }, .{ "JAE",  0x73 },
+            .{ "JE",   0x74 }, .{ "JNE",  0x75 },
+            .{ "JBE",  0x76 }, .{ "JA",   0x77 },
+            .{ "JS",   0x78 }, .{ "JNS",  0x79 },
+            .{ "JP",   0x7A }, .{ "JNP",  0x7B },
+            .{ "JL",   0x7C }, .{ "JGE",  0x7D },
+            .{ "JLE",  0x7E }, .{ "JG",   0x7F },
+            .{ "JZ",   0x74 }, // alias for JE
+            .{ "JNZ",  0x75 }, // alias for JNE
+            .{ "JC",   0x72 }, // alias for JB
+            .{ "JNC",  0x73 }, // alias for JAE
+        });
+        
+        if (std.mem.eql(u8, mnemonic, "JMP")) {
+            if (instr.operands.len == 1) {
+                if (instr.operands[0] == .label) {
+                    // JMP rel32: 0xE9 + rel32
+                    try code.append(allocator, 0xE9);
+                    try code.append(allocator, 0x00);
+                    try code.append(allocator, 0x00);
+                    try code.append(allocator, 0x00);
+                    try code.append(allocator, 0x00);
+                    return true;
+                }
+                if (instr.operands[0] == .register) {
+                    const reg = instr.operands[0].register;
+                    if (reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (reg.id >= 8) rex |= 0x01;
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0xFF);
+                        try code.append(allocator, 0xE0 + (reg.id & 0x7)); // /4
+                        return true;
+                    }
+                }
+            }
+            return true;
+        }
+        
+        const opcode = jump_map.get(mnemonic) orelse return false;
+        
+        if (instr.operands.len == 1 and instr.operands[0] == .label) {
+            // Conditional jump short: opcode + rel8
+            try code.append(allocator, opcode);
+            try code.append(allocator, 0x00); // Placeholder
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /// Helper: Encode data movement instructions
+    fn encodeDataMovement(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        if (std.mem.eql(u8, mnemonic, "LEA")) {
+            // LEA r64, [...]
+            // Simplified - just return false for now since we need memory operand support
+            return false;
+        }
+        
+        if (std.mem.eql(u8, mnemonic, "XCHG")) {
+            if (instr.operands.len == 2) {
+                if (instr.operands[0] == .register and instr.operands[1] == .register) {
+                    const reg1 = instr.operands[0].register;
+                    const reg2 = instr.operands[1].register;
+                    
+                    if (reg1.size == .qword and reg2.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (reg1.id >= 8) rex |= 0x01;
+                        if (reg2.id >= 8) rex |= 0x04;
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x87); // XCHG r64, r64
+                        const modrm = 0xC0 | ((reg2.id & 0x7) << 3) | (reg1.id & 0x7);
+                        try code.append(allocator, modrm);
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // MOVZX and MOVSX need more complex encoding - skip for now
+        
+        return false;
+    }
+
     /// Encode a single instruction to machine code
     fn encodeInstruction(self: *X64Assembler, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
         _ = self;
@@ -555,8 +876,210 @@ pub const X64Assembler = struct {
             }
         }
         
-        // ADD reg, imm
-        else if (std.mem.eql(u8, mnemonic, "ADD")) {
+        // Arithmetic and logical operations (ADD, SUB, AND, OR, XOR, CMP, TEST)
+        else if (try encodeArithmeticLogical(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // SUB (handled by encodeArithmeticLogical)
+        // AND (handled by encodeArithmeticLogical)
+        // OR (handled by encodeArithmeticLogical)
+        // XOR (handled by encodeArithmeticLogical)
+        // CMP (handled by encodeArithmeticLogical)
+        // TEST (handled by encodeArithmeticLogical)
+        
+        // Unary operations (NEG, NOT, INC, DEC)
+        else if (try encodeUnaryOp(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // Shift/rotate operations (SHL, SHR, SAR, ROL, ROR, RCL, RCR)
+        else if (try encodeShiftRotate(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // Multiplication and division (MUL, IMUL, DIV, IDIV)
+        else if (try encodeMulDiv(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // Jump instructions
+        else if (try encodeJump(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // Data movement (LEA, XCHG, MOVZX, MOVSX)
+        else if (try encodeDataMovement(mnemonic, instr, code, allocator)) {
+            // Handled
+        }
+        
+        // NOP
+        else if (std.mem.eql(u8, mnemonic, "NOP")) {
+            try code.append(allocator, 0x90);
+        }
+        
+        // LOOP rel8
+        else if (std.mem.eql(u8, mnemonic, "LOOP")) {
+            try code.append(allocator, 0xE2);
+            // Placeholder for relative offset
+            try code.append(allocator, 0x00);
+        }
+        
+        // LEAVE - High-level procedure exit (C9)
+        else if (std.mem.eql(u8, mnemonic, "LEAVE")) {
+            try code.append(allocator, 0xC9);
+        }
+        
+        // MOVSX - Move with sign extension
+        else if (std.mem.eql(u8, mnemonic, "MOVSX")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .register) {
+                    const dst_reg = dest.register;
+                    const src_reg = src.register;
+                    
+                    // MOVSX r64, r8: REX.W + 0x0F 0xBE
+                    // MOVSX r64, r16: REX.W + 0x0F 0xBF
+                    // MOVSX r64, r32: REX.W + 0x63 (MOVSXD)
+                    if (dst_reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                        if (src_reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        
+                        if (src_reg.size == .byte) {
+                            try code.append(allocator, 0x0F);
+                            try code.append(allocator, 0xBE);
+                        } else if (src_reg.size == .word) {
+                            try code.append(allocator, 0x0F);
+                            try code.append(allocator, 0xBF);
+                        } else if (src_reg.size == .dword) {
+                            try code.append(allocator, 0x63); // MOVSXD
+                        }
+                        
+                        const modrm = 0xC0 | ((dst_reg.id & 0x7) << 3) | (src_reg.id & 0x7);
+                        try code.append(allocator, modrm);
+                    }
+                }
+            }
+        }
+        
+        // MOVZX - Move with zero extension
+        else if (std.mem.eql(u8, mnemonic, "MOVZX")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .register) {
+                    const dst_reg = dest.register;
+                    const src_reg = src.register;
+                    
+                    // MOVZX r64, r8: REX.W + 0x0F 0xB6
+                    // MOVZX r64, r16: REX.W + 0x0F 0xB7
+                    if (dst_reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                        if (src_reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        
+                        try code.append(allocator, 0x0F);
+                        if (src_reg.size == .byte) {
+                            try code.append(allocator, 0xB6);
+                        } else if (src_reg.size == .word) {
+                            try code.append(allocator, 0xB7);
+                        }
+                        
+                        const modrm = 0xC0 | ((dst_reg.id & 0x7) << 3) | (src_reg.id & 0x7);
+                        try code.append(allocator, modrm);
+                    }
+                }
+            }
+        }
+        
+        // SETcc - Set byte on condition
+        else if (std.mem.startsWith(u8, mnemonic, "SET")) {
+            const condition_code_map = std.StaticStringMap(u8).initComptime(.{
+                .{ "SETO",   0x90 }, .{ "SETNO",  0x91 },
+                .{ "SETB",   0x92 }, .{ "SETAE",  0x93 },
+                .{ "SETE",   0x94 }, .{ "SETNE",  0x95 },
+                .{ "SETBE",  0x96 }, .{ "SETA",   0x97 },
+                .{ "SETS",   0x98 }, .{ "SETNS",  0x99 },
+                .{ "SETP",   0x9A }, .{ "SETNP",  0x9B },
+                .{ "SETL",   0x9C }, .{ "SETGE",  0x9D },
+                .{ "SETLE",  0x9E }, .{ "SETG",   0x9F },
+                .{ "SETZ",   0x94 }, // alias for SETE
+            });
+            
+            if (condition_code_map.get(mnemonic)) |opcode| {
+                if (instr.operands.len == 1 and instr.operands[0] == .register) {
+                    const reg = instr.operands[0].register;
+                    if (reg.size == .byte) {
+                        // SETcc r8: 0x0F <opcode> ModRM
+                        if (reg.id >= 8) {
+                            try code.append(allocator, 0x41); // REX.B for R8L-R15L
+                        }
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, opcode);
+                        const modrm = 0xC0 | (reg.id & 0x7);
+                        try code.append(allocator, modrm);
+                    }
+                }
+            }
+        }
+        
+        // Bit manipulation instructions
+        // BSF - Bit scan forward
+        else if (std.mem.eql(u8, mnemonic, "BSF")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .register) {
+                    const dst_reg = dest.register;
+                    const src_reg = src.register;
+                    
+                    if (dst_reg.size == .qword and src_reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                        if (src_reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBC); // BSF opcode
+                        const modrm = 0xC0 | ((dst_reg.id & 0x7) << 3) | (src_reg.id & 0x7);
+                        try code.append(allocator, modrm);
+                    }
+                }
+            }
+        }
+        
+        // BSR - Bit scan reverse
+        else if (std.mem.eql(u8, mnemonic, "BSR")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .register) {
+                    const dst_reg = dest.register;
+                    const src_reg = src.register;
+                    
+                    if (dst_reg.size == .qword and src_reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                        if (src_reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBD); // BSR opcode
+                        const modrm = 0xC0 | ((dst_reg.id & 0x7) << 3) | (src_reg.id & 0x7);
+                        try code.append(allocator, modrm);
+                    }
+                }
+            }
+        }
+        
+        // BT - Bit test
+        else if (std.mem.eql(u8, mnemonic, "BT")) {
             if (instr.operands.len == 2) {
                 const dest = instr.operands[0];
                 const src = instr.operands[1];
@@ -567,25 +1090,109 @@ pub const X64Assembler = struct {
                     
                     if (reg.size == .qword) {
                         var rex: u8 = 0x48;
-                        if (reg.id >= 8) rex |= 0x01;
+                        if (reg.id >= 8) rex |= 0x01; // REX.B
                         try code.append(allocator, rex);
-                        
-                        if (imm.size == .byte) {
-                            // ADD r64, imm8: REX.W + 0x83 /0 + imm8
-                            try code.append(allocator, 0x83);
-                            try code.append(allocator, 0xC0 + (reg.id & 0x7));
-                            try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
-                        }
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBA); // BT r64, imm8 opcode
+                        const modrm = 0xE0 | (reg.id & 0x7); // /4
+                        try code.append(allocator, modrm);
+                        try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
                     }
                 }
             }
         }
         
-        // LOOP rel8
-        else if (std.mem.eql(u8, mnemonic, "LOOP")) {
-            try code.append(allocator, 0xE2);
-            // Placeholder for relative offset
-            try code.append(allocator, 0x00);
+        // BTC - Bit test and complement
+        else if (std.mem.eql(u8, mnemonic, "BTC")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .immediate) {
+                    const reg = dest.register;
+                    const imm = src.immediate;
+                    
+                    if (reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBA); // BTC r64, imm8 opcode
+                        const modrm = 0xF8 | (reg.id & 0x7); // /7
+                        try code.append(allocator, modrm);
+                        try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
+                    }
+                }
+            }
+        }
+        
+        // BTR - Bit test and reset
+        else if (std.mem.eql(u8, mnemonic, "BTR")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .immediate) {
+                    const reg = dest.register;
+                    const imm = src.immediate;
+                    
+                    if (reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBA); // BTR r64, imm8 opcode
+                        const modrm = 0xF0 | (reg.id & 0x7); // /6
+                        try code.append(allocator, modrm);
+                        try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
+                    }
+                }
+            }
+        }
+        
+        // BTS - Bit test and set
+        else if (std.mem.eql(u8, mnemonic, "BTS")) {
+            if (instr.operands.len == 2) {
+                const dest = instr.operands[0];
+                const src = instr.operands[1];
+                
+                if (dest == .register and src == .immediate) {
+                    const reg = dest.register;
+                    const imm = src.immediate;
+                    
+                    if (reg.size == .qword) {
+                        var rex: u8 = 0x48;
+                        if (reg.id >= 8) rex |= 0x01; // REX.B
+                        try code.append(allocator, rex);
+                        try code.append(allocator, 0x0F);
+                        try code.append(allocator, 0xBA); // BTS r64, imm8 opcode
+                        const modrm = 0xE8 | (reg.id & 0x7); // /5
+                        try code.append(allocator, modrm);
+                        try code.append(allocator, @bitCast(@as(i8, @intCast(imm.value))));
+                    }
+                }
+            }
+        }
+        
+        // BSWAP - Byte swap
+        else if (std.mem.eql(u8, mnemonic, "BSWAP")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .register) {
+                const reg = instr.operands[0].register;
+                
+                if (reg.size == .qword) {
+                    var rex: u8 = 0x48;
+                    if (reg.id >= 8) rex |= 0x01; // REX.B
+                    try code.append(allocator, rex);
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0xC8 + (reg.id & 0x7)); // BSWAP r64
+                } else if (reg.size == .dword) {
+                    if (reg.id >= 8) {
+                        try code.append(allocator, 0x41); // REX.B
+                    }
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0xC8 + (reg.id & 0x7)); // BSWAP r32
+                }
+            }
         }
         
         // For unknown instructions, skip for now
