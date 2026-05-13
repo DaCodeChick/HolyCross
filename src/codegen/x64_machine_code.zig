@@ -16,6 +16,30 @@ pub const CodeBuffer = union(enum) {
         }
     }
     
+    pub fn appendData(self: CodeBuffer, bytes: []const u8) !u64 {
+        return switch (self) {
+            .templeos => {
+                // TempleOS doesn't have separate data section yet
+                // For now, append to code section
+                const offset = @as(u64, @intCast(self.templeos.getCurrentOffset()));
+                try self.templeos.appendCode(bytes);
+                return offset;
+            },
+            .elf => |writer| try writer.appendData(bytes),
+        };
+    }
+    
+    pub fn getDataVAddr(self: CodeBuffer, data_offset: u64) !u64 {
+        return switch (self) {
+            .templeos => {
+                // TempleOS uses flat addressing
+                // Return the data offset as-is for now
+                return data_offset;
+            },
+            .elf => |writer| writer.getDataVAddr(data_offset),
+        };
+    }
+    
     pub fn getCurrentOffset(self: CodeBuffer) u32 {
         return switch (self) {
             .templeos => |writer| writer.getCurrentOffset(),
@@ -45,6 +69,16 @@ pub const CodeBuffer = union(enum) {
     }
 };
 
+const CallSite = struct {
+    offset: u32, // Offset in code where the 4-byte displacement starts
+    target: []const u8, // Target function name
+};
+
+const ForwardJump = struct {
+    offset: u32, // Offset in code where the 4-byte displacement starts
+    target_label: u32, // Target label ID
+};
+
 /// x64 Machine Code Generator
 /// Generates raw machine code for both TempleOS and native Linux
 pub const X64MachineCodeGen = struct {
@@ -64,17 +98,9 @@ pub const X64MachineCodeGen = struct {
     call_sites: std.ArrayList(CallSite),
     /// Forward jump sites needing patching (jump_offset, target_label_id)
     forward_jumps: std.ArrayList(ForwardJump),
-    
-    const CallSite = struct {
-        offset: u32, // Offset in code where the 4-byte displacement starts
-        target: []const u8, // Target function name
-    };
-    
-    const ForwardJump = struct {
-        offset: u32, // Offset in code where the 4-byte displacement starts
-        target_label: u32, // Target label ID
-    };
-    
+    /// String literal to data offset mapping
+    string_literals: std.StringHashMap(u64),
+
     pub fn init(allocator: Allocator, code_buffer: CodeBuffer) !X64MachineCodeGen {
         const empty_call_sites = try allocator.alloc(CallSite, 0);
         const empty_forward_jumps = try allocator.alloc(ForwardJump, 0);
@@ -87,6 +113,7 @@ pub const X64MachineCodeGen = struct {
             .variable_offsets = std.StringHashMap(i32).init(allocator),
             .call_sites = std.ArrayList(CallSite).fromOwnedSlice(empty_call_sites),
             .forward_jumps = std.ArrayList(ForwardJump).fromOwnedSlice(empty_forward_jumps),
+            .string_literals = std.StringHashMap(u64).init(allocator),
         };
     }
 
@@ -111,6 +138,12 @@ pub const X64MachineCodeGen = struct {
         }
         self.call_sites.deinit(self.allocator);
         self.forward_jumps.deinit(self.allocator);
+        
+        var str_iter = self.string_literals.keyIterator();
+        while (str_iter.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.string_literals.deinit();
     }
 
     /// Generate machine code from IR module
@@ -972,28 +1005,41 @@ pub const X64MachineCodeGen = struct {
         // Print a string using write syscall (Linux)
         // syscall number 1 (write) with fd=1 (stdout)
         
-        const string_ptr = switch (instr.src1) {
+        const string_literal = switch (instr.src1) {
             .string => |s| s,
             else => return error.InvalidPrintOperand,
         };
         
-        // For machine code generation, proper string literal handling needs data section support
-        // This is a stub implementation that emits valid code but doesn't actually print
+        // Check if string literal already exists in data section
+        var data_offset = self.string_literals.get(string_literal);
+        if (data_offset == null) {
+            // Add string to data section
+            const str_copy = try self.allocator.dupe(u8, string_literal);
+            // Append string with null terminator
+            const offset = try self.code_buffer.appendData(string_literal);
+            try self.string_literals.put(str_copy, offset);
+            data_offset = offset;
+        }
+        
+        // Get the virtual address for the string
+        const str_vaddr = try self.code_buffer.getDataVAddr(data_offset.?);
         
         // mov rdi, 1 (stdout)
         try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC7, 0x01, 0x00, 0x00, 0x00 });
         
+        // movabs rsi, str_vaddr (pointer to string)
+        try self.emitBytes(&[_]u8{ 0x48, 0xBE });
+        try self.emitQword(str_vaddr);
+        
+        // mov rdx, len (string length)
+        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC2 });
+        try self.emitDword(@intCast(string_literal.len));
+        
         // mov rax, 1 (sys_write)
         try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00 });
         
-        // syscall (will fail with EFAULT but won't crash)
+        // syscall
         try self.emitBytes(&[_]u8{ 0x0F, 0x05 });
-        
-        // TODO: Implement proper string literal storage and addressing
-        // For now, just suppress the unused warning
-        _ = string_ptr;
-        
-        std.debug.print("Warning: Print opcode not fully implemented in machine code gen yet\n", .{});
     }
 
     fn genInlineAsm(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
