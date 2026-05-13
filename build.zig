@@ -24,17 +24,17 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     // Preprocessor executable
-    const hpp = b.addExecutable(.{
-        .name = "hpp",
+    const hcpp = b.addExecutable(.{
+        .name = "hcpp",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/tools/hpp.zig"),
+            .root_source_file = b.path("src/tools/hcpp.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    hpp.root_module.addImport("holycross", holycross_lib);
+    hcpp.root_module.addImport("holycross", holycross_lib);
 
-    b.installArtifact(hpp);
+    b.installArtifact(hcpp);
 
     const run_step = b.step("run", "Run the HolyC compiler");
     const run_cmd = b.addRunArtifact(exe);
@@ -45,13 +45,13 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    const run_hpp_step = b.step("run-hpp", "Run the HolyC preprocessor");
-    const run_hpp_cmd = b.addRunArtifact(hpp);
-    run_hpp_step.dependOn(&run_hpp_cmd.step);
-    run_hpp_cmd.step.dependOn(b.getInstallStep());
+    const run_hcpp_step = b.step("run-hcpp", "Run the HolyC preprocessor");
+    const run_hcpp_cmd = b.addRunArtifact(hcpp);
+    run_hcpp_step.dependOn(&run_hcpp_cmd.step);
+    run_hcpp_cmd.step.dependOn(b.getInstallStep());
 
     if (b.args) |args_pp| {
-        run_hpp_cmd.addArgs(args_pp);
+        run_hcpp_cmd.addArgs(args_pp);
     }
 
     const exe_tests = b.addTest(.{

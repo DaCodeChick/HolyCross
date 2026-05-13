@@ -14,7 +14,7 @@ HolyCross currently has:
 4. ⚠️ **Machine Code Generator** (`src/codegen/x64_machine_code.zig`) - Direct binary generation
 
 **Goal**: Extract these into 3 standalone CLI tools:
-- `hpp` - Preprocessor
+- `hcpp` - Preprocessor
 - `hcas` - Assembler  
 - `hcc` - Compiler (orchestrates the above)
 
@@ -62,13 +62,13 @@ Based on TempleOS documentation:
 
 ```bash
 # Proposed CLI
-hpp input.HC -o output.i
-hpp input.HC -D DEBUG=1 -D VERSION=2 -o output.i
-hpp --include-dir /path/to/includes input.HC
+hcpp input.HC -o output.i
+hcpp input.HC -D DEBUG=1 -D VERSION=2 -o output.i
+hcpp --include-dir /path/to/includes input.HC
 ```
 
 **Required Changes**:
-1. Extract preprocessor into `src/tools/hpp.zig`
+1. Extract preprocessor into `src/tools/hcpp.zig`
 2. Add CLI argument parsing (defines, include paths, output)
 3. Make preprocessor self-contained (no compiler dependencies)
 4. Add standalone test suite
@@ -238,19 +238,19 @@ Main::
 
 ## 5. Extraction Plan
 
-### Phase 1: Standalone Preprocessor (`hpp`)
+### Phase 1: Standalone Preprocessor (`hcpp`)
 
 **Week 1-2**:
-1. Create `src/tools/hpp.zig`
+1. Create `src/tools/hcpp.zig`
 2. Extract preprocessor as self-contained module
 3. Add CLI: `-D`, `-I`, `-o`, `--help`
 4. Add test suite for standalone operation
-5. Update main compiler to use `hpp` as library
+5. Update main compiler to use `hcpp` as library
 
 **Deliverables**:
-- `hpp` binary
-- `hpp --version`
-- `hpp input.HC -o output.i`
+- `hcpp` binary
+- `hcpp --version`
+- `hcpp input.HC -o output.i`
 
 ### Phase 2: Complete Assembler (`hcas`)
 
@@ -288,7 +288,7 @@ Main::
 
 ```
 ┌─────────┐      ┌────────┐      ┌────────┐      ┌─────────┐
-│ foo.HC  │─────→│ hpp │─────→│ hcc │─────→│ hcas  │
+│ foo.HC  │─────→│ hcpp │─────→│ hcc │─────→│ hcas  │
 └─────────┘      └────────┘      └────────┘      └─────────┘
    source       preprocessor     compiler        assembler
                      ↓                ↓               ↓
@@ -299,7 +299,7 @@ Main::
 
 **Preprocessor Only**:
 ```bash
-hpp source.HC -o preprocessed.i
+hcpp source.HC -o preprocessed.i
 ```
 
 **Assembler Only**:
@@ -376,13 +376,13 @@ hcc source1.o source2.o    # → link objects
 
 1. ✅ **This Audit** - Document current state
 2. **Begin Phase 1** - Extract preprocessor
-   - Create `src/tools/hpp.zig`
+   - Create `src/tools/hcpp.zig`
    - Add CLI scaffolding
    - Write standalone tests
 
 ### Short Term (Next 2 Weeks)
 
-3. **Complete Preprocessor** (`hpp`)
+3. **Complete Preprocessor** (`hcpp`)
    - Add missing directives (`#if`, `#elif`)
    - Implement expression evaluator
    - Polish CLI
@@ -435,7 +435,7 @@ hcc source1.o source2.o    # → link objects
 ```
 src/
 ├── tools/
-│   ├── hpp.zig          # Standalone preprocessor
+│   ├── hcpp.zig          # Standalone preprocessor
 │   ├── hcas.zig          # Standalone assembler
 │   └── hcc.zig          # Main compiler (orchestrator)
 ├── preprocessor/
@@ -457,7 +457,7 @@ src/
 
 ## Appendix B: Reference Implementation Checklist
 
-### Preprocessor (`hpp`)
+### Preprocessor (`hcpp`)
 - [x] `#define`
 - [x] `#include`
 - [x] `#ifdef` / `#ifndef`
@@ -491,7 +491,7 @@ src/
 - [x] IR generation
 - [x] Assembly generation
 - [x] Machine code generation (direct)
-- [ ] Use `hpp` for preprocessing
+- [ ] Use `hcpp` for preprocessing
 - [ ] Use `hcas` for assembly
 - [ ] Add `-E`, `-S`, `-c` flags
 - [ ] Multi-file linking

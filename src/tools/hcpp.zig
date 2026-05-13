@@ -132,7 +132,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn printVersion() void {
-    std.debug.print("hpp v0.1.0 - HolyC Preprocessor\n", .{});
+    std.debug.print("hcpp v0.1.0 - HolyC Preprocessor\n", .{});
     std.debug.print("Part of the HolyCross toolchain\n", .{});
 }
 
