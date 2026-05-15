@@ -2167,6 +2167,319 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0xFA);
         }
         
+        // x87 Transcendental Functions
+        else if (std.mem.eql(u8, mnemonic, "FSIN")) {
+            // FSIN - Sine of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFE);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCOS")) {
+            // FCOS - Cosine of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFF);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSINCOS")) {
+            // FSINCOS - Sine and cosine of ST0 (replaces ST0 with sin, pushes cos)
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFB);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FPTAN")) {
+            // FPTAN - Partial tangent of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF2);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FPATAN")) {
+            // FPATAN - Partial arctangent ST1/ST0, pop
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF3);
+        }
+        else if (std.mem.eql(u8, mnemonic, "F2XM1")) {
+            // F2XM1 - 2^ST0 - 1
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF0);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FYL2X")) {
+            // FYL2X - ST1 * log2(ST0), pop
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF1);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FYL2XP1")) {
+            // FYL2XP1 - ST1 * log2(ST0+1), pop
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF9);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSCALE")) {
+            // FSCALE - Scale ST0 by ST1 (ST0 = ST0 * 2^ST1)
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFD);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FRNDINT")) {
+            // FRNDINT - Round ST0 to integer
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFC);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FXTRACT")) {
+            // FXTRACT - Extract exponent and significand
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF4);
+        }
+        
+        // x87 Comparison Instructions
+        else if (std.mem.eql(u8, mnemonic, "FCOM")) {
+            // FCOM - Compare ST0 with memory or ST(i)
+            if (instr.operands.len == 0) {
+                // FCOM ST(1)
+                try code.append(allocator, 0xD8);
+                try code.append(allocator, 0xD1);
+            } else if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FCOM qword [mem] - 0xDC /2
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(2, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCOMP")) {
+            // FCOMP - Compare ST0 with memory or ST(i) and pop
+            if (instr.operands.len == 0) {
+                // FCOMP ST(1)
+                try code.append(allocator, 0xD8);
+                try code.append(allocator, 0xD9);
+            } else if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FCOMP qword [mem] - 0xDC /3
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(3, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCOMPP")) {
+            // FCOMPP - Compare ST0 with ST1 and pop twice
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xD9);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCOMI")) {
+            // FCOMI - Compare ST0 with ST(i) and set EFLAGS
+            if (instr.operands.len == 1 and instr.operands[0] == .register) {
+                // For simplicity, assume ST(1)
+                try code.append(allocator, 0xDB);
+                try code.append(allocator, 0xF1);
+            } else {
+                // Default to ST(1)
+                try code.append(allocator, 0xDB);
+                try code.append(allocator, 0xF1);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCOMIP")) {
+            // FCOMIP - Compare ST0 with ST(i), set EFLAGS, and pop
+            if (instr.operands.len == 1 and instr.operands[0] == .register) {
+                // For simplicity, assume ST(1)
+                try code.append(allocator, 0xDF);
+                try code.append(allocator, 0xF1);
+            } else {
+                // Default to ST(1)
+                try code.append(allocator, 0xDF);
+                try code.append(allocator, 0xF1);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FUCOM")) {
+            // FUCOM - Unordered compare ST0 with ST(i)
+            try code.append(allocator, 0xDD);
+            try code.append(allocator, 0xE1); // FUCOM ST(1)
+        }
+        else if (std.mem.eql(u8, mnemonic, "FUCOMP")) {
+            // FUCOMP - Unordered compare and pop
+            try code.append(allocator, 0xDD);
+            try code.append(allocator, 0xE9); // FUCOMP ST(1)
+        }
+        else if (std.mem.eql(u8, mnemonic, "FUCOMPP")) {
+            // FUCOMPP - Unordered compare and pop twice
+            try code.append(allocator, 0xDA);
+            try code.append(allocator, 0xE9);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FTST")) {
+            // FTST - Test ST0 (compare with 0.0)
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE4);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FXAM")) {
+            // FXAM - Examine ST0 (check type/sign)
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE5);
+        }
+        
+        // x87 Constant Loading
+        else if (std.mem.eql(u8, mnemonic, "FLDZ")) {
+            // FLDZ - Push +0.0 onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xEE);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLD1")) {
+            // FLD1 - Push +1.0 onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE8);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLDPI")) {
+            // FLDPI - Push π onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xEB);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLDL2T")) {
+            // FLDL2T - Push log2(10) onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE9);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLDL2E")) {
+            // FLDL2E - Push log2(e) onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xEA);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLDLG2")) {
+            // FLDLG2 - Push log10(2) onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xEC);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FLDLN2")) {
+            // FLDLN2 - Push ln(2) onto stack
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xED);
+        }
+        
+        // x87 Control/Status Operations
+        else if (std.mem.eql(u8, mnemonic, "FLDCW")) {
+            // FLDCW - Load FPU control word from memory
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                // FLDCW word [mem] - 0xD9 /5
+                try code.append(allocator, 0xD9);
+                try self.encodeModRM(5, mem, code, allocator);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSTCW")) {
+            // FSTCW - Store FPU control word to memory (check for exceptions)
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                // FSTCW word [mem] - 0xD9 /7 (with wait)
+                try code.append(allocator, 0x9B); // WAIT prefix
+                try code.append(allocator, 0xD9);
+                try self.encodeModRM(7, mem, code, allocator);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FNSTCW")) {
+            // FNSTCW - Store FPU control word to memory (no exception check)
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                // FNSTCW word [mem] - 0xD9 /7 (no wait)
+                try code.append(allocator, 0xD9);
+                try self.encodeModRM(7, mem, code, allocator);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSTSW")) {
+            // FSTSW - Store FPU status word to memory or AX (with wait)
+            if (instr.operands.len == 1) {
+                const dst = instr.operands[0];
+                if (dst == .memory) {
+                    const mem = dst.memory;
+                    // FSTSW word [mem] - 0xDD /7
+                    try code.append(allocator, 0x9B); // WAIT prefix
+                    try code.append(allocator, 0xDD);
+                    try self.encodeModRM(7, mem, code, allocator);
+                } else if (dst == .register and dst.register.id == 0) {
+                    // FSTSW AX - 0x9B 0xDF 0xE0
+                    try code.append(allocator, 0x9B); // WAIT prefix
+                    try code.append(allocator, 0xDF);
+                    try code.append(allocator, 0xE0);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FNSTSW")) {
+            // FNSTSW - Store FPU status word (no wait)
+            if (instr.operands.len == 1) {
+                const dst = instr.operands[0];
+                if (dst == .memory) {
+                    const mem = dst.memory;
+                    // FNSTSW word [mem] - 0xDD /7
+                    try code.append(allocator, 0xDD);
+                    try self.encodeModRM(7, mem, code, allocator);
+                } else if (dst == .register and dst.register.id == 0) {
+                    // FNSTSW AX - 0xDF 0xE0
+                    try code.append(allocator, 0xDF);
+                    try code.append(allocator, 0xE0);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCLEX")) {
+            // FCLEX - Clear exceptions (with wait)
+            try code.append(allocator, 0x9B); // WAIT prefix
+            try code.append(allocator, 0xDB);
+            try code.append(allocator, 0xE2);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FNCLEX")) {
+            // FNCLEX - Clear exceptions (no wait)
+            try code.append(allocator, 0xDB);
+            try code.append(allocator, 0xE2);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FINIT")) {
+            // FINIT - Initialize FPU (with wait)
+            try code.append(allocator, 0x9B); // WAIT prefix
+            try code.append(allocator, 0xDB);
+            try code.append(allocator, 0xE3);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FNINIT")) {
+            // FNINIT - Initialize FPU (no wait)
+            try code.append(allocator, 0xDB);
+            try code.append(allocator, 0xE3);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FWAIT") or std.mem.eql(u8, mnemonic, "WAIT")) {
+            // FWAIT/WAIT - Wait for FPU
+            try code.append(allocator, 0x9B);
+        }
+        
+        // x87 Stack Management
+        else if (std.mem.eql(u8, mnemonic, "FINCSTP")) {
+            // FINCSTP - Increment stack pointer
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF7);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FDECSTP")) {
+            // FDECSTP - Decrement stack pointer
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF6);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FFREE")) {
+            // FFREE - Free ST(i) register
+            if (instr.operands.len == 1 and instr.operands[0] == .register) {
+                // For simplicity, assume ST(0)
+                try code.append(allocator, 0xDD);
+                try code.append(allocator, 0xC0);
+            } else {
+                // Default ST(0)
+                try code.append(allocator, 0xDD);
+                try code.append(allocator, 0xC0);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FXCH")) {
+            // FXCH - Exchange ST0 with ST(i)
+            if (instr.operands.len == 0) {
+                // FXCH ST(1)
+                try code.append(allocator, 0xD9);
+                try code.append(allocator, 0xC9);
+            } else {
+                // Default ST(1)
+                try code.append(allocator, 0xD9);
+                try code.append(allocator, 0xC9);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FNOP")) {
+            // FNOP - FPU NOP
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xD0);
+        }
+        
         // For unknown instructions, skip for now
         else {
             // Just emit a NOP as placeholder
