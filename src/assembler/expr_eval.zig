@@ -141,7 +141,7 @@ fn evalSizeof(ctx: *EvalContext, type_name: []const u8) error{OutOfMemory}!?i64 
     // Handle basic types
     if (std.mem.eql(u8, trimmed, "U8") or std.mem.eql(u8, trimmed, "I8")) return 1;
     if (std.mem.eql(u8, trimmed, "U16") or std.mem.eql(u8, trimmed, "I16")) return 2;
-    if (std.mem.eql(u8, trimmed, "U32") or std.mem.eql(u8, trimmed, "I32") or std.mem.eql(u8, trimmed, "F32")) return 4;
+    if (std.mem.eql(u8, trimmed, "U32") or std.mem.eql(u8, trimmed, "I32")) return 4;
     if (std.mem.eql(u8, trimmed, "U64") or std.mem.eql(u8, trimmed, "I64") or std.mem.eql(u8, trimmed, "F64")) return 8;
     if (std.mem.eql(u8, trimmed, "U0") or std.mem.eql(u8, trimmed, "I0")) return 0;
     
