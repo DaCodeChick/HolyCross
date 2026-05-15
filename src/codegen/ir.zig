@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
+const TypeLayout = @import("../semantic/type_layout.zig").TypeLayout;
 
 /// Intermediate Representation for HolyCross compiler
 /// Uses a simple three-address code format that's easy to generate from AST
@@ -248,6 +249,7 @@ pub const Module = struct {
     globals: std.ArrayList(GlobalVar), // Global variables
     string_literals: std.StringHashMap(u32), // Map string -> ID
     string_table: std.ArrayList([]const u8), // ID -> string
+    type_layouts: ?*const std.StringHashMap(TypeLayout), // Type layout information for expressions
 
     pub fn init(allocator: Allocator) !Module {
         const empty_funcs = try allocator.alloc(Function, 0);
@@ -259,6 +261,7 @@ pub const Module = struct {
             .globals = std.ArrayList(GlobalVar).fromOwnedSlice(empty_globals),
             .string_literals = std.StringHashMap(u32).init(allocator),
             .string_table = std.ArrayList([]const u8).fromOwnedSlice(empty_strings),
+            .type_layouts = null,
         };
     }
 

@@ -1464,7 +1464,9 @@ pub const IRBuilder = struct {
     }
 
     pub fn finish(self: *IRBuilder) !ir.Module {
-        const module = self.module;
+        var module = self.module;
+        // Pass type layouts to the module for use in code generation
+        module.type_layouts = self.type_layouts;
         self.module = try ir.Module.init(self.allocator);
         return module;
     }

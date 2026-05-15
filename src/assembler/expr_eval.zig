@@ -24,7 +24,7 @@ const std = @import("std");
 
 // Forward declarations for optional integration with compiler
 const SymbolTable = @import("../semantic/symbol_table.zig").SymbolTable;
-const TypeLayout = @import("../semantic/type_layout.zig").TypeLayout;
+pub const TypeLayout = @import("../semantic/type_layout.zig").TypeLayout;
 const ast = @import("../parser/ast.zig");
 
 /// Expression evaluation context

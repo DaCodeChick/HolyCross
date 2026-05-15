@@ -410,8 +410,14 @@ fn genInlineAsm(ctx: *GenContext, instr: *const ir.Instruction) !void {
         else => return error.InvalidInlineAsmOperand,
     };
     
-    // Create an x64 assembler instance
-    var asm_generator = assembler.X64Assembler.init(ctx.allocator);
+    // Get type layouts from the module if available
+    const type_layouts = if (ctx.current_module) |mod| mod.type_layouts else null;
+    
+    // Create an x64 assembler instance with type layouts
+    var asm_generator = if (type_layouts) |layouts|
+        assembler.X64Assembler.initWithTypes(ctx.allocator, layouts)
+    else
+        assembler.X64Assembler.init(ctx.allocator);
     defer asm_generator.deinit();
     
     // Parse the assembly code
