@@ -40,6 +40,8 @@ pub const IRBuilder = struct {
     type_checker: ?*TypeChecker, // Optional type checker for type inference
     type_layouts: ?*const std.StringHashMap(TypeLayout), // Optional type layout map
     allocated_type_hints: std.ArrayList([]const u8), // Track allocated type hint strings for cleanup
+    var_types: std.StringHashMap(ast.Type), // Track variable types in current function
+    temp_types: std.AutoHashMap(u32, ast.Type), // Track temp types
 
     pub fn init(allocator: Allocator, type_checker: ?*TypeChecker, type_layouts: ?*const std.StringHashMap(TypeLayout)) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
@@ -56,6 +58,8 @@ pub const IRBuilder = struct {
             .type_checker = type_checker,
             .type_layouts = type_layouts,
             .allocated_type_hints = std.ArrayList([]const u8).fromOwnedSlice(empty_hints),
+            .var_types = std.StringHashMap(ast.Type).init(allocator),
+            .temp_types = std.AutoHashMap(u32, ast.Type).init(allocator),
         };
     }
 
@@ -69,6 +73,8 @@ pub const IRBuilder = struct {
         self.module.deinit();
         self.break_label_stack.deinit(self.allocator);
         self.label_map.deinit();
+        self.var_types.deinit();
+        self.temp_types.deinit();
     }
 
     // ========================================================================
@@ -147,8 +153,10 @@ pub const IRBuilder = struct {
         self.current_function = ir_func;
         self.temp_counter = 0;
 
-        // Clear label map for new function
+        // Clear label map and type maps for new function
         self.label_map.clearRetainingCapacity();
+        self.var_types.clearRetainingCapacity();
+        self.temp_types.clearRetainingCapacity();
 
         // Set function metadata
         ir_func.param_count = @intCast(func.params.len);
@@ -158,8 +166,9 @@ pub const IRBuilder = struct {
         const entry = try ir_func.createBlock();
         self.current_block = entry;
 
-        // Allocate space for parameters
+        // Allocate space for parameters and track their types
         for (func.params) |param| {
+            try self.var_types.put(param.name, param.type);
             try self.emit(.{
                 .opcode = .param,
                 .dest = .{ .variable = param.name },
@@ -333,6 +342,9 @@ pub const IRBuilder = struct {
         if (self.current_function) |func| {
             func.local_count += 1;
         }
+
+        // Track variable type
+        try self.var_types.put(decl.name, decl.type);
 
         // Allocate stack space for variable
         const type_size = self.calculateTypeSize(decl.type);
@@ -639,6 +651,47 @@ pub const IRBuilder = struct {
     // Expression Building
     // ========================================================================
 
+    /// Check if an operand represents a floating-point value
+    fn isFloatOperand(self: *IRBuilder, operand: ir.Operand, expr: ast.Expr) bool {
+        // Check if it's a float constant
+        if (operand == .constant and operand.constant == .float) {
+            return true;
+        }
+        
+        // Check variable types from our map
+        if (operand == .variable) {
+            if (self.var_types.get(operand.variable)) |var_type| {
+                return self.isFloatType(var_type);
+            }
+        }
+        
+        // Check temp types from our map
+        if (operand == .temp) {
+            if (self.temp_types.get(operand.temp)) |temp_type| {
+                return self.isFloatType(temp_type);
+            }
+        }
+        
+        // Fallback: try to infer type from AST expression via type checker
+        if (self.type_checker) |tc| {
+            const expr_type = tc.inferExprType(expr) catch {
+                return false;
+            };
+            return self.isFloatType(expr_type);
+        }
+        
+        return false;
+    }
+    
+    /// Check if an AST type is a floating-point type
+    fn isFloatType(self: *IRBuilder, ast_type: ast.Type) bool {
+        _ = self;
+        return switch (ast_type) {
+            .f64 => true,
+            else => false,
+        };
+    }
+
     fn buildExpression(self: *IRBuilder, expr: ast.Expr) anyerror!ir.Operand {
         switch (expr) {
             .integer => |int| {
@@ -662,6 +715,10 @@ pub const IRBuilder = struct {
             },
             .identifier => |ident| {
                 const temp = self.newTemp();
+                // Track temp type from variable type
+                if (self.var_types.get(ident.name)) |var_type| {
+                    try self.temp_types.put(temp, var_type);
+                }
                 try self.emit(.{
                     .opcode = .load_var,
                     .dest = .{ .temp = temp },
@@ -912,10 +969,9 @@ pub const IRBuilder = struct {
 
         // Check if we should use float operations based on operand types
         const is_float_op = blk: {
-            // Check if either operand is a float constant
-            if (left == .constant and left.constant == .float) break :blk true;
-            if (right == .constant and right.constant == .float) break :blk true;
-            // TODO: Check variable/temp types from type checker when available
+            // Check if either operand is a float type
+            if (self.isFloatOperand(left, bin.left.*)) break :blk true;
+            if (self.isFloatOperand(right, bin.right.*)) break :blk true;
             break :blk false;
         };
 
@@ -927,6 +983,10 @@ pub const IRBuilder = struct {
             .div => .fdiv,
             else => opcode, // Non-arithmetic ops stay the same
         } else opcode;
+
+        // Track the result type
+        const result_type: ast.Type = if (is_float_op) .f64 else .i64;
+        try self.temp_types.put(temp, result_type);
 
         try self.emit(.{
             .opcode = final_opcode,
@@ -994,11 +1054,7 @@ pub const IRBuilder = struct {
         };
 
         // Check if we should use float negation
-        const is_float_op = blk: {
-            if (operand == .constant and operand.constant == .float) break :blk true;
-            // TODO: Check variable/temp types from type checker when available
-            break :blk false;
-        };
+        const is_float_op = self.isFloatOperand(operand, un.operand.*);
 
         const final_opcode = if (is_float_op and opcode == .neg) .fneg else opcode;
 

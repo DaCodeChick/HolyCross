@@ -2041,6 +2041,132 @@ pub const X64Assembler = struct {
             }
         }
         
+        // x87 FPU Instructions
+        else if (std.mem.eql(u8, mnemonic, "FLD")) {
+            // FLD - Load floating point value to ST0
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FLD qword [mem] - 0xDD /0
+                    try code.append(allocator, 0xDD);
+                    try self.encodeModRM(0, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FST")) {
+            // FST - Store ST0 to memory (without pop)
+            if (instr.operands.len == 1) {
+                const dst = instr.operands[0];
+                if (dst == .memory) {
+                    const mem = dst.memory;
+                    // FST qword [mem] - 0xDD /2
+                    try code.append(allocator, 0xDD);
+                    try self.encodeModRM(2, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSTP")) {
+            // FSTP - Store ST0 to memory and pop
+            if (instr.operands.len == 1) {
+                const dst = instr.operands[0];
+                if (dst == .memory) {
+                    const mem = dst.memory;
+                    // FSTP qword [mem] - 0xDD /3
+                    try code.append(allocator, 0xDD);
+                    try self.encodeModRM(3, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FADD")) {
+            // FADD - Add memory to ST0
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FADD qword [mem] - 0xDC /0
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(0, mem, code, allocator);
+                }
+            } else if (instr.operands.len == 2) {
+                // FADDP ST(i), ST0 - pop and add
+                // For now, just handle FADDP with implicit operands
+                try code.append(allocator, 0xDE);
+                try code.append(allocator, 0xC1); // FADDP ST(1), ST0
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FADDP")) {
+            // FADDP - Add ST0 to ST(1) and pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xC1); // FADDP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSUB")) {
+            // FSUB - Subtract memory from ST0
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FSUB qword [mem] - 0xDC /4
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(4, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSUBP")) {
+            // FSUBP - Subtract ST0 from ST(1) and pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xE9); // FSUBP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FMUL")) {
+            // FMUL - Multiply ST0 by memory
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FMUL qword [mem] - 0xDC /1
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(1, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FMULP")) {
+            // FMULP - Multiply ST(1) by ST0 and pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xC9); // FMULP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FDIV")) {
+            // FDIV - Divide ST0 by memory
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FDIV qword [mem] - 0xDC /6
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(6, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FDIVP")) {
+            // FDIVP - Divide ST(1) by ST0 and pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xF9); // FDIVP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FCHS")) {
+            // FCHS - Change sign of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE0);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FABS")) {
+            // FABS - Absolute value of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xE1);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSQRT")) {
+            // FSQRT - Square root of ST0
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xFA);
+        }
+        
         // For unknown instructions, skip for now
         else {
             // Just emit a NOP as placeholder
