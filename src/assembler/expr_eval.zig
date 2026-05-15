@@ -99,6 +99,11 @@ pub fn evalConstExpr(ctx: *EvalContext, expr: []const u8) error{OutOfMemory}!?i6
         return try evalSizeof(ctx, trimmed[7..trimmed.len-1]);
     }
     
+    // Check for offset() operator
+    if (std.mem.startsWith(u8, trimmed, "offset(") and std.mem.endsWith(u8, trimmed, ")")) {
+        return try evalOffset(ctx, trimmed[7..trimmed.len-1]);
+    }
+    
     // Check for address-of operator &
     if (std.mem.startsWith(u8, trimmed, "&")) {
         return try evalAddressOf(ctx, trimmed[1..]);
@@ -153,6 +158,29 @@ fn evalSizeof(ctx: *EvalContext, type_name: []const u8) error{OutOfMemory}!?i64 
     }
     
     // Unknown type
+    return null;
+}
+
+/// Evaluate offset(Type.member) expression
+/// Returns the byte offset of a member within a struct/class
+fn evalOffset(ctx: *EvalContext, expr: []const u8) error{OutOfMemory}!?i64 {
+    const trimmed = std.mem.trim(u8, expr, &std.ascii.whitespace);
+    
+    // offset() expects "ClassName.membername" format
+    if (std.mem.indexOf(u8, trimmed, ".")) |dot_pos| {
+        const type_name = std.mem.trim(u8, trimmed[0..dot_pos], &std.ascii.whitespace);
+        const member_name = std.mem.trim(u8, trimmed[dot_pos+1..], &std.ascii.whitespace);
+        
+        // Look up type in type layouts
+        if (ctx.type_layouts) |layouts| {
+            if (layouts.get(type_name)) |layout| {
+                if (layout.getMemberOffset(member_name)) |offset| {
+                    return @intCast(offset);
+                }
+            }
+        }
+    }
+    
     return null;
 }
 
