@@ -11,7 +11,9 @@ pub const ControlFlow = struct {
         try Patterns.emitFunctionEpilogue(ctx);
     }
 
-    pub fn genRetVal(ctx: *GenContext) !void {
+    pub fn genRetVal(ctx: *GenContext, instr: *const ir.Instruction) !void {
+        // Load return value into RAX (works for both I64 and F64 bit-patterns)
+        try Patterns.loadOperand(ctx, instr.src1, "RAX");
         try ctx.emitComment("return value in RAX", .{});
         try Patterns.emitFunctionEpilogue(ctx);
     }

@@ -962,6 +962,17 @@ pub const X64MachineCodeGen = struct {
                                 try self.emitQword(@bitCast(val));
                             }
                         },
+                        .float => |val| {
+                            // F64 passed as bit-pattern in integer register
+                            // movabs reg, imm64 (F64 bits)
+                            const bits: u64 = @bitCast(val);
+                            if (i < 4) {
+                                try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                            } else {
+                                try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                            }
+                            try self.emitQword(bits);
+                        },
                         else => return error.UnsupportedArgument,
                     },
                     .temp => {

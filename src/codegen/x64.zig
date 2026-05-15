@@ -336,7 +336,7 @@ fn generateInstruction(ctx: *GenContext, instr: *const ir.Instruction) !void {
     switch (instr.opcode) {
         // Control flow
         .ret => try instruction_gen.ControlFlow.genRet(ctx),
-        .ret_val => try instruction_gen.ControlFlow.genRetVal(ctx),
+        .ret_val => try instruction_gen.ControlFlow.genRetVal(ctx, instr),
         .label => try instruction_gen.ControlFlow.genLabel(ctx, instr),
         .jump => try instruction_gen.ControlFlow.genJump(ctx, instr),
         .jump_if_zero => try instruction_gen.ControlFlow.genJumpIfZero(ctx, instr),
