@@ -1,5 +1,7 @@
 const std = @import("std");
 const interpreter = @import("interpreter.zig");
+const lexer = @import("../lexer/lexer.zig");
+const parser = @import("../parser/parser.zig");
 
 /// Preprocessor for HolyC source code
 /// Handles conditional compilation (#ifdef, #ifndef, #else, #endif),
@@ -122,6 +124,11 @@ pub const Preprocessor = struct {
                 } else if (std.mem.eql(u8, directive, "ifjit")) {
                     // JIT (just-in-time) compilation - always false for now
                     try include_stack.append(self.allocator, currently_including and false);
+                    self.skipToEndOfLine();
+                } else if (std.mem.eql(u8, directive, "assert")) {
+                    if (currently_including) {
+                        try self.handleAssert();
+                    }
                     self.skipToEndOfLine();
                 } else if (std.mem.eql(u8, directive, "exe")) {
                     if (currently_including) {
@@ -369,6 +376,100 @@ pub const Preprocessor = struct {
         if (output.len > 0) {
             std.debug.print("{s}", .{output});
         }
+    }
+
+    /// Handle #assert directive
+    fn handleAssert(self: *Preprocessor) PreprocessorError!void {
+        self.skipWhitespace();
+        
+        // Read the expression until end of line
+        const expr_start = self.pos;
+        while (self.pos < self.source.len and self.peek() != '\n') {
+            _ = self.advance();
+        }
+        
+        const expr_text = std.mem.trim(u8, self.source[expr_start..self.pos], &std.ascii.whitespace);
+        
+        if (expr_text.len == 0) {
+            return self.reportError(self.line, "Expected expression after #assert");
+        }
+        
+        // Substitute defines in the expression
+        const substituted = try self.substituteDefines(expr_text);
+        defer if (substituted.ptr != expr_text.ptr) self.allocator.free(substituted);
+        
+        // Evaluate the expression at compile time
+        var interp = interpreter.Interpreter.init(self.allocator);
+        defer interp.deinit();
+        
+        // Parse and evaluate the expression
+        const result = self.evaluateAssertExpression(&interp, substituted) catch |err| {
+            std.debug.print("[{s}:{d}] Warning: #assert expression could not be evaluated: {}\n", .{ self.filename, self.line, err });
+            std.debug.print("  Expression: {s}\n", .{substituted});
+            return;
+        };
+        
+        // Check if the result is false/zero
+        const is_true = switch (result) {
+            .int => |i| i != 0,
+            .bool => |b| b,
+            .float => |f| f != 0.0,
+            else => false,
+        };
+        
+        if (!is_true) {
+            std.debug.print("[{s}:{d}] Warning: #assert failed: {s}\n", .{ self.filename, self.line, substituted });
+        }
+    }
+    
+    /// Substitute defines in an expression
+    fn substituteDefines(self: *Preprocessor, text: []const u8) ![]const u8 {
+        const empty_slice = try self.allocator.alloc(u8, 0);
+        var result = std.ArrayList(u8).fromOwnedSlice(empty_slice);
+        defer result.deinit(self.allocator);
+        
+        var i: usize = 0;
+        while (i < text.len) {
+            // Check if we're at an identifier
+            if (std.ascii.isAlphabetic(text[i]) or text[i] == '_') {
+                const ident_start = i;
+                while (i < text.len and (std.ascii.isAlphanumeric(text[i]) or text[i] == '_')) {
+                    i += 1;
+                }
+                const ident = text[ident_start..i];
+                
+                // Check if this is a defined macro
+                if (self.defines.get(ident)) |value| {
+                    try result.appendSlice(self.allocator, value);
+                } else {
+                    try result.appendSlice(self.allocator, ident);
+                }
+            } else {
+                try result.append(self.allocator, text[i]);
+                i += 1;
+            }
+        }
+        
+        return try result.toOwnedSlice(self.allocator);
+    }
+    
+    /// Evaluate an assertion expression
+    fn evaluateAssertExpression(self: *Preprocessor, interp: *interpreter.Interpreter, expr_text: []const u8) !interpreter.Interpreter.Value {
+        // Create an arena for AST allocations
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        
+        // Create a simple lexer and parser for the expression
+        var lex = lexer.Lexer.init(arena.allocator(), expr_text);
+        
+        var pars = try parser.Parser.init(arena.allocator(), &lex);
+        defer pars.deinit();
+        
+        // Parse as an expression
+        const expr = try pars.parseExpression();
+        
+        // Evaluate the expression
+        return try interp.evaluateExpression(expr);
     }
 
     /// Expand an identifier if it's a defined macro

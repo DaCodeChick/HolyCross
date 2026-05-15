@@ -156,7 +156,7 @@ pub const Interpreter = struct {
         }
     }
     
-    fn evaluateExpression(self: *Interpreter, expr: Expr) InterpreterError!Value {
+    pub fn evaluateExpression(self: *Interpreter, expr: Expr) InterpreterError!Value {
         switch (expr) {
             .integer => |lit| return Value{ .int = lit.value },
             .float => |lit| return Value{ .float = lit.value },

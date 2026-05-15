@@ -1,6 +1,7 @@
 const std = @import("std");
 const lib = @import("holycross");
 const X64Assembler = lib.assembler.X64Assembler;
+const Preprocessor = lib.preprocessor.Preprocessor;
 
 /// hcas - HolyC Assembler
 /// Standalone assembler tool for HolyC/TempleOS-style x64 assembly
@@ -99,13 +100,20 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("HolyC Assembler v0.1.0\n", .{});
     std.debug.print("Assembling: {s} -> {s}\n\n", .{ input_file, output_file.? });
     
+    // Preprocess the source (handle #define, #assert, etc.)
+    var preprocessor = try Preprocessor.initWithIo(allocator, source, input_file, &init.io);
+    defer preprocessor.deinit();
+    
+    const processed_source = try preprocessor.process();
+    defer allocator.free(processed_source);
+    
     // Initialize assembler
     var asm_ctx = X64Assembler.init(allocator);
     defer asm_ctx.deinit();
     
     // Parse assembly source
     std.debug.print("[1/3] Parsing assembly...\n", .{});
-    const instructions = asm_ctx.parse(source, allocator) catch |err| {
+    const instructions = asm_ctx.parse(processed_source, allocator) catch |err| {
         std.debug.print("Parse error: {}\n", .{err});
         return err;
     };
