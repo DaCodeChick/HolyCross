@@ -14,6 +14,16 @@ pub const OperandSize = enum(u8) {
     qword = 8,  // 64-bit
 };
 
+/// Memory operand type
+pub const MemoryOperand = struct {
+    base: ?u8,        // Base register (if any)
+    index: ?u8,       // Index register (if any)
+    scale: u8,        // Scale factor (1, 2, 4, 8)
+    displacement: i32, // Displacement offset
+    size: OperandSize,
+    segment: ?u8,     // Segment override (if any)
+};
+
 /// Common operand types across architectures
 pub const OperandType = union(enum) {
     /// Register operand
@@ -29,14 +39,7 @@ pub const OperandType = union(enum) {
     },
     
     /// Memory operand (e.g., [base + index*scale + displacement])
-    memory: struct {
-        base: ?u8,        // Base register (if any)
-        index: ?u8,       // Index register (if any)
-        scale: u8,        // Scale factor (1, 2, 4, 8)
-        displacement: i32, // Displacement offset
-        size: OperandSize,
-        segment: ?u8,     // Segment override (if any)
-    },
+    memory: MemoryOperand,
     
     /// Label reference (for jumps/calls)
     label: struct {
@@ -45,7 +48,7 @@ pub const OperandType = union(enum) {
     },
 };
 
-/// Instruction representation
+/// Instruction or directive representation
 pub const Instruction = struct {
     mnemonic: []const u8,
     operands: []OperandType,
@@ -53,6 +56,39 @@ pub const Instruction = struct {
         line: usize,
         column: usize,
     },
+    
+    /// Optional directive data for DU8/DU16/DU32/DU64, IMPORT, etc.
+    directive: ?Directive = null,
+};
+
+/// Directive types for assembler directives
+pub const Directive = union(enum) {
+    /// Data definition (DU8, DU16, DU32, DU64)
+    data: struct {
+        size: OperandSize, // .byte, .word, .dword, .qword
+        values: []const u8, // Raw bytes to emit
+    },
+    
+    /// Mode switch (USE16, USE32, USE64)
+    use_mode: enum { use16, use32, use64 },
+    
+    /// Import external symbols
+    import_symbols: []const []const u8,
+    
+    /// Alignment directive
+    align_directive: struct {
+        boundary: usize,
+        fill_byte: u8,
+    },
+    
+    /// Origin directive
+    org: usize,
+    
+    /// Binary file inclusion
+    binfile: []const u8,
+    
+    /// Listing control
+    list_control: enum { list, nolist },
 };
 
 /// Label definition
@@ -69,10 +105,13 @@ pub const AssemblerError = error{
     InvalidOperand,
     InvalidRegister,
     InvalidImmediate,
+    InvalidMemoryOperand,
     UnresolvedLabel,
     DuplicateLabel,
     OutOfMemory,
     SyntaxError,
+    OperandSizeMismatch,
+    UnsupportedOperandSize,
 };
 
 /// Architecture-specific assembler interface

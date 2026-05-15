@@ -213,7 +213,7 @@ pub const Arithmetic = struct {
     pub fn genMul(ctx: *GenContext, instr: *const ir.Instruction) !void {
         try Patterns.loadOperand(ctx, instr.src1, "RAX");
         try Patterns.loadOperand(ctx, instr.src2, "RCX");
-        try ctx.emit("\tIMUL\tRAX,RCX\n", .{});
+        try ctx.emit("\tIMUL2\tRAX,RCX\n", .{});
         try Patterns.storeOperand(ctx, instr.dest, "RAX");
     }
 
@@ -501,7 +501,7 @@ pub const Functions = struct {
 
                 // Align stack to 16 bytes before call (required by System V ABI)
                 // Note: This is simplified - proper implementation needs to track stack alignment
-                try ctx.emit("\tCALL\t{s}\n", .{f});
+                try ctx.emit("\tCALL\t_{s}\n", .{f});
 
                 // Clean up stack arguments if any
                 if (instr.args) |args| {

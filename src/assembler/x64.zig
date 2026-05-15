@@ -140,8 +140,8 @@ pub const X64Assembler = struct {
                 continue;
             }
             
-            // Check for label definitions
-            if (try self.parseLabel(trimmed, line_num)) {
+            // Check for label definitions - track the instruction index they mark
+            if (try self.parseLabelAtIndex(trimmed, line_num, instructions.items.len)) {
                 continue;
             }
             
@@ -154,8 +154,8 @@ pub const X64Assembler = struct {
         return instructions.toOwnedSlice(allocator);
     }
     
-    /// Parse a label definition
-    fn parseLabel(self: *X64Assembler, line: []const u8, line_num: usize) !bool {
+    /// Parse a label definition and track its instruction index
+    fn parseLabelAtIndex(self: *X64Assembler, line: []const u8, line_num: usize, instr_idx: usize) !bool {
         _ = line_num;
         
         // Check for local label (@@label:)
@@ -165,7 +165,7 @@ pub const X64Assembler = struct {
             
             const label = Label{
                 .name = label_name,
-                .offset = 0, // Will be filled during encoding
+                .offset = instr_idx, // Store instruction index for now
                 .is_exported = false,
                 .is_local = true,
             };
@@ -180,7 +180,7 @@ pub const X64Assembler = struct {
             
             const label = Label{
                 .name = label_name,
-                .offset = 0, // Will be filled during encoding
+                .offset = instr_idx, // Store instruction index for now
                 .is_exported = true,
                 .is_local = false,
             };
@@ -200,7 +200,7 @@ pub const X64Assembler = struct {
             
             const label = Label{
                 .name = label_name,
-                .offset = 0, // Will be filled during encoding
+                .offset = instr_idx, // Store instruction index for now
                 .is_exported = false,
                 .is_local = false,
             };
@@ -212,31 +212,54 @@ pub const X64Assembler = struct {
         return false;
     }
     
-    /// Parse an instruction
+    /// Parse a label definition
+    /// Parse an instruction or directive
     fn parseInstruction(self: *X64Assembler, line: []const u8, line_num: usize, allocator: std.mem.Allocator) !?Instruction {
         // Split on whitespace to get mnemonic
         var parts = std.mem.tokenizeAny(u8, line, &std.ascii.whitespace);
         const mnemonic = parts.next() orelse return null;
         
-        // Skip data directives for now
+        // Check for data directives (DU8, DU16, DU32, DU64)
         if (std.mem.eql(u8, mnemonic, "DU8") or 
             std.mem.eql(u8, mnemonic, "DU16") or
             std.mem.eql(u8, mnemonic, "DU32") or
             std.mem.eql(u8, mnemonic, "DU64")) {
-            return null;
+            return try self.parseDataDirective(line, mnemonic, line_num, allocator);
         }
         
-        // Skip import directives
+        // Check for IMPORT directive
         if (std.mem.eql(u8, mnemonic, "IMPORT")) {
-            return null;
+            return try self.parseImportDirective(line, line_num, allocator);
+        }
+        
+        // Check for USE directives
+        if (std.mem.eql(u8, mnemonic, "USE16") or
+            std.mem.eql(u8, mnemonic, "USE32") or
+            std.mem.eql(u8, mnemonic, "USE64")) {
+            return try self.parseUseDirective(mnemonic, line_num);
+        }
+        
+        // Check for ALIGN directive
+        if (std.mem.eql(u8, mnemonic, "ALIGN")) {
+            return try self.parseAlignDirective(line, line_num, allocator);
+        }
+        
+        // Check for ORG directive
+        if (std.mem.eql(u8, mnemonic, "ORG")) {
+            return try self.parseOrgDirective(line, line_num, allocator);
         }
         
         // Get the rest of the line (operands)
         const rest_start = mnemonic.ptr + mnemonic.len - line.ptr;
-        const operands_str = if (rest_start < line.len) 
+        var operands_str = if (rest_start < line.len) 
             std.mem.trim(u8, line[rest_start..], &std.ascii.whitespace)
         else 
             "";
+        
+        // Strip comments (// at end of line)
+        if (std.mem.indexOf(u8, operands_str, "//")) |comment_idx| {
+            operands_str = std.mem.trim(u8, operands_str[0..comment_idx], &std.ascii.whitespace);
+        }
         
         // Parse operands
         var operands: std.ArrayList(OperandType) = .empty;
@@ -252,6 +275,263 @@ pub const X64Assembler = struct {
             .location = .{
                 .line = line_num,
                 .column = 0,
+            },
+        };
+    }
+    
+    /// Parse data directive (DU8, DU16, DU32, DU64)
+    fn parseDataDirective(self: *X64Assembler, line: []const u8, mnemonic: []const u8, line_num: usize, allocator: std.mem.Allocator) AssemblerError!Instruction {
+        
+        // Determine size
+        const size: OperandSize = if (std.mem.eql(u8, mnemonic, "DU8"))
+            .byte
+        else if (std.mem.eql(u8, mnemonic, "DU16"))
+            .word
+        else if (std.mem.eql(u8, mnemonic, "DU32"))
+            .dword
+        else
+            .qword;
+        
+        // Get the data part (everything after mnemonic)
+        const rest_start = mnemonic.ptr + mnemonic.len - line.ptr;
+        var data_str = if (rest_start < line.len) 
+            std.mem.trim(u8, line[rest_start..], &std.ascii.whitespace)
+        else 
+            "";
+        
+        // Strip trailing semicolon if present
+        if (std.mem.endsWith(u8, data_str, ";")) {
+            data_str = std.mem.trim(u8, data_str[0..data_str.len-1], &std.ascii.whitespace);
+        }
+        
+        // Strip comments
+        if (std.mem.indexOf(u8, data_str, "//")) |comment_idx| {
+            data_str = std.mem.trim(u8, data_str[0..comment_idx], &std.ascii.whitespace);
+        }
+        
+        // Parse data values
+        var data_bytes = std.ArrayList(u8).empty;
+        errdefer data_bytes.deinit(allocator);
+        
+        // Check for string literal
+        if (std.mem.startsWith(u8, data_str, "\"")) {
+            // Parse string literal
+            const end_quote = std.mem.lastIndexOfScalar(u8, data_str, '"') orelse return error.SyntaxError;
+            if (end_quote == 0) return error.SyntaxError;
+            
+            const string_content = data_str[1..end_quote];
+            
+            // Process escape sequences
+            var i: usize = 0;
+            while (i < string_content.len) : (i += 1) {
+                if (string_content[i] == '\\' and i + 1 < string_content.len) {
+                    // Handle escape sequences
+                    i += 1;
+                    const escaped = switch (string_content[i]) {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '\\' => '\\',
+                        '"' => '"',
+                        '0' => 0,
+                        else => string_content[i],
+                    };
+                    try data_bytes.append(allocator, escaped);
+                } else {
+                    try data_bytes.append(allocator, string_content[i]);
+                }
+            }
+            
+            // Check for additional comma-separated values after string
+            const after_string = std.mem.trim(u8, data_str[end_quote+1..], &std.ascii.whitespace);
+            if (std.mem.startsWith(u8, after_string, ",")) {
+                const remaining = std.mem.trim(u8, after_string[1..], &std.ascii.whitespace);
+                try self.parseDataValues(remaining, size, &data_bytes, allocator);
+            }
+        } else {
+            // Parse comma-separated numeric values
+            try self.parseDataValues(data_str, size, &data_bytes, allocator);
+        }
+        
+        return Instruction{
+            .mnemonic = mnemonic,
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = .{
+                .data = .{
+                    .size = size,
+                    .values = try data_bytes.toOwnedSlice(allocator),
+                },
+            },
+        };
+    }
+    
+    /// Parse numeric data values
+    fn parseDataValues(_: *X64Assembler, values_str: []const u8, size: OperandSize, data_bytes: *std.ArrayList(u8), allocator: std.mem.Allocator) AssemblerError!void {
+        
+        var parts = std.mem.splitScalar(u8, values_str, ',');
+        while (parts.next()) |part| {
+            const trimmed = std.mem.trim(u8, part, &std.ascii.whitespace);
+            if (trimmed.len == 0) continue;
+            
+            // Try to parse as number
+            var value: i64 = 0;
+            if (std.mem.startsWith(u8, trimmed, "0x") or std.mem.startsWith(u8, trimmed, "0X")) {
+                value = std.fmt.parseInt(i64, trimmed[2..], 16) catch return error.InvalidImmediate;
+            } else {
+                value = std.fmt.parseInt(i64, trimmed, 10) catch return error.InvalidImmediate;
+            }
+            
+            // Encode based on size
+            switch (size) {
+                .byte => {
+                    const val: u8 = @intCast(@as(u64, @bitCast(value)) & 0xFF);
+                    try data_bytes.append(allocator, val);
+                },
+                .word => {
+                    const val: u16 = @intCast(@as(u64, @bitCast(value)) & 0xFFFF);
+                    const bytes = std.mem.toBytes(val);
+                    try data_bytes.appendSlice(allocator, &bytes);
+                },
+                .dword => {
+                    const val: u32 = @intCast(@as(u64, @bitCast(value)) & 0xFFFFFFFF);
+                    const bytes = std.mem.toBytes(val);
+                    try data_bytes.appendSlice(allocator, &bytes);
+                },
+                .qword => {
+                    const bytes = std.mem.toBytes(value);
+                    try data_bytes.appendSlice(allocator, &bytes);
+                },
+            }
+        }
+    }
+    
+    /// Parse IMPORT directive
+    fn parseImportDirective(self: *X64Assembler, line: []const u8, line_num: usize, allocator: std.mem.Allocator) AssemblerError!Instruction {
+        _ = self;
+        
+        // Get symbols after IMPORT keyword
+        const import_start = "IMPORT".len;
+        var symbols_str = if (import_start < line.len) 
+            std.mem.trim(u8, line[import_start..], &std.ascii.whitespace)
+        else 
+            "";
+        
+        // Strip trailing semicolon
+        if (std.mem.endsWith(u8, symbols_str, ";")) {
+            symbols_str = symbols_str[0..symbols_str.len-1];
+        }
+        
+        // Parse comma-separated symbols
+        var symbols = std.ArrayList([]const u8).empty;
+        errdefer symbols.deinit(allocator);
+        
+        var parts = std.mem.splitScalar(u8, symbols_str, ',');
+        while (parts.next()) |part| {
+            const trimmed = std.mem.trim(u8, part, &std.ascii.whitespace);
+            if (trimmed.len > 0) {
+                try symbols.append(allocator, trimmed);
+            }
+        }
+        
+        return Instruction{
+            .mnemonic = "IMPORT",
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = .{
+                .import_symbols = try symbols.toOwnedSlice(allocator),
+            },
+        };
+    }
+    
+    /// Parse USE directive
+    fn parseUseDirective(self: *X64Assembler, mnemonic: []const u8, line_num: usize) AssemblerError!Instruction {
+        _ = self;
+        
+        const mode = if (std.mem.eql(u8, mnemonic, "USE16"))
+            assembler.Directive{ .use_mode = .use16 }
+        else if (std.mem.eql(u8, mnemonic, "USE32"))
+            assembler.Directive{ .use_mode = .use32 }
+        else
+            assembler.Directive{ .use_mode = .use64 };
+        
+        return Instruction{
+            .mnemonic = mnemonic,
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = mode,
+        };
+    }
+    
+    /// Parse ALIGN directive
+    fn parseAlignDirective(self: *X64Assembler, line: []const u8, line_num: usize, allocator: std.mem.Allocator) AssemblerError!Instruction {
+        _ = allocator;
+        _ = self;
+        
+        const align_start = "ALIGN".len;
+        const params_str = if (align_start < line.len)
+            std.mem.trim(u8, line[align_start..], &std.ascii.whitespace)
+        else
+            return error.SyntaxError;
+        
+        // Parse "boundary, fill_byte"
+        var parts = std.mem.splitScalar(u8, params_str, ',');
+        const boundary_str = std.mem.trim(u8, parts.next() orelse return error.SyntaxError, &std.ascii.whitespace);
+        const fill_str = std.mem.trim(u8, parts.next() orelse "0", &std.ascii.whitespace);
+        
+        const boundary = std.fmt.parseInt(usize, boundary_str, 10) catch return error.InvalidImmediate;
+        const fill_byte = std.fmt.parseInt(u8, fill_str, 10) catch return error.InvalidImmediate;
+        
+        return Instruction{
+            .mnemonic = "ALIGN",
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = .{
+                .align_directive = .{
+                    .boundary = boundary,
+                    .fill_byte = fill_byte,
+                },
+            },
+        };
+    }
+    
+    /// Parse ORG directive
+    fn parseOrgDirective(self: *X64Assembler, line: []const u8, line_num: usize, allocator: std.mem.Allocator) AssemblerError!Instruction {
+        _ = allocator;
+        _ = self;
+        
+        const org_start = "ORG".len;
+        const addr_str = if (org_start < line.len)
+            std.mem.trim(u8, line[org_start..], &std.ascii.whitespace)
+        else
+            return error.SyntaxError;
+        
+        const addr = if (std.mem.startsWith(u8, addr_str, "0x"))
+            std.fmt.parseInt(usize, addr_str[2..], 16) catch return error.InvalidImmediate
+        else
+            std.fmt.parseInt(usize, addr_str, 10) catch return error.InvalidImmediate;
+        
+        return Instruction{
+            .mnemonic = "ORG",
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = .{
+                .org = addr,
             },
         };
     }
@@ -283,12 +563,18 @@ pub const X64Assembler = struct {
                 continue;
             }
             
-            // Try to parse as memory operand
+            // Try to parse as memory operand (includes type-prefixed forms)
             if (std.mem.startsWith(u8, trimmed, "[") and std.mem.endsWith(u8, trimmed, "]")) {
                 if (try self.parseMemoryOperand(trimmed)) |mem| {
                     try operands.append(allocator, mem);
                     continue;
                 }
+            }
+            
+            // Try to parse as type-prefixed memory operand (e.g., "U64 SF_ARG1[RBP]")
+            if (try self.parseTypePrefixedOperand(trimmed, allocator)) |op| {
+                try operands.append(allocator, op);
+                continue;
             }
             
             // Otherwise assume it's a label reference
@@ -299,6 +585,75 @@ pub const X64Assembler = struct {
                 },
             });
         }
+    }
+    
+    /// Parse type-prefixed memory operand (e.g., "U64 SF_ARG1[RBP]" or "I8 0x10[RSI]")
+    /// This is a TempleOS-specific feature where you can prefix memory operands with type hints
+    /// and use HolyC constant expressions
+    fn parseTypePrefixedOperand(self: *X64Assembler, text: []const u8, allocator: std.mem.Allocator) !?OperandType {
+        _ = allocator;
+        _ = self;
+        
+        // Check for type prefix (U64, I64, U32, I32, U16, I16, U8, I8)
+        const type_prefixes = [_][]const u8{ "U64", "I64", "U32", "I32", "U16", "I16", "U8", "I8" };
+        
+        for (type_prefixes) |prefix| {
+            if (std.mem.startsWith(u8, text, prefix)) {
+                // Check if followed by whitespace
+                if (text.len > prefix.len and std.ascii.isWhitespace(text[prefix.len])) {
+                    const rest = std.mem.trim(u8, text[prefix.len..], &std.ascii.whitespace);
+                    
+                    // Determine size from type
+                    const size: OperandSize = if (std.mem.eql(u8, prefix, "U8") or std.mem.eql(u8, prefix, "I8"))
+                        .byte
+                    else if (std.mem.eql(u8, prefix, "U16") or std.mem.eql(u8, prefix, "I16"))
+                        .word
+                    else if (std.mem.eql(u8, prefix, "U32") or std.mem.eql(u8, prefix, "I32"))
+                        .dword
+                    else
+                        .qword;
+                    
+                    // Check if it's a memory operand with brackets
+                    if (std.mem.indexOf(u8, rest, "[")) |bracket_idx| {
+                        // Split into expression and register parts
+                        // e.g., "SF_ARG1[RBP]" -> expr="SF_ARG1", reg="[RBP]"
+                        const expr_str = std.mem.trim(u8, rest[0..bracket_idx], &std.ascii.whitespace);
+                        const bracket_part = rest[bracket_idx..];
+                        
+                        // For now, we can't evaluate HolyC expressions without the compiler
+                        // So we'll treat simple numeric constants
+                        var displacement: i32 = 0;
+                        
+                        // Try to parse expression as immediate
+                        if (std.mem.startsWith(u8, expr_str, "0x")) {
+                            displacement = std.fmt.parseInt(i32, expr_str[2..], 16) catch 0;
+                        } else {
+                            displacement = std.fmt.parseInt(i32, expr_str, 10) catch 0;
+                        }
+                        
+                        // Parse the register part
+                        if (std.mem.startsWith(u8, bracket_part, "[") and std.mem.endsWith(u8, bracket_part, "]")) {
+                            const reg_str = std.mem.trim(u8, bracket_part[1..bracket_part.len-1], &std.ascii.whitespace);
+                            
+                            if (Register.fromString(reg_str)) |reg| {
+                                return .{
+                                    .memory = .{
+                                        .base = reg.getHardwareId(),
+                                        .index = null,
+                                        .scale = 1,
+                                        .displacement = displacement,
+                                        .size = size,
+                                        .segment = null,
+                                    },
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return null;
     }
     
     /// Parse immediate value
@@ -379,16 +734,253 @@ pub const X64Assembler = struct {
         };
     }
     
-    /// Encode instructions to machine code
+    /// Encode instructions to machine code with multi-pass label resolution
     pub fn encode(self: *X64Assembler, instructions: []Instruction, allocator: std.mem.Allocator) AssemblerError![]u8 {
+        // Pass 1: Encode all instructions and build instruction-index-to-byte-offset map
         var code: std.ArrayList(u8) = .empty;
         errdefer code.deinit(allocator);
         
+        // Track fixup locations for label references
+        var fixups = std.ArrayList(Fixup).empty;
+        defer fixups.deinit(allocator);
+        
+        // Map from instruction index to byte offset
+        var instr_offsets = std.ArrayList(usize).empty;
+        defer instr_offsets.deinit(allocator);
+        
         for (instructions) |instr| {
-            try self.encodeInstruction(instr, &code, allocator);
+            // Record where this instruction starts
+            try instr_offsets.append(allocator, code.items.len);
+            try self.encodeInstructionWithFixups(instr, &code, &fixups, allocator);
+        }
+        
+        // Pass 2: Convert label instruction indices to byte offsets
+        var label_iter = self.labels.iterator();
+        while (label_iter.next()) |entry| {
+            var label = entry.value_ptr.*;
+            const instr_idx = label.offset;
+            
+            // Convert instruction index to byte offset
+            if (instr_idx < instr_offsets.items.len) {
+                label.offset = instr_offsets.items[instr_idx];
+            } else {
+                // Label points past the end - use final offset
+                label.offset = code.items.len;
+            }
+            entry.value_ptr.* = label;
+        }
+        
+        // Pass 3: Resolve label references and apply fixups
+        for (fixups.items) |fixup| {
+            if (self.labels.get(fixup.label_name)) |label| {
+                const target_offset = label.offset;
+                const fixup_offset = fixup.location;
+                
+                // Calculate relative offset from end of instruction
+                // For CALL/JMP, the offset is from the byte after the instruction
+                const rel_offset: i32 = @intCast(@as(i64, @intCast(target_offset)) - 
+                                                   @as(i64, @intCast(fixup_offset + fixup.size)));
+                
+                // Patch the code with the calculated offset
+                switch (fixup.size) {
+                    1 => {
+                        const rel8: i8 = @intCast(rel_offset);
+                        code.items[fixup_offset] = @bitCast(rel8);
+                    },
+                    4 => {
+                        const bytes = std.mem.toBytes(rel_offset);
+                        @memcpy(code.items[fixup_offset..][0..4], &bytes);
+                    },
+                    else => return error.InvalidOperand,
+                }
+            } else {
+                // Label not found - this is an error
+                return error.UnresolvedLabel;
+            }
         }
         
         return code.toOwnedSlice(allocator);
+    }
+    
+    /// Fixup record for label references
+    const Fixup = struct {
+        location: usize,      // Offset in code where fixup is needed
+        size: u8,             // Size of fixup (1 for rel8, 4 for rel32)
+        label_name: []const u8, // Name of label to resolve
+    };
+    
+    /// Encode a single instruction and record any label fixups needed
+    fn encodeInstructionWithFixups(self: *X64Assembler, instr: Instruction, code: *std.ArrayList(u8), fixups: *std.ArrayList(Fixup), allocator: std.mem.Allocator) !void {
+        // Handle directives first
+        if (instr.directive) |directive| {
+            switch (directive) {
+                .data => |data| {
+                    // Emit data bytes directly
+                    try code.appendSlice(allocator, data.values);
+                    return;
+                },
+                .use_mode => {
+                    // USE directives don't emit code, they just change assembler state
+                    // TODO: Track current mode for proper encoding
+                    return;
+                },
+                .import_symbols => {
+                    // IMPORT directives don't emit code, they're metadata
+                    return;
+                },
+                .align_directive => |align_data| {
+                    // Align to boundary
+                    const current_offset = code.items.len;
+                    const aligned_offset = (current_offset + align_data.boundary - 1) / align_data.boundary * align_data.boundary;
+                    const padding = aligned_offset - current_offset;
+                    
+                    // Fill with padding bytes
+                    var i: usize = 0;
+                    while (i < padding) : (i += 1) {
+                        try code.append(allocator, align_data.fill_byte);
+                    }
+                    return;
+                },
+                .org => {
+                    // ORG directive sets the code position
+                    // For now, we'll treat it as metadata
+                    // TODO: Implement proper ORG support with code positioning
+                    return;
+                },
+                .binfile => {
+                    // BINFILE would read and include a binary file
+                    // TODO: Implement file inclusion
+                    return;
+                },
+                .list_control => {
+                    // LIST/NOLIST controls listing output
+                    return;
+                },
+            }
+        }
+        
+        const mnemonic = instr.mnemonic;
+        
+        // Handle CALL with labels - record fixup
+        if (std.mem.eql(u8, mnemonic, "CALL")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .label) {
+                const label_name = instr.operands[0].label.name;
+                try code.append(allocator, 0xE8); // CALL rel32
+                const fixup_loc = code.items.len;
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try fixups.append(allocator, .{
+                    .location = fixup_loc,
+                    .size = 4,
+                    .label_name = label_name,
+                });
+                return;
+            }
+        }
+        
+        // Handle JMP with labels - record fixup
+        if (std.mem.eql(u8, mnemonic, "JMP")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .label) {
+                const label_name = instr.operands[0].label.name;
+                try code.append(allocator, 0xE9); // JMP rel32
+                const fixup_loc = code.items.len;
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try code.append(allocator, 0x00);
+                try fixups.append(allocator, .{
+                    .location = fixup_loc,
+                    .size = 4,
+                    .label_name = label_name,
+                });
+                return;
+            }
+        }
+        
+        // Handle conditional jumps with labels - record fixup
+        const jump_mnemonics = [_][]const u8{ "JO", "JNO", "JB", "JAE", "JE", "JNE", "JBE", "JA", 
+                                              "JS", "JNS", "JP", "JNP", "JL", "JGE", "JLE", "JG",
+                                              "JZ", "JNZ", "JC", "JNC" };
+        for (jump_mnemonics) |jmp| {
+            if (std.mem.eql(u8, mnemonic, jmp)) {
+                if (instr.operands.len == 1 and instr.operands[0] == .label) {
+                    const label_name = instr.operands[0].label.name;
+                    // For now, use short form (rel8)
+                    const jump_map = std.StaticStringMap(u8).initComptime(.{
+                        .{ "JO",   0x70 }, .{ "JNO",  0x71 },
+                        .{ "JB",   0x72 }, .{ "JAE",  0x73 },
+                        .{ "JE",   0x74 }, .{ "JNE",  0x75 },
+                        .{ "JBE",  0x76 }, .{ "JA",   0x77 },
+                        .{ "JS",   0x78 }, .{ "JNS",  0x79 },
+                        .{ "JP",   0x7A }, .{ "JNP",  0x7B },
+                        .{ "JL",   0x7C }, .{ "JGE",  0x7D },
+                        .{ "JLE",  0x7E }, .{ "JG",   0x7F },
+                        .{ "JZ",   0x74 }, .{ "JNZ",  0x75 },
+                        .{ "JC",   0x72 }, .{ "JNC",  0x73 },
+                    });
+                    const opcode = jump_map.get(mnemonic).?;
+                    try code.append(allocator, opcode);
+                    const fixup_loc = code.items.len;
+                    try code.append(allocator, 0x00);
+                    try fixups.append(allocator, .{
+                        .location = fixup_loc,
+                        .size = 1,
+                        .label_name = label_name,
+                    });
+                    return;
+                }
+            }
+        }
+        
+        // For all other instructions, use the existing encodeInstruction
+        try self.encodeInstruction(instr, code, allocator);
+    }
+    
+    /// Helper: Encode ModR/M byte and optional SIB/displacement for memory operands
+    fn encodeModRM(_: *X64Assembler, reg: u8, mem: assembler.MemoryOperand, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
+        
+        const base = mem.base orelse return error.InvalidMemoryOperand;
+        const base_masked = base & 0x7;
+        const reg_masked = reg & 0x7;
+        
+        // Determine mod field based on displacement
+        const disp = mem.displacement;
+        const mod: u8 = if (disp == 0 and base_masked != 5) // RBP requires displacement
+            0b00 // No displacement
+        else if (disp >= -128 and disp <= 127)
+            0b01 // 8-bit displacement
+        else
+            0b10; // 32-bit displacement
+        
+        // Check if we need SIB byte (RSP/R12 always need SIB)
+        const needs_sib = (base_masked == 4);
+        
+        if (needs_sib) {
+            // ModR/M byte with SIB indicator
+            const modrm = (mod << 6) | (reg_masked << 3) | 0b100;
+            try code.append(allocator, modrm);
+            
+            // SIB byte: scale=0, index=none (0b100), base=actual base
+            const sib = (0b00 << 6) | (0b100 << 3) | base_masked;
+            try code.append(allocator, sib);
+        } else {
+            // Direct ModR/M encoding
+            const modrm = (mod << 6) | (reg_masked << 3) | base_masked;
+            try code.append(allocator, modrm);
+        }
+        
+        // Emit displacement if needed
+        if (mod == 0b01) {
+            // 8-bit displacement
+            try code.append(allocator, @bitCast(@as(i8, @intCast(disp))));
+        } else if (mod == 0b10 or (mod == 0b00 and base_masked == 5)) {
+            // 32-bit displacement (or RBP with 0 displacement needs disp32)
+            const disp32: i32 = @intCast(disp);
+            const bytes = std.mem.toBytes(disp32);
+            try code.appendSlice(allocator, &bytes);
+        }
     }
     
     /// Helper: Encode arithmetic/logical operations (ADD, SUB, AND, OR, XOR, CMP, TEST)
@@ -593,6 +1185,34 @@ pub const X64Assembler = struct {
     
     /// Helper: Encode multiplication and division
     fn encodeMulDiv(mnemonic: []const u8, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !bool {
+        // Handle IMUL2 two-operand form: IMUL2 r64, r/m64 (TempleOS syntax)
+        if (std.mem.eql(u8, mnemonic, "IMUL2") and instr.operands.len == 2) {
+            const dest = instr.operands[0];
+            const src = instr.operands[1];
+            
+            if (dest == .register and src == .register) {
+                const dst_reg = dest.register;
+                const src_reg = src.register;
+                
+                if (dst_reg.size == .qword and src_reg.size == .qword) {
+                    // IMUL2 r64, r64: REX.W + 0x0F 0xAF /r
+                    var rex: u8 = 0x48;
+                    if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                    if (src_reg.id >= 8) rex |= 0x01; // REX.B
+                    try code.append(allocator, rex);
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0xAF);
+                    const modrm = 0xC0 | ((dst_reg.id & 0x7) << 3) | (src_reg.id & 0x7);
+                    try code.append(allocator, modrm);
+                    return true;
+                }
+            }
+            
+            // TODO: Support IMUL2 r64, [mem] and IMUL2 r64, imm forms
+            return false;
+        }
+        
+        // Handle one-operand forms: MUL/IMUL/DIV/IDIV r64
         if (instr.operands.len != 1) return false;
         if (instr.operands[0] != .register) return false;
         
@@ -714,7 +1334,6 @@ pub const X64Assembler = struct {
 
     /// Encode a single instruction to machine code
     fn encodeInstruction(self: *X64Assembler, instr: Instruction, code: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
-        _ = self;
         
         const mnemonic = instr.mnemonic;
         
@@ -820,7 +1439,7 @@ pub const X64Assembler = struct {
             }
         }
         
-        // MOV (simplified - only reg,reg and reg,imm for now)
+        // MOV instruction with full operand support
         else if (std.mem.eql(u8, mnemonic, "MOV")) {
             if (instr.operands.len == 2) {
                 const dest = instr.operands[0];
@@ -831,7 +1450,12 @@ pub const X64Assembler = struct {
                         switch (src) {
                             // MOV reg, reg
                             .register => |src_reg| {
-                                if (dst_reg.size == .qword and src_reg.size == .qword) {
+                                // Ensure same size
+                                if (dst_reg.size != src_reg.size) {
+                                    return error.OperandSizeMismatch;
+                                }
+                                
+                                if (dst_reg.size == .qword) {
                                     // REX.W prefix
                                     var rex: u8 = 0x48;
                                     if (dst_reg.id >= 8) rex |= 0x01; // REX.B
@@ -842,6 +1466,9 @@ pub const X64Assembler = struct {
                                     try code.append(allocator, 0x89);
                                     const modrm = 0xC0 | ((src_reg.id & 0x7) << 3) | (dst_reg.id & 0x7);
                                     try code.append(allocator, modrm);
+                                } else {
+                                    // For now, only support qword
+                                    return error.UnsupportedOperandSize;
                                 }
                             },
                             
@@ -865,7 +1492,71 @@ pub const X64Assembler = struct {
                                     const val: i32 = @intCast(imm.value);
                                     const bytes = std.mem.toBytes(val);
                                     try code.appendSlice(allocator, &bytes);
+                                } else {
+                                    return error.UnsupportedOperandSize;
                                 }
+                            },
+                            
+                            // MOV reg, [mem]
+                            .memory => |mem| {
+                                if (dst_reg.size == .qword) {
+                                    // MOV r64, [mem]: REX.W + 0x8B + ModR/M + disp
+                                    var rex: u8 = 0x48;
+                                    if (dst_reg.id >= 8) rex |= 0x04; // REX.R
+                                    if (mem.base) |base| {
+                                        if (base >= 8) rex |= 0x01; // REX.B
+                                    }
+                                    try code.append(allocator, rex);
+                                    try code.append(allocator, 0x8B); // MOV r64, r/m64
+                                    
+                                    // Encode ModR/M and SIB if needed
+                                    try self.encodeModRM(dst_reg.id, mem, code, allocator);
+                                } else {
+                                    return error.UnsupportedOperandSize;
+                                }
+                            },
+                            
+                            else => return error.InvalidOperand,
+                        }
+                    },
+                    .memory => |mem| {
+                        switch (src) {
+                            // MOV [mem], reg
+                            .register => |src_reg| {
+                                if (src_reg.size == .qword) {
+                                    // MOV [mem], r64: REX.W + 0x89 + ModR/M + disp
+                                    var rex: u8 = 0x48;
+                                    if (src_reg.id >= 8) rex |= 0x04; // REX.R
+                                    if (mem.base) |base| {
+                                        if (base >= 8) rex |= 0x01; // REX.B
+                                    }
+                                    try code.append(allocator, rex);
+                                    try code.append(allocator, 0x89); // MOV r/m64, r64
+                                    
+                                    // Encode ModR/M and SIB if needed
+                                    try self.encodeModRM(src_reg.id, mem, code, allocator);
+                                } else {
+                                    return error.UnsupportedOperandSize;
+                                }
+                            },
+                            
+                            // MOV [mem], imm
+                            .immediate => |imm| {
+                                // MOV [mem], imm32: REX.W + 0xC7 /0 + ModR/M + disp + imm32
+                                var rex: u8 = 0x48;
+                                if (mem.base) |base| {
+                                    if (base >= 8) rex |= 0x01; // REX.B
+                                }
+                                try code.append(allocator, rex);
+                                try code.append(allocator, 0xC7); // MOV r/m64, imm32
+                                
+                                // Encode ModR/M with reg field = 0 (/0)
+                                try self.encodeModRM(0, mem, code, allocator);
+                                
+                                // Emit immediate (sign-extended from 32-bit)
+                                const val: i32 = @intCast(imm.value);
+                                const bytes = std.mem.toBytes(val);
+                                try code.appendSlice(allocator, &bytes);
                             },
                             
                             else => return error.InvalidOperand,

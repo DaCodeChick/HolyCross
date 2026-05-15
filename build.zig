@@ -36,6 +36,19 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(hcpp);
 
+    // Assembler executable
+    const hcas = b.addExecutable(.{
+        .name = "hcas",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/hcas.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    hcas.root_module.addImport("holycross", holycross_lib);
+
+    b.installArtifact(hcas);
+
     const run_step = b.step("run", "Run the HolyC compiler");
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
