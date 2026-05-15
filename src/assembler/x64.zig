@@ -124,6 +124,23 @@ pub const X64Assembler = struct {
         };
     }
     
+    /// Initialize with type layout information for expression evaluation
+    pub fn initWithTypes(
+        allocator: std.mem.Allocator,
+        type_layouts: *const std.StringHashMap(expr_eval.TypeLayout),
+    ) X64Assembler {
+        return .{
+            .allocator = allocator,
+            .labels = std.StringHashMap(Label).init(allocator),
+            .expr_ctx = expr_eval.EvalContext{
+                .allocator = allocator,
+                .symbol_table = null,
+                .type_layouts = type_layouts,
+                .constants = std.StringHashMap(i64).init(allocator),
+            },
+        };
+    }
+    
     pub fn deinit(self: *X64Assembler) void {
         self.labels.deinit();
         self.expr_ctx.deinit();

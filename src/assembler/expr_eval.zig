@@ -21,31 +21,53 @@
 //!   - Constant definitions (for named constants)
 
 const std = @import("std");
-const assembler = @import("assembler.zig");
+
+// Forward declarations for optional integration with compiler
+const SymbolTable = @import("../semantic/symbol_table.zig").SymbolTable;
+const TypeLayout = @import("../semantic/type_layout.zig").TypeLayout;
+const ast = @import("../parser/ast.zig");
 
 /// Expression evaluation context
 /// Contains symbol table and type information needed for evaluation
 pub const EvalContext = struct {
     allocator: std.mem.Allocator,
     
-    // TODO: Add symbol table reference
-    // symbols: *SymbolTable,
+    // Optional compiler integration
+    symbol_table: ?*const SymbolTable,
+    type_layouts: ?*const std.StringHashMap(TypeLayout),
     
-    // TODO: Add type registry reference  
-    // types: *TypeRegistry,
-    
-    // For now, we only support numeric constants
-    // Full integration requires compiler symbol table access
+    // Named constants (e.g., from #define or const declarations)
+    constants: std.StringHashMap(i64),
     
     pub fn init(allocator: std.mem.Allocator) EvalContext {
         return .{
             .allocator = allocator,
+            .symbol_table = null,
+            .type_layouts = null,
+            .constants = std.StringHashMap(i64).init(allocator),
         };
     }
     
+    pub fn initWithCompiler(
+        allocator: std.mem.Allocator,
+        symbol_table: *const SymbolTable,
+        type_layouts: *const std.StringHashMap(TypeLayout),
+    ) EvalContext {
+        return .{
+            .allocator = allocator,
+            .symbol_table = symbol_table,
+            .type_layouts = type_layouts,
+            .constants = std.StringHashMap(i64).init(allocator),
+        };
+    }
+    
+    /// Add a named constant
+    pub fn defineConstant(self: *EvalContext, name: []const u8, value: i64) !void {
+        try self.constants.put(name, value);
+    }
+    
     pub fn deinit(self: *EvalContext) void {
-        _ = self;
-        // Nothing to clean up yet
+        self.constants.deinit();
     }
 };
 
@@ -53,6 +75,12 @@ pub const EvalContext = struct {
 /// Returns null if the expression cannot be evaluated at compile time
 pub fn evalConstExpr(ctx: *EvalContext, expr: []const u8) error{OutOfMemory}!?i64 {
     const trimmed = std.mem.trim(u8, expr, &std.ascii.whitespace);
+    
+    // Check for binary operators FIRST (before trying to parse as number)
+    // This allows expressions like "0x20>>2" to work correctly
+    if (try evalBinaryExpr(ctx, trimmed)) |value| {
+        return value;
+    }
     
     // Try to parse as hex literal
     if (std.mem.startsWith(u8, trimmed, "0x") or std.mem.startsWith(u8, trimmed, "0X")) {
@@ -76,43 +104,85 @@ pub fn evalConstExpr(ctx: *EvalContext, expr: []const u8) error{OutOfMemory}!?i6
         return try evalAddressOf(ctx, trimmed[1..]);
     }
     
-    // Check for binary operators
-    if (try evalBinaryExpr(ctx, trimmed)) |value| {
+    // Check for struct member access (Type.member)
+    if (std.mem.indexOf(u8, trimmed, ".")) |dot_pos| {
+        return try evalMemberAccess(ctx, trimmed, dot_pos);
+    }
+    
+    // Check for named constants
+    if (ctx.constants.get(trimmed)) |value| {
         return value;
     }
     
-    // TODO: Check for struct member access (Type.member)
+    return null;
+}
+
+/// Evaluate struct member access (e.g., "MyStruct.field")
+fn evalMemberAccess(ctx: *EvalContext, expr: []const u8, dot_pos: usize) error{OutOfMemory}!?i64 {
+    const type_name = std.mem.trim(u8, expr[0..dot_pos], &std.ascii.whitespace);
+    const member_name = std.mem.trim(u8, expr[dot_pos+1..], &std.ascii.whitespace);
     
-    // TODO: Check for symbolic constants
+    // Look up type in type layouts
+    if (ctx.type_layouts) |layouts| {
+        if (layouts.get(type_name)) |layout| {
+            if (layout.getMemberOffset(member_name)) |offset| {
+                return @intCast(offset);
+            }
+        }
+    }
     
     return null;
 }
 
 /// Evaluate sizeof(Type) expression
 fn evalSizeof(ctx: *EvalContext, type_name: []const u8) error{OutOfMemory}!?i64 {
-    _ = ctx;
-    
     const trimmed = std.mem.trim(u8, type_name, &std.ascii.whitespace);
     
-    // For now, only handle basic types
-    // TODO: Integrate with compiler's type system
+    // Handle basic types
     if (std.mem.eql(u8, trimmed, "U8") or std.mem.eql(u8, trimmed, "I8")) return 1;
     if (std.mem.eql(u8, trimmed, "U16") or std.mem.eql(u8, trimmed, "I16")) return 2;
     if (std.mem.eql(u8, trimmed, "U32") or std.mem.eql(u8, trimmed, "I32") or std.mem.eql(u8, trimmed, "F32")) return 4;
     if (std.mem.eql(u8, trimmed, "U64") or std.mem.eql(u8, trimmed, "I64") or std.mem.eql(u8, trimmed, "F64")) return 8;
     if (std.mem.eql(u8, trimmed, "U0") or std.mem.eql(u8, trimmed, "I0")) return 0;
     
-    // Unknown type - requires type registry
+    // Check for named types (classes/structs) in type layouts
+    if (ctx.type_layouts) |layouts| {
+        if (layouts.get(trimmed)) |layout| {
+            return @intCast(layout.total_size);
+        }
+    }
+    
+    // Unknown type
     return null;
 }
 
 /// Evaluate &variable expression
+/// Note: This returns the variable's stack offset if it's a local variable,
+/// or its global address if it's a global variable.
+/// Currently unsupported because stack offsets are determined during code generation,
+/// not during semantic analysis.
 fn evalAddressOf(ctx: *EvalContext, var_name: []const u8) error{OutOfMemory}!?i64 {
     _ = ctx;
-    _ = var_name;
     
-    // TODO: Look up variable in symbol table and return its address/offset
-    // This requires integration with compiler's symbol table
+    const trimmed = std.mem.trim(u8, var_name, &std.ascii.whitespace);
+    _ = trimmed;
+    
+    // TODO: Look up variable in symbol table
+    // For local variables: Need code generator's stack frame layout (not available in semantic analysis)
+    // For global variables: Need linker/loader address assignment
+    //
+    // This is complex because:
+    // 1. Local variables don't have fixed offsets until code generation assigns stack slots
+    // 2. Global variables don't have fixed addresses until linking/loading
+    // 3. The assembler runs before the code generator's stack frame allocation
+    //
+    // Possible solutions:
+    // A. Run assembly generation after stack frame allocation (requires major refactoring)
+    // B. Add a second pass to patch &variable references after code generation
+    // C. Require explicit offsets in inline assembly (user responsibility)
+    //
+    // For now, return null (unsupported)
+    
     return null;
 }
 
