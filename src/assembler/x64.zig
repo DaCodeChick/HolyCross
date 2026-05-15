@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const assembler = @import("assembler.zig");
+const expr_eval = @import("expr_eval.zig");
 
 const Assembler = assembler.Assembler;
 const Instruction = assembler.Instruction;
@@ -12,6 +13,7 @@ const OperandType = assembler.OperandType;
 const OperandSize = assembler.OperandSize;
 const AssemblerError = assembler.AssemblerError;
 const Label = assembler.Label;
+const EvalContext = expr_eval.EvalContext;
 
 /// x64 register encoding
 pub const Register = enum(u8) {
@@ -112,16 +114,19 @@ pub const Register = enum(u8) {
 pub const X64Assembler = struct {
     allocator: std.mem.Allocator,
     labels: std.StringHashMap(Label),
+    expr_ctx: EvalContext,
     
     pub fn init(allocator: std.mem.Allocator) X64Assembler {
         return .{
             .allocator = allocator,
             .labels = std.StringHashMap(Label).init(allocator),
+            .expr_ctx = EvalContext.init(allocator),
         };
     }
     
     pub fn deinit(self: *X64Assembler) void {
         self.labels.deinit();
+        self.expr_ctx.deinit();
     }
     
     /// Parse assembly source into instructions
@@ -247,6 +252,16 @@ pub const X64Assembler = struct {
         // Check for ORG directive
         if (std.mem.eql(u8, mnemonic, "ORG")) {
             return try self.parseOrgDirective(line, line_num, allocator);
+        }
+        
+        // Check for BINFILE directive
+        if (std.mem.eql(u8, mnemonic, "BINFILE")) {
+            return try self.parseBinFileDirective(line, line_num, allocator);
+        }
+        
+        // Check for LIST/NOLIST directives
+        if (std.mem.eql(u8, mnemonic, "LIST") or std.mem.eql(u8, mnemonic, "NOLIST")) {
+            return try self.parseListDirective(mnemonic, line_num);
         }
         
         // Get the rest of the line (operands)
@@ -376,6 +391,55 @@ pub const X64Assembler = struct {
         while (parts.next()) |part| {
             const trimmed = std.mem.trim(u8, part, &std.ascii.whitespace);
             if (trimmed.len == 0) continue;
+            
+            // Check for DUP syntax: "count DUP (value)"
+            if (std.mem.indexOf(u8, trimmed, " DUP ")) |dup_idx| {
+                const count_str = std.mem.trim(u8, trimmed[0..dup_idx], &std.ascii.whitespace);
+                const rest = std.mem.trim(u8, trimmed[dup_idx + 5..], &std.ascii.whitespace);
+                
+                // Parse count
+                const count = if (std.mem.startsWith(u8, count_str, "0x"))
+                    std.fmt.parseInt(usize, count_str[2..], 16) catch return error.InvalidImmediate
+                else
+                    std.fmt.parseInt(usize, count_str, 10) catch return error.InvalidImmediate;
+                
+                // Parse value in parentheses
+                if (!std.mem.startsWith(u8, rest, "(") or !std.mem.endsWith(u8, rest, ")")) {
+                    return error.SyntaxError;
+                }
+                
+                const value_str = std.mem.trim(u8, rest[1..rest.len-1], &std.ascii.whitespace);
+                const value = if (std.mem.startsWith(u8, value_str, "0x"))
+                    std.fmt.parseInt(i64, value_str[2..], 16) catch return error.InvalidImmediate
+                else
+                    std.fmt.parseInt(i64, value_str, 10) catch return error.InvalidImmediate;
+                
+                // Repeat value 'count' times
+                var i: usize = 0;
+                while (i < count) : (i += 1) {
+                    switch (size) {
+                        .byte => {
+                            const val: u8 = @intCast(@as(u64, @bitCast(value)) & 0xFF);
+                            try data_bytes.append(allocator, val);
+                        },
+                        .word => {
+                            const val: u16 = @intCast(@as(u64, @bitCast(value)) & 0xFFFF);
+                            const bytes = std.mem.toBytes(val);
+                            try data_bytes.appendSlice(allocator, &bytes);
+                        },
+                        .dword => {
+                            const val: u32 = @intCast(@as(u64, @bitCast(value)) & 0xFFFFFFFF);
+                            const bytes = std.mem.toBytes(val);
+                            try data_bytes.appendSlice(allocator, &bytes);
+                        },
+                        .qword => {
+                            const bytes = std.mem.toBytes(value);
+                            try data_bytes.appendSlice(allocator, &bytes);
+                        },
+                    }
+                }
+                continue;
+            }
             
             // Try to parse as number
             var value: i64 = 0;
@@ -536,6 +600,80 @@ pub const X64Assembler = struct {
         };
     }
     
+    /// Parse BINFILE directive - includes binary file contents
+    fn parseBinFileDirective(self: *X64Assembler, line: []const u8, line_num: usize, allocator: std.mem.Allocator) AssemblerError!Instruction {
+        _ = self;
+        
+        const binfile_start = "BINFILE".len;
+        var filename_str = if (binfile_start < line.len)
+            std.mem.trim(u8, line[binfile_start..], &std.ascii.whitespace)
+        else
+            return error.SyntaxError;
+        
+        // Strip trailing semicolon
+        if (std.mem.endsWith(u8, filename_str, ";")) {
+            filename_str = filename_str[0..filename_str.len-1];
+            filename_str = std.mem.trim(u8, filename_str, &std.ascii.whitespace);
+        }
+        
+        // Strip quotes
+        if (std.mem.startsWith(u8, filename_str, "\"") and std.mem.endsWith(u8, filename_str, "\"")) {
+            filename_str = filename_str[1..filename_str.len-1];
+        } else if (std.mem.startsWith(u8, filename_str, "'") and std.mem.endsWith(u8, filename_str, "'")) {
+            filename_str = filename_str[1..filename_str.len-1];
+        } else {
+            return error.SyntaxError;
+        }
+        
+        // Read the binary file contents during parsing
+        // This is simpler than trying to read during encoding
+        const cwd = std.Io.Dir.cwd();
+        var io_init = std.Io.Threaded.init(allocator, .{});
+        const io = io_init.io();
+        
+        const file_contents = cwd.readFileAlloc(io, filename_str, allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch |err| {
+            std.debug.print("Error reading file '{s}': {}\n", .{filename_str, err});
+            return error.FileNotFound;
+        };
+        // Don't defer free - the data directive owns this memory now
+        
+        // Convert to data directive
+        return Instruction{
+            .mnemonic = "BINFILE",
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = .{
+                .data = .{
+                    .size = .byte,
+                    .values = file_contents,
+                },
+            },
+        };
+    }
+    
+    /// Parse LIST/NOLIST directive
+    fn parseListDirective(self: *X64Assembler, mnemonic: []const u8, line_num: usize) AssemblerError!Instruction {
+        _ = self;
+        
+        const control = if (std.mem.eql(u8, mnemonic, "LIST"))
+            assembler.Directive{ .list_control = .list }
+        else
+            assembler.Directive{ .list_control = .nolist };
+        
+        return Instruction{
+            .mnemonic = mnemonic,
+            .operands = &[_]OperandType{},
+            .location = .{
+                .line = line_num,
+                .column = 0,
+            },
+            .directive = control,
+        };
+    }
+    
     /// Parse operands from a string
     fn parseOperands(self: *X64Assembler, operands_str: []const u8, operands: *std.ArrayList(OperandType), allocator: std.mem.Allocator) !void {
         
@@ -592,7 +730,6 @@ pub const X64Assembler = struct {
     /// and use HolyC constant expressions
     fn parseTypePrefixedOperand(self: *X64Assembler, text: []const u8, allocator: std.mem.Allocator) !?OperandType {
         _ = allocator;
-        _ = self;
         
         // Check for type prefix (U64, I64, U32, I32, U16, I16, U8, I8)
         const type_prefixes = [_][]const u8{ "U64", "I64", "U32", "I32", "U16", "I16", "U8", "I8" };
@@ -617,18 +754,19 @@ pub const X64Assembler = struct {
                     if (std.mem.indexOf(u8, rest, "[")) |bracket_idx| {
                         // Split into expression and register parts
                         // e.g., "SF_ARG1[RBP]" -> expr="SF_ARG1", reg="[RBP]"
+                        // or   "sizeof(MyStruct)+8[RBP]" -> expr="sizeof(MyStruct)+8", reg="[RBP]"
                         const expr_str = std.mem.trim(u8, rest[0..bracket_idx], &std.ascii.whitespace);
                         const bracket_part = rest[bracket_idx..];
                         
-                        // For now, we can't evaluate HolyC expressions without the compiler
-                        // So we'll treat simple numeric constants
+                        // Try to evaluate the expression using the expression evaluator
                         var displacement: i32 = 0;
-                        
-                        // Try to parse expression as immediate
-                        if (std.mem.startsWith(u8, expr_str, "0x")) {
-                            displacement = std.fmt.parseInt(i32, expr_str[2..], 16) catch 0;
+                        if (try expr_eval.evalConstExpr(&self.expr_ctx, expr_str)) |value| {
+                            displacement = @intCast(value);
                         } else {
-                            displacement = std.fmt.parseInt(i32, expr_str, 10) catch 0;
+                            // Expression cannot be evaluated - might need symbol table
+                            // For now, treat as zero displacement
+                            // TODO: Report warning or error
+                            displacement = 0;
                         }
                         
                         // Parse the register part
@@ -848,9 +986,9 @@ pub const X64Assembler = struct {
                     return;
                 },
                 .binfile => {
-                    // BINFILE would read and include a binary file
-                    // TODO: Implement file inclusion
-                    return;
+                    // BINFILE is converted to data directive during parsing
+                    // This case should not be reached
+                    unreachable;
                 },
                 .list_control => {
                     // LIST/NOLIST controls listing output

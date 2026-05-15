@@ -112,6 +112,7 @@ pub const AssemblerError = error{
     SyntaxError,
     OperandSizeMismatch,
     UnsupportedOperandSize,
+    FileNotFound,
 };
 
 /// Architecture-specific assembler interface
@@ -207,8 +208,11 @@ pub fn assembler(impl: anytype) Assembler {
         };
     };
     
-    return Assembler{
+        return Assembler{
         .ptr = impl,
         .vtable = &gen.vtable,
     };
 }
+
+// Re-export expression evaluator
+pub const expr_eval = @import("expr_eval.zig");
