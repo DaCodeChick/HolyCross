@@ -703,11 +703,19 @@ pub const X64MachineCodeGen = struct {
     fn genFloatNeg(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
         // x87 FPU negation: dest = -src
         
-        // Load src into ST0
-        const src_offset = try self.getTempOffset(instr.src1);
-        // fld qword [rbp+src_offset]
+        // Load src into RAX first (handles all operand types)
+        try self.loadOperandToRax(instr.src1);
+        
+        // Store RAX to temp location on stack
+        const temp_offset: i32 = -8; // Use a temp slot
+        // mov [rbp-8], rax
+        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+        try self.emitModRM(0, 5, temp_offset);
+        
+        // Load from temp into ST0
+        // fld qword [rbp-8]
         try self.emitBytes(&[_]u8{ 0xDD });
-        try self.emitModRM(0, 5, src_offset);
+        try self.emitModRM(0, 5, temp_offset);
         
         // fchs (change sign of ST0)
         try self.emitBytes(&[_]u8{ 0xD9, 0xE0 });
@@ -1216,6 +1224,15 @@ pub const X64MachineCodeGen = struct {
                         try self.emitQword(@bitCast(val));
                     }
                 },
+                .float => |val| {
+                    // F64 comparison - load as bit-pattern
+                    // NOTE: This only works correctly for == and !=
+                    // For < > <= >= we need proper x87 FCOM instructions
+                    const bits: u64 = @bitCast(val);
+                    // movabs rcx, imm64
+                    try self.emitBytes(&[_]u8{ 0x48, 0xB9 });
+                    try self.emitQword(bits);
+                },
                 else => return error.UnsupportedConstant,
             },
             else => return error.InvalidOperand,
@@ -1475,6 +1492,13 @@ pub const X64MachineCodeGen = struct {
                         try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
                         try self.emitQword(@bitCast(val));
                     }
+                },
+                .float => |val| {
+                    // Load F64 as bit-pattern
+                    const bits: u64 = @bitCast(val);
+                    // movabs rax, imm64
+                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                    try self.emitQword(bits);
                 },
                 else => return error.UnsupportedConstant,
             },
