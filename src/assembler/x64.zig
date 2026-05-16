@@ -1801,6 +1801,20 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0xA2);
         }
         
+        // SYSCALL - Fast System Call (0F 05)
+        // Transfers control to OS at CPL 0
+        else if (std.mem.eql(u8, mnemonic, "SYSCALL")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x05);
+        }
+        
+        // SYSRET - Return from Fast System Call (0F 07)
+        // Returns from SYSCALL
+        else if (std.mem.eql(u8, mnemonic, "SYSRET")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x07);
+        }
+        
         // ===== Privileged/System Instructions =====
         
         // CLI - Clear Interrupt Flag (FA)

@@ -2,6 +2,7 @@ const std = @import("std");
 const lib = @import("holycross");
 const X64Assembler = lib.assembler.X64Assembler;
 const Preprocessor = lib.preprocessor.Preprocessor;
+const ELFObjectWriter = lib.elf_object.ELFObjectWriter;
 
 /// hcas - HolyC Assembler
 /// Standalone assembler tool for HolyC/TempleOS-style x64 assembly
@@ -154,8 +155,30 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("[3/3] Writing output...\n", .{});
     switch (output_format) {
         .elf_object => {
-            std.debug.print("Error: ELF object file output not yet implemented\n", .{});
-            return error.NotImplemented;
+            // Create ELF object writer
+            var elf_obj = try ELFObjectWriter.init(allocator);
+            defer elf_obj.deinit();
+            
+            // Add code to .text section
+            try elf_obj.appendCode(machine_code);
+            
+            // Add labels as symbols
+            var label_iter = asm_ctx.labels.iterator();
+            while (label_iter.next()) |entry| {
+                const label = entry.value_ptr.*;
+                const binding: ELFObjectWriter.Symbol.Binding = if (label.is_exported) .global else .local;
+                _ = try elf_obj.addSymbol(
+                    label.name,
+                    label.offset,
+                    0, // size (unknown for labels)
+                    .text,
+                    binding,
+                    .notype
+                );
+            }
+            
+            // Write to file
+            try elf_obj.writeToFile(init.io, output_file.?);
         },
         .raw_binary => {
             const out_file = try cwd.createFile(init.io, output_file.?, .{});
