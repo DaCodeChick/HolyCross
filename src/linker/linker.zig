@@ -400,6 +400,18 @@ pub const Linker = struct {
             try elf.appendCode(section.data);
         }
         
+        // Generate PLT and GOT if we have external symbols
+        if (self.external_symbols.items.len > 0) {
+            // Add dynamic symbols to ELF writer
+            for (self.external_symbols.items) |ext| {
+                try elf.addDynamicSymbol(ext.name, ext.plt_offset, ext.got_offset);
+            }
+            
+            // Generate PLT and GOT (they will be appended by writeToFile)
+            try elf.generatePLT(layout.got_addr);
+            try elf.generateGOT(0, layout.plt_addr); // dynamic_addr = 0 for now
+        }
+        
         // Append all data sections
         for (layout.data_sections) |section| {
             _ = try elf.appendData(section.data);
