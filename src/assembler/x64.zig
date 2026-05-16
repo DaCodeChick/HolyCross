@@ -1801,6 +1801,154 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0xA2);
         }
         
+        // ===== Privileged/System Instructions =====
+        
+        // CLI - Clear Interrupt Flag (FA)
+        else if (std.mem.eql(u8, mnemonic, "CLI")) {
+            try code.append(allocator, 0xFA);
+        }
+        
+        // STI - Set Interrupt Flag (FB)
+        else if (std.mem.eql(u8, mnemonic, "STI")) {
+            try code.append(allocator, 0xFB);
+        }
+        
+        // HLT - Halt (F4)
+        else if (std.mem.eql(u8, mnemonic, "HLT")) {
+            try code.append(allocator, 0xF4);
+        }
+        
+        // LGDT - Load Global Descriptor Table Register (0F 01 /2)
+        else if (std.mem.eql(u8, mnemonic, "LGDT")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                try code.append(allocator, 0x0F);
+                try code.append(allocator, 0x01);
+                try self.encodeModRM(2, mem, code, allocator);
+            }
+        }
+        
+        // LIDT - Load Interrupt Descriptor Table Register (0F 01 /3)
+        else if (std.mem.eql(u8, mnemonic, "LIDT")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                try code.append(allocator, 0x0F);
+                try code.append(allocator, 0x01);
+                try self.encodeModRM(3, mem, code, allocator);
+            }
+        }
+        
+        // SGDT - Store Global Descriptor Table Register (0F 01 /0)
+        else if (std.mem.eql(u8, mnemonic, "SGDT")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                try code.append(allocator, 0x0F);
+                try code.append(allocator, 0x01);
+                try self.encodeModRM(0, mem, code, allocator);
+            }
+        }
+        
+        // SIDT - Store Interrupt Descriptor Table Register (0F 01 /1)
+        else if (std.mem.eql(u8, mnemonic, "SIDT")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                try code.append(allocator, 0x0F);
+                try code.append(allocator, 0x01);
+                try self.encodeModRM(1, mem, code, allocator);
+            }
+        }
+        
+        // LTR - Load Task Register (0F 00 /3)
+        else if (std.mem.eql(u8, mnemonic, "LTR")) {
+            if (instr.operands.len == 1) {
+                if (instr.operands[0] == .register) {
+                    const reg = instr.operands[0].register;
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0x00);
+                    try code.append(allocator, 0xD8 + (reg.id & 0x7)); // /3 + reg
+                } else if (instr.operands[0] == .memory) {
+                    const mem = instr.operands[0].memory;
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0x00);
+                    try self.encodeModRM(3, mem, code, allocator);
+                }
+            }
+        }
+        
+        // STR - Store Task Register (0F 00 /1)
+        else if (std.mem.eql(u8, mnemonic, "STR")) {
+            if (instr.operands.len == 1) {
+                if (instr.operands[0] == .register) {
+                    const reg = instr.operands[0].register;
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0x00);
+                    try code.append(allocator, 0xC8 + (reg.id & 0x7)); // /1 + reg
+                } else if (instr.operands[0] == .memory) {
+                    const mem = instr.operands[0].memory;
+                    try code.append(allocator, 0x0F);
+                    try code.append(allocator, 0x00);
+                    try self.encodeModRM(1, mem, code, allocator);
+                }
+            }
+        }
+        
+        // RDMSR - Read Model Specific Register (0F 32)
+        else if (std.mem.eql(u8, mnemonic, "RDMSR")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x32);
+        }
+        
+        // WRMSR - Write Model Specific Register (0F 30)
+        else if (std.mem.eql(u8, mnemonic, "WRMSR")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x30);
+        }
+        
+        // INVLPG - Invalidate TLB Entry (0F 01 /7)
+        else if (std.mem.eql(u8, mnemonic, "INVLPG")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                try code.append(allocator, 0x0F);
+                try code.append(allocator, 0x01);
+                try self.encodeModRM(7, mem, code, allocator);
+            }
+        }
+        
+        // WBINVD - Write Back and Invalidate Cache (0F 09)
+        else if (std.mem.eql(u8, mnemonic, "WBINVD")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x09);
+        }
+        
+        // INVD - Invalidate Cache (0F 08)
+        else if (std.mem.eql(u8, mnemonic, "INVD")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x08);
+        }
+        
+        // INT - Software Interrupt (CD imm8)
+        else if (std.mem.eql(u8, mnemonic, "INT")) {
+            if (instr.operands.len == 1 and instr.operands[0] == .immediate) {
+                const imm = instr.operands[0].immediate;
+                if (imm.value == 3) {
+                    // INT 3 - Breakpoint (CC)
+                    try code.append(allocator, 0xCC);
+                } else {
+                    // INT imm8 - CD imm8
+                    try code.append(allocator, 0xCD);
+                    try code.append(allocator, @intCast(imm.value));
+                }
+            }
+        }
+        
+        // IRET/IRETQ - Interrupt Return (CF for 16/32-bit, 48 CF for 64-bit)
+        else if (std.mem.eql(u8, mnemonic, "IRET") or std.mem.eql(u8, mnemonic, "IRETQ")) {
+            if (std.mem.eql(u8, mnemonic, "IRETQ")) {
+                try code.append(allocator, 0x48); // REX.W prefix for 64-bit
+            }
+            try code.append(allocator, 0xCF);
+        }
+        
         // LOOP rel8
         else if (std.mem.eql(u8, mnemonic, "LOOP")) {
             try code.append(allocator, 0xE2);
