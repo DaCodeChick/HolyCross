@@ -2480,6 +2480,165 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0xD0);
         }
         
+        // ===== Integer/Float Conversion =====
+        else if (std.mem.eql(u8, mnemonic, "FILD")) {
+            // FILD - Load integer to FPU
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FILD m16 - DF /0
+                        try code.append(allocator, 0xDF);
+                        try self.encodeModRM(0, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FILD m32 - DB /0
+                        try code.append(allocator, 0xDB);
+                        try self.encodeModRM(0, mem, code, allocator);
+                    },
+                    .qword => {
+                        // FILD m64 - DF /5
+                        try code.append(allocator, 0xDF);
+                        try self.encodeModRM(5, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FIST")) {
+            // FIST - Store integer (no pop)
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FIST m16 - DF /2
+                        try code.append(allocator, 0xDF);
+                        try self.encodeModRM(2, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FIST m32 - DB /2
+                        try code.append(allocator, 0xDB);
+                        try self.encodeModRM(2, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FISTP")) {
+            // FISTP - Store integer and pop
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FISTP m16 - DF /3
+                        try code.append(allocator, 0xDF);
+                        try self.encodeModRM(3, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FISTP m32 - DB /3
+                        try code.append(allocator, 0xDB);
+                        try self.encodeModRM(3, mem, code, allocator);
+                    },
+                    .qword => {
+                        // FISTP m64 - DF /7
+                        try code.append(allocator, 0xDF);
+                        try self.encodeModRM(7, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FIADD")) {
+            // FIADD - Integer add
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FIADD m16 - DE /0
+                        try code.append(allocator, 0xDE);
+                        try self.encodeModRM(0, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FIADD m32 - DA /0
+                        try code.append(allocator, 0xDA);
+                        try self.encodeModRM(0, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FISUB")) {
+            // FISUB - Integer subtract
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FISUB m16 - DE /4
+                        try code.append(allocator, 0xDE);
+                        try self.encodeModRM(4, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FISUB m32 - DA /4
+                        try code.append(allocator, 0xDA);
+                        try self.encodeModRM(4, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FIMUL")) {
+            // FIMUL - Integer multiply
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FIMUL m16 - DE /1
+                        try code.append(allocator, 0xDE);
+                        try self.encodeModRM(1, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FIMUL m32 - DA /1
+                        try code.append(allocator, 0xDA);
+                        try self.encodeModRM(1, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FIDIV")) {
+            // FIDIV - Integer divide
+            if (instr.operands.len > 0 and instr.operands[0] == .memory) {
+                const mem = instr.operands[0].memory;
+                switch (mem.size) {
+                    .word => {
+                        // FIDIV m16 - DE /6
+                        try code.append(allocator, 0xDE);
+                        try self.encodeModRM(6, mem, code, allocator);
+                    },
+                    .dword => {
+                        // FIDIV m32 - DA /6
+                        try code.append(allocator, 0xDA);
+                        try self.encodeModRM(6, mem, code, allocator);
+                    },
+                    else => try code.append(allocator, 0x90),
+                }
+            } else {
+                try code.append(allocator, 0x90);
+            }
+        }
+        
         // For unknown instructions, skip for now
         else {
             // Just emit a NOP as placeholder

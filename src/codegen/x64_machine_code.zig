@@ -1201,63 +1201,133 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genComparison(self: *X64MachineCodeGen, instr: *const ir.Instruction, cond: enum { eq, ne, lt, le, gt, ge }) !void {
-        // Load src1 into rax
-        try self.loadOperandToRax(instr.src1);
+        // Check if this is a float comparison
+        const is_float = blk: {
+            if (instr.src1 == .constant and instr.src1.constant == .float) break :blk true;
+            if (instr.src2 == .constant and instr.src2.constant == .float) break :blk true;
+            // For simplicity, assume all non-constant comparisons are integer for now
+            // A proper implementation would track temp types
+            break :blk false;
+        };
         
-        // Load src2 into rcx
-        switch (instr.src2) {
-            .temp => {
-                const src2_offset = try self.getTempOffset(instr.src2);
-                // mov rcx, [rbp+offset]
-                try self.emitBytes(&[_]u8{ 0x48, 0x8B });
-                try self.emitModRM(1, 5, src2_offset); // rcx = 1
-            },
-            .constant => |c| switch (c) {
-                .int => |val| {
-                    if (val >= -2147483648 and val <= 2147483647) {
-                        // mov rcx, imm32 (sign-extends to rcx)
-                        try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC1 });
-                        try self.emitDword(@bitCast(@as(i32, @intCast(val))));
-                    } else {
-                        // movabs rcx, imm64
-                        try self.emitBytes(&[_]u8{ 0x48, 0xB9 });
-                        try self.emitQword(@bitCast(val));
-                    }
+        if (is_float) {
+            // F64 comparison using x87 FPU
+            const temp_offset1: i32 = -16;
+            const temp_offset2: i32 = -24;
+            
+            // Store src1 to temp location
+            try self.loadOperandToRax(instr.src1);
+            // mov [rbp-16], rax
+            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+            try self.emitModRM(0, 5, temp_offset1);
+            
+            // Store src2 to temp location
+            switch (instr.src2) {
+                .temp => {
+                    const src2_offset = try self.getTempOffset(instr.src2);
+                    // mov rax, [rbp+offset]
+                    try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+                    try self.emitModRM(0, 5, src2_offset);
                 },
-                .float => |val| {
-                    // F64 comparison - load as bit-pattern
-                    // NOTE: This only works correctly for == and !=
-                    // For < > <= >= we need proper x87 FCOM instructions
-                    const bits: u64 = @bitCast(val);
-                    // movabs rcx, imm64
-                    try self.emitBytes(&[_]u8{ 0x48, 0xB9 });
-                    try self.emitQword(bits);
+                .constant => |c| switch (c) {
+                    .float => |val| {
+                        const bits: u64 = @bitCast(val);
+                        // movabs rax, imm64
+                        try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                        try self.emitQword(bits);
+                    },
+                    else => return error.UnsupportedConstant,
                 },
-                else => return error.UnsupportedConstant,
-            },
-            else => return error.InvalidOperand,
+                else => return error.InvalidOperand,
+            }
+            // mov [rbp-24], rax
+            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+            try self.emitModRM(0, 5, temp_offset2);
+            
+            // Load src1 into ST0: fld qword [rbp-16]
+            try self.emitBytes(&[_]u8{ 0xDD });
+            try self.emitModRM(0, 5, temp_offset1);
+            
+            // Compare with src2: fcomp qword [rbp-24]
+            // FCOMP compares ST0 with memory and pops
+            try self.emitBytes(&[_]u8{ 0xDC });
+            try self.emitModRM(3, 5, temp_offset2);
+            
+            // Store FPU status word to AX: fnstsw ax
+            try self.emitBytes(&[_]u8{ 0xDF, 0xE0 });
+            
+            // Move AH to AL to get condition codes in lower byte
+            // sahf - Store AH into flags
+            try self.emitBytes(&[_]u8{ 0x9E });
+            
+            // Now use setCC based on CPU flags set by sahf
+            switch (cond) {
+                .eq => try self.emitBytes(&[_]u8{ 0x0F, 0x94, 0xC0 }), // sete al (ZF=1)
+                .ne => try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 }), // setne al (ZF=0)
+                .lt => try self.emitBytes(&[_]u8{ 0x0F, 0x92, 0xC0 }), // setb al (CF=1)
+                .le => try self.emitBytes(&[_]u8{ 0x0F, 0x96, 0xC0 }), // setbe al (CF=1 or ZF=1)
+                .gt => try self.emitBytes(&[_]u8{ 0x0F, 0x97, 0xC0 }), // seta al (CF=0 and ZF=0)
+                .ge => try self.emitBytes(&[_]u8{ 0x0F, 0x93, 0xC0 }), // setae al (CF=0)
+            }
+            
+            // movzx rax, al (zero-extend AL to RAX)
+            try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+            
+            // Store result in dest
+            const dest_offset = try self.getTempOffset(instr.dest);
+            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+            try self.emitModRM(0, 5, dest_offset);
+        } else {
+            // Integer comparison (original code)
+            // Load src1 into rax
+            try self.loadOperandToRax(instr.src1);
+            
+            // Load src2 into rcx
+            switch (instr.src2) {
+                .temp => {
+                    const src2_offset = try self.getTempOffset(instr.src2);
+                    // mov rcx, [rbp+offset]
+                    try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+                    try self.emitModRM(1, 5, src2_offset); // rcx = 1
+                },
+                .constant => |c| switch (c) {
+                    .int => |val| {
+                        if (val >= -2147483648 and val <= 2147483647) {
+                            // mov rcx, imm32 (sign-extends to rcx)
+                            try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC1 });
+                            try self.emitDword(@bitCast(@as(i32, @intCast(val))));
+                        } else {
+                            // movabs rcx, imm64
+                            try self.emitBytes(&[_]u8{ 0x48, 0xB9 });
+                            try self.emitQword(@bitCast(val));
+                        }
+                    },
+                    else => return error.UnsupportedConstant,
+                },
+                else => return error.InvalidOperand,
+            }
+            
+            // cmp rax, rcx
+            try self.emitBytes(&[_]u8{ 0x48, 0x39, 0xC8 });
+            
+            // setCC al (set AL based on condition)
+            switch (cond) {
+                .eq => try self.emitBytes(&[_]u8{ 0x0F, 0x94, 0xC0 }), // sete al
+                .ne => try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 }), // setne al
+                .lt => try self.emitBytes(&[_]u8{ 0x0F, 0x9C, 0xC0 }), // setl al
+                .le => try self.emitBytes(&[_]u8{ 0x0F, 0x9E, 0xC0 }), // setle al
+                .gt => try self.emitBytes(&[_]u8{ 0x0F, 0x9F, 0xC0 }), // setg al
+                .ge => try self.emitBytes(&[_]u8{ 0x0F, 0x9D, 0xC0 }), // setge al
+            }
+            
+            // movzx rax, al (zero-extend AL to RAX)
+            try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
+            
+            // Store result in dest
+            const dest_offset = try self.getTempOffset(instr.dest);
+            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+            try self.emitModRM(0, 5, dest_offset);
         }
-        
-        // cmp rax, rcx
-        try self.emitBytes(&[_]u8{ 0x48, 0x39, 0xC8 });
-        
-        // setCC al (set AL based on condition)
-        switch (cond) {
-            .eq => try self.emitBytes(&[_]u8{ 0x0F, 0x94, 0xC0 }), // sete al
-            .ne => try self.emitBytes(&[_]u8{ 0x0F, 0x95, 0xC0 }), // setne al
-            .lt => try self.emitBytes(&[_]u8{ 0x0F, 0x9C, 0xC0 }), // setl al
-            .le => try self.emitBytes(&[_]u8{ 0x0F, 0x9E, 0xC0 }), // setle al
-            .gt => try self.emitBytes(&[_]u8{ 0x0F, 0x9F, 0xC0 }), // setg al
-            .ge => try self.emitBytes(&[_]u8{ 0x0F, 0x9D, 0xC0 }), // setge al
-        }
-        
-        // movzx rax, al (zero-extend AL to RAX)
-        try self.emitBytes(&[_]u8{ 0x48, 0x0F, 0xB6, 0xC0 });
-        
-        // Store result in dest
-        const dest_offset = try self.getTempOffset(instr.dest);
-        try self.emitBytes(&[_]u8{ 0x48, 0x89 });
-        try self.emitModRM(0, 5, dest_offset);
     }
 
     fn genLabel(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
