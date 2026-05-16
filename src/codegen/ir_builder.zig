@@ -23,14 +23,17 @@ const ast = @import("../parser/ast.zig");
 const ir = @import("ir.zig");
 const type_checker_module = @import("../semantic/type_checker.zig");
 const type_layout_module = @import("../semantic/type_layout.zig");
+const target_module = @import("target.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
 const TypeLayout = type_layout_module.TypeLayout;
+const TargetConfig = target_module.TargetConfig;
 
 /// IR Builder - converts AST to IR
 pub const IRBuilder = struct {
     allocator: Allocator,
     module: ir.Module,
+    target_config: TargetConfig,
     current_function: ?*ir.Function,
     current_block: ?*ir.BasicBlock,
     temp_counter: u32,
@@ -43,12 +46,13 @@ pub const IRBuilder = struct {
     var_types: std.StringHashMap(ast.Type), // Track variable types in current function
     temp_types: std.AutoHashMap(u32, ast.Type), // Track temp types
 
-    pub fn init(allocator: Allocator, type_checker: ?*TypeChecker, type_layouts: ?*const std.StringHashMap(TypeLayout)) !IRBuilder {
+    pub fn init(allocator: Allocator, target_config: TargetConfig, type_checker: ?*TypeChecker, type_layouts: ?*const std.StringHashMap(TypeLayout)) !IRBuilder {
         const empty_labels = try allocator.alloc(u32, 0);
         const empty_hints = try allocator.alloc([]const u8, 0);
         return .{
             .allocator = allocator,
             .module = try ir.Module.init(allocator),
+            .target_config = target_config,
             .current_function = null,
             .current_block = null,
             .temp_counter = 0,
@@ -197,11 +201,11 @@ pub const IRBuilder = struct {
         self.current_block = null;
     }
 
-    /// Build wrapper main() function that executes top-level statements
-    /// In HolyC, top-level statements execute like a script when the file is loaded
+    /// Build entry function for top-level statements
+    /// Top-level code always goes into _start for ELF
     fn buildMainWrapper(self: *IRBuilder, top_level_stmts: []const ast.Stmt) !void {
-        // Create IR function for main entry point (wrapper for native executables)
-        const ir_func = try self.module.createFunction("main");
+        // Create _start function
+        const ir_func = try self.module.createFunction("_start");
         self.current_function = ir_func;
         self.temp_counter = 0;
 
@@ -216,12 +220,12 @@ pub const IRBuilder = struct {
         self.current_block = entry;
 
         // Execute all top-level statements
-        // This includes any function calls like "Main;" or "InitSystem;"
         for (top_level_stmts) |stmt| {
             try self.buildStatement(stmt);
         }
         
-        // Always return 0 from main
+        // Exit with code 0
+        // For ELF, emit exit syscall directly
         try self.emit(.{
             .opcode = .ret_val,
             .src1 = .{ .constant = .{ .int = 0 } },

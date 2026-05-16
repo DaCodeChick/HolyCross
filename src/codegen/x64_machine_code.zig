@@ -3,17 +3,20 @@ const Allocator = std.mem.Allocator;
 const ir = @import("ir.zig");
 const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
+const elf_object = @import("elf_object.zig");
 const X64Assembler = @import("../assembler/x64.zig").X64Assembler;
 
-/// Generic code buffer interface - works with both ELF and TempleOS writers
+/// Generic code buffer interface - works with ELF, object files, and TempleOS writers
 pub const CodeBuffer = union(enum) {
     templeos: *templeos_bin.TempleOSBinWriter,
     elf: *elf_writer.ELFWriter,
+    object: *elf_object.ELFObjectWriter,
     
     pub fn appendCode(self: CodeBuffer, bytes: []const u8) !void {
         switch (self) {
             .templeos => |writer| try writer.appendCode(bytes),
             .elf => |writer| try writer.appendCode(bytes),
+            .object => |writer| try writer.appendCode(bytes),
         }
     }
     
@@ -27,6 +30,7 @@ pub const CodeBuffer = union(enum) {
                 return offset;
             },
             .elf => |writer| try writer.appendData(bytes),
+            .object => |writer| try writer.appendData(bytes),
         };
     }
     
@@ -38,6 +42,11 @@ pub const CodeBuffer = union(enum) {
                 return data_offset;
             },
             .elf => |writer| writer.getDataVAddr(data_offset),
+            .object => {
+                // For object files, return the data offset directly
+                // It will be resolved by the linker
+                return data_offset;
+            },
         };
     }
     
@@ -45,6 +54,7 @@ pub const CodeBuffer = union(enum) {
         return switch (self) {
             .templeos => |writer| writer.getCurrentOffset(),
             .elf => |writer| writer.getCurrentOffset(),
+            .object => |writer| @intCast(writer.code.items.len),
         };
     }
     
@@ -52,6 +62,10 @@ pub const CodeBuffer = union(enum) {
         switch (self) {
             .templeos => |writer| try writer.setEntryPoint(offset),
             .elf => |writer| try writer.setEntryPoint(offset),
+            .object => {
+                // Object files don't have entry points
+                // Entry is determined by the linker
+            },
         }
     }
     
@@ -59,6 +73,7 @@ pub const CodeBuffer = union(enum) {
         return switch (self) {
             .templeos => |writer| writer.code.items,
             .elf => |writer| writer.code.items,
+            .object => |writer| writer.code.items,
         };
     }
     
@@ -66,6 +81,7 @@ pub const CodeBuffer = union(enum) {
         switch (self) {
             .templeos => |writer| writer.code.items[offset] = value,
             .elf => |writer| writer.code.items[offset] = value,
+            .object => |writer| writer.code.items[offset] = value,
         }
     }
 };
@@ -155,18 +171,7 @@ pub const X64MachineCodeGen = struct {
         self.current_module = module;
         defer self.current_module = null;
         
-        // For native executables, generate _start wrapper first
-        const is_native = switch (self.code_buffer) {
-            .elf => true,
-            .templeos => false,
-        };
-        
-        const start_offset = if (is_native) blk: {
-            const offset = try self.generateStartWrapper();
-            break :blk offset;
-        } else 0;
-        
-        // Generate code for all functions
+        // Generate code for all functions (including _start if present)
         for (module.functions.items) |*func| {
             try self.generateFunction(func);
         }
@@ -174,46 +179,30 @@ pub const X64MachineCodeGen = struct {
         // Patch all call sites now that we know all function offsets
         try self.patchCallSites();
 
-        // Set entry point
-        if (is_native) {
-            // For native executables, entry is _start
-            try self.code_buffer.setEntryPoint(start_offset);
-        } else {
-            // For TempleOS, entry is main
-            const main_offset = self.function_offsets.get("main") orelse return error.NoMainFunction;
-            try self.code_buffer.setEntryPoint(main_offset);
+        // For object files, add symbols for all functions
+        if (self.code_buffer == .object) {
+            const obj = self.code_buffer.object;
+            
+            // Add symbols for all functions
+            var func_iter = self.function_offsets.iterator();
+            while (func_iter.next()) |entry| {
+                const func_name = entry.key_ptr.*;
+                const func_offset = entry.value_ptr.*;
+                
+                _ = try obj.addSymbol(
+                    func_name,
+                    func_offset,
+                    0, // size (we could calculate this if needed)
+                    .text,
+                    .global,
+                    .func,
+                );
+            }
         }
-    }
 
-    /// Generate _start wrapper for native executables
-    /// _start calls main() and then exits with the return value
-    fn generateStartWrapper(self: *X64MachineCodeGen) !u32 {
-        const start_offset = self.code_buffer.getCurrentOffset();
-        
-        // Record the call site for main - we'll patch it later
-        // CALL rel32 = E8 xx xx xx xx
-        try self.code_buffer.appendCode(&[_]u8{ 0xE8, 0x00, 0x00, 0x00, 0x00 });
-        const call_site_offset = self.code_buffer.getCurrentOffset() - 4;
-        
-        // Save the call site for later patching
-        const target_name = try self.allocator.dupe(u8, "main");
-        try self.call_sites.append(self.allocator, .{
-            .offset = call_site_offset,
-            .target = target_name,
-        });
-        
-        // Move return value (in rax) to rdi for exit syscall
-        // MOV rdi, rax = 48 89 C7
-        try self.code_buffer.appendCode(&[_]u8{ 0x48, 0x89, 0xC7 });
-        
-        // Exit syscall: mov rax, 60; syscall
-        // MOV rax, 60 = 48 C7 C0 3C 00 00 00
-        try self.code_buffer.appendCode(&[_]u8{ 0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00 });
-        
-        // SYSCALL = 0F 05
-        try self.code_buffer.appendCode(&[_]u8{ 0x0F, 0x05 });
-        
-        return start_offset;
+        // Set entry point to _start
+        const start_offset = self.function_offsets.get("_start") orelse return error.NoStartFunction;
+        try self.code_buffer.setEntryPoint(start_offset);
     }
 
     fn generateFunction(self: *X64MachineCodeGen, func: *const ir.Function) !void {
@@ -500,6 +489,24 @@ pub const X64MachineCodeGen = struct {
             },
             else => return error.InvalidOperand,
         }
+        
+        // Special case for _start: do exit syscall instead of return
+        if (self.current_func) |func| {
+            if (std.mem.eql(u8, func.name, "_start")) {
+                // Move return value (in rax) to rdi for exit syscall
+                // MOV rdi, rax = 48 89 C7
+                try self.emitBytes(&[_]u8{ 0x48, 0x89, 0xC7 });
+                
+                // Exit syscall: mov rax, 60; syscall
+                // MOV rax, 60 = 48 C7 C0 3C 00 00 00
+                try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00 });
+                
+                // SYSCALL = 0F 05
+                try self.emitBytes(&[_]u8{ 0x0F, 0x05 });
+                return;
+            }
+        }
+        
         try self.emitEpilogue();
     }
 
@@ -1555,6 +1562,40 @@ pub const X64MachineCodeGen = struct {
                 switch (self.code_buffer) {
                     .elf => |elf| {
                         try elf.addExternSymbol(site.target, site.offset);
+                    },
+                    .object => |obj| {
+                        // For object files, we need to add relocations
+                        // First, ensure the extern symbol exists in the symbol table
+                        // Find or add the symbol
+                        var symbol_idx: ?u32 = null;
+                        for (obj.symbols.items, 0..) |sym, idx| {
+                            if (std.mem.eql(u8, sym.name, site.target)) {
+                                symbol_idx = @intCast(idx);
+                                break;
+                            }
+                        }
+                        
+                        if (symbol_idx == null) {
+                            // Add undefined extern symbol
+                            symbol_idx = try obj.addSymbol(
+                                site.target,
+                                0, // value (undefined)
+                                0, // size
+                                .undefined, // section
+                                .global, // binding
+                                .notype, // type
+                            );
+                        }
+                        
+                        // Add PC-relative relocation for the call site
+                        // offset points to where the 32-bit displacement starts
+                        // We need to add -4 to the addend because PC-relative is calculated from the end of the instruction
+                        try obj.addRelocation(
+                            site.offset,
+                            symbol_idx.?,
+                            .R_X86_64_PLT32,
+                            -4,
+                        );
                     },
                     .templeos => {
                         // TempleOS format would use IET_REL_I32 patch table entry

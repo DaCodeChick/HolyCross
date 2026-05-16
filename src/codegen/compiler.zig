@@ -9,6 +9,7 @@ const type_layout_module = @import("../semantic/type_layout.zig");
 const target_module = @import("target.zig");
 const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
+const elf_object = @import("elf_object.zig");
 const x64_machine_code = @import("x64_machine_code.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
@@ -36,7 +37,7 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
     ) ![]const u8 {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -52,6 +53,47 @@ pub const Compiler = struct {
 
         // Return owned copy of output
         return try self.allocator.dupe(u8, gen.getOutput());
+    }
+
+    /// Compile AST to relocatable object file
+    pub fn compileToObject(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
+    ) !void {
+        // Only support native x64 Linux for now
+        if (self.target_config.target != .native_x64_linux) {
+            return error.ObjectFileNotSupportedForTarget;
+        }
+
+        // Build IR from AST
+        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
+        defer builder.deinit();
+
+        try builder.buildFromAST(program);
+        const module = try builder.finish();
+        var mod = module;
+        defer mod.deinit();
+
+        // Initialize object file writer
+        var obj = try elf_object.ELFObjectWriter.init(self.allocator);
+        defer obj.deinit();
+
+        // Initialize machine code generator targeting object file
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .object = &obj }
+        );
+        defer machine_gen.deinit();
+
+        // Generate machine code from IR
+        try machine_gen.generateFromIR(&mod);
+
+        // Write object file
+        try obj.writeToFile(io, output_path);
     }
 
     /// Compile AST to executable file
@@ -79,7 +121,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -158,7 +200,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);

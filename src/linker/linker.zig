@@ -8,8 +8,6 @@ pub const Linker = struct {
     allocator: Allocator,
     objects: std.ArrayList(*ELFObjectReader),
     symbols: std.StringHashMap(ResolvedSymbol),
-    external_libs: std.ArrayList([]const u8), // Paths to shared libraries
-    external_symbols: std.StringHashMap(void), // Symbols to import from shared libs
     entry_point: ?[]const u8,
     base_address: u64,
     
@@ -30,13 +28,10 @@ pub const Linker = struct {
     
     pub fn init(allocator: Allocator) !Linker {
         const empty_objects = try allocator.alloc(*ELFObjectReader, 0);
-        const empty_libs = try allocator.alloc([]const u8, 0);
         return .{
             .allocator = allocator,
             .objects = std.ArrayList(*ELFObjectReader).fromOwnedSlice(empty_objects),
             .symbols = std.StringHashMap(ResolvedSymbol).init(allocator),
-            .external_libs = std.ArrayList([]const u8).fromOwnedSlice(empty_libs),
-            .external_symbols = std.StringHashMap(void).init(allocator),
             .entry_point = null,
             .base_address = 0x400000, // Standard Linux load address
         };
@@ -56,24 +51,6 @@ pub const Linker = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.symbols.deinit();
-        
-        // Free external libs
-        for (self.external_libs.items) |lib_path| {
-            self.allocator.free(lib_path);
-        }
-        self.external_libs.deinit(self.allocator);
-        
-        // Free external symbols
-        var ext_it = self.external_symbols.keyIterator();
-        while (ext_it.next()) |key| {
-            self.allocator.free(key.*);
-        }
-        self.external_symbols.deinit();
-    }
-    
-    pub fn addLibrary(self: *Linker, lib_path: []const u8) !void {
-        const path_copy = try self.allocator.dupe(u8, lib_path);
-        try self.external_libs.append(self.allocator, path_copy);
     }
     
     pub fn addObject(self: *Linker, data: []const u8) !void {
@@ -104,6 +81,7 @@ pub const Linker = struct {
         const relocated_sections = try self.applyRelocations(layout);
         defer self.freeRelocatedSections(relocated_sections);
         
+        // Check if we have external symbols and libc linking is requested
         // Phase 4: Generate executable
         std.debug.print("[4/4] Writing executable...\n", .{});
         try self.writeExecutable(layout, relocated_sections, output_path, io);
@@ -266,7 +244,8 @@ pub const Linker = struct {
             const obj = self.objects.items[section_layout.object_index];
             for (obj.relocations) |reloc| {
                 // Check if this relocation applies to this section
-                if (reloc.section_index != section_layout.section_index + 1) continue;
+                // The relocation section_index should match the section we're processing
+                if (reloc.section_index != section_layout.section_index) continue;
                 
                 // Get the symbol being referenced
                 const sym_idx = reloc.symIndex();
@@ -278,12 +257,10 @@ pub const Linker = struct {
                 const symbol_addr = if (symbol.shndx == 0) blk: {
                     // Undefined symbol - look it up in global symbols
                     const resolved = self.symbols.get(symbol.name) orelse {
-                        // Not in our objects - mark as external symbol
-                        const sym_name_copy = try self.allocator.dupe(u8, symbol.name);
-                        try self.external_symbols.put(sym_name_copy, {});
-                        std.debug.print("      Marking '{s}' as external symbol\n", .{symbol.name});
-                        // For now, use placeholder address 0 - will be resolved at runtime
-                        break :blk 0;
+                        // Not in our objects - this is an error for now
+                        std.debug.print("Error: Undefined symbol '{s}'\n", .{symbol.name});
+                        std.debug.print("Note: External library linking (libc, etc.) is not yet implemented\n", .{});
+                        return LinkerError.UndefinedSymbol;
                     };
                     break :blk resolved.value;
                 } else blk: {
@@ -299,7 +276,7 @@ pub const Linker = struct {
                 if (offset_in_section + 8 > data_copy.len) return LinkerError.InvalidRelocation;
                 
                 switch (reloc_type) {
-                    2 => { // R_X86_64_PC32 - PC-relative 32-bit
+                    2, 4 => { // R_X86_64_PC32 or R_X86_64_PLT32 - PC-relative 32-bit
                         const patch_addr = section_layout.vaddr + offset_in_section;
                         const value: i64 = @as(i64, @intCast(symbol_addr)) + reloc.addend - @as(i64, @intCast(patch_addr));
                         std.mem.writeInt(i32, data_copy[offset_in_section..][0..4], @intCast(value), .little);

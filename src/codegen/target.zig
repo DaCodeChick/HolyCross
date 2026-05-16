@@ -45,7 +45,7 @@ pub const Target = enum {
 
     pub fn requiresRelocations(self: Target) bool {
         return switch (self) {
-            .native_x64_linux => false, // GCC/linker handles this
+            .native_x64_linux => false,
             .templeos, .zealos => true, // .BIN patch table required
         };
     }

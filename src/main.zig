@@ -31,6 +31,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Parse flags
     var emit_asm_only = false;
+    var compile_only = false; // -c flag: compile to object file
     var input_file: []const u8 = "";
     var output_file: []const u8 = "";
     var target: Target = .native_x64_linux;
@@ -40,6 +41,8 @@ pub fn main(init: std.process.Init) !void {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "-S")) {
             emit_asm_only = true;
+        } else if (std.mem.eql(u8, arg, "-c")) {
+            compile_only = true;
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) {
@@ -68,16 +71,31 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (output_file.len == 0) {
+        // Extract base name from input file (strip directory and .hc extension)
+        const basename = blk: {
+            const last_slash = std.mem.lastIndexOfScalar(u8, input_file, '/') orelse 0;
+            const start = if (last_slash > 0) last_slash + 1 else 0;
+            const name_with_ext = input_file[start..];
+            
+            if (std.mem.endsWith(u8, name_with_ext, ".hc")) {
+                break :blk name_with_ext[0..name_with_ext.len - 3];
+            } else if (std.mem.endsWith(u8, name_with_ext, ".HC")) {
+                break :blk name_with_ext[0..name_with_ext.len - 3];
+            }
+            break :blk name_with_ext;
+        };
+        
         if (emit_asm_only) {
-            output_file = "a.s";
+            output_file = try std.fmt.allocPrint(arena.allocator(), "{s}.s", .{basename});
+        } else if (compile_only) {
+            output_file = try std.fmt.allocPrint(arena.allocator(), "{s}.o", .{basename});
         } else {
             // Use default extension based on target
-            const default_name = "a.out";
             const extension = target.defaultExtension();
             if (extension.len > 0) {
-                output_file = try std.fmt.allocPrint(arena.allocator(), "{s}{s}", .{ default_name, extension });
+                output_file = try std.fmt.allocPrint(arena.allocator(), "{s}{s}", .{ basename, extension });
             } else {
-                output_file = default_name;
+                output_file = basename;
             }
         }
     }
@@ -152,6 +170,12 @@ pub fn main(init: std.process.Init) !void {
         try asm_file.writeStreamingAll(init.io, asm_code);
 
         std.debug.print("\n✓ Assembly generation successful!\n", .{});
+        std.debug.print("Output: {s}\n", .{output_file});
+    } else if (compile_only) {
+        // Generate object file only (-c flag)
+        try compiler.compileToObject(&program, output_file, &anal.type_checker, &anal.type_layouts, init.io);
+
+        std.debug.print("\n✓ Object file generation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});
     } else {
         // Generate executable
