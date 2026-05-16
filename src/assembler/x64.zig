@@ -772,25 +772,47 @@ pub const X64Assembler = struct {
                         // Split into expression and register parts
                         // e.g., "SF_ARG1[RBP]" -> expr="SF_ARG1", reg="[RBP]"
                         // or   "sizeof(MyStruct)+8[RBP]" -> expr="sizeof(MyStruct)+8", reg="[RBP]"
+                        // or   "[RBP-8]" -> no expr, reg="[RBP-8]"
                         const expr_str = std.mem.trim(u8, rest[0..bracket_idx], &std.ascii.whitespace);
                         const bracket_part = rest[bracket_idx..];
                         
-                        // Try to evaluate the expression using the expression evaluator
-                        var displacement: i32 = 0;
-                        if (try expr_eval.evalConstExpr(&self.expr_ctx, expr_str)) |value| {
-                            displacement = @intCast(value);
-                        } else {
-                            // Expression cannot be evaluated - might need symbol table
-                            // For now, treat as zero displacement
-                            // TODO: Report warning or error
-                            displacement = 0;
-                        }
-                        
-                        // Parse the register part
+                        // Parse the bracket part first to handle [REG+disp] format
                         if (std.mem.startsWith(u8, bracket_part, "[") and std.mem.endsWith(u8, bracket_part, "]")) {
-                            const reg_str = std.mem.trim(u8, bracket_part[1..bracket_part.len-1], &std.ascii.whitespace);
+                            // Try to parse as memory operand (handles [RBP-8], [RBP+8], etc.)
+                            if (try self.parseMemoryOperand(bracket_part)) |mem_op| {
+                                // We have a valid memory operand, now apply the expression displacement if any
+                                var displacement: i32 = mem_op.memory.displacement;
+                                
+                                if (expr_str.len > 0) {
+                                    // Try to evaluate the expression and add to displacement
+                                    if (try expr_eval.evalConstExpr(&self.expr_ctx, expr_str)) |value| {
+                                        displacement +%= @intCast(value);
+                                    }
+                                }
+                                
+                                return .{
+                                    .memory = .{
+                                        .base = mem_op.memory.base,
+                                        .index = mem_op.memory.index,
+                                        .scale = mem_op.memory.scale,
+                                        .displacement = displacement,
+                                        .size = size, // Use the type-prefixed size
+                                        .segment = mem_op.memory.segment,
+                                    },
+                                };
+                            }
                             
+                            // Fallback: try simple register lookup for [REG] format
+                            const reg_str = std.mem.trim(u8, bracket_part[1..bracket_part.len-1], &std.ascii.whitespace);
                             if (Register.fromString(reg_str)) |reg| {
+                                // Evaluate expression for displacement
+                                var displacement: i32 = 0;
+                                if (expr_str.len > 0) {
+                                    if (try expr_eval.evalConstExpr(&self.expr_ctx, expr_str)) |value| {
+                                        displacement = @intCast(value);
+                                    }
+                                }
+                                
                                 return .{
                                     .memory = .{
                                         .base = reg.getHardwareId(),
