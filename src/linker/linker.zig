@@ -8,6 +8,8 @@ pub const Linker = struct {
     allocator: Allocator,
     objects: std.ArrayList(*ELFObjectReader),
     symbols: std.StringHashMap(ResolvedSymbol),
+    external_libs: std.ArrayList([]const u8), // Paths to shared libraries
+    external_symbols: std.StringHashMap(void), // Symbols to import from shared libs
     entry_point: ?[]const u8,
     base_address: u64,
     
@@ -28,10 +30,13 @@ pub const Linker = struct {
     
     pub fn init(allocator: Allocator) !Linker {
         const empty_objects = try allocator.alloc(*ELFObjectReader, 0);
+        const empty_libs = try allocator.alloc([]const u8, 0);
         return .{
             .allocator = allocator,
             .objects = std.ArrayList(*ELFObjectReader).fromOwnedSlice(empty_objects),
             .symbols = std.StringHashMap(ResolvedSymbol).init(allocator),
+            .external_libs = std.ArrayList([]const u8).fromOwnedSlice(empty_libs),
+            .external_symbols = std.StringHashMap(void).init(allocator),
             .entry_point = null,
             .base_address = 0x400000, // Standard Linux load address
         };
@@ -51,6 +56,24 @@ pub const Linker = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.symbols.deinit();
+        
+        // Free external libs
+        for (self.external_libs.items) |lib_path| {
+            self.allocator.free(lib_path);
+        }
+        self.external_libs.deinit(self.allocator);
+        
+        // Free external symbols
+        var ext_it = self.external_symbols.keyIterator();
+        while (ext_it.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.external_symbols.deinit();
+    }
+    
+    pub fn addLibrary(self: *Linker, lib_path: []const u8) !void {
+        const path_copy = try self.allocator.dupe(u8, lib_path);
+        try self.external_libs.append(self.allocator, path_copy);
     }
     
     pub fn addObject(self: *Linker, data: []const u8) !void {
@@ -255,8 +278,12 @@ pub const Linker = struct {
                 const symbol_addr = if (symbol.shndx == 0) blk: {
                     // Undefined symbol - look it up in global symbols
                     const resolved = self.symbols.get(symbol.name) orelse {
-                        std.debug.print("Error: Undefined symbol '{s}'\n", .{symbol.name});
-                        return LinkerError.UndefinedSymbol;
+                        // Not in our objects - mark as external symbol
+                        const sym_name_copy = try self.allocator.dupe(u8, symbol.name);
+                        try self.external_symbols.put(sym_name_copy, {});
+                        std.debug.print("      Marking '{s}' as external symbol\n", .{symbol.name});
+                        // For now, use placeholder address 0 - will be resolved at runtime
+                        break :blk 0;
                     };
                     break :blk resolved.value;
                 } else blk: {

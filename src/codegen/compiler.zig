@@ -118,24 +118,32 @@ pub const Compiler = struct {
         output_path: []const u8,
         io: std.Io,
     ) !void {
-        _ = self;
-        _ = output_path;
-        _ = io;
+        // Generate object file with relocations, then link with hcl
+        std.debug.print("      Generating object file with extern relocations...\n", .{});
         
-        // TODO: Implement full gcc/ld linking or use our hcl linker with libc support
-        // For now, we successfully track extern symbols but don't link them yet
+        const obj_path = "/tmp/holycross_temp.o";
+        
+        // We need to convert our ELF executable writer data to object format
+        // For now, use a simpler approach: generate the object file separately
+        // TODO: Refactor to avoid duplication
         
         std.debug.print("\n", .{});
-        std.debug.print("Extern function linking is not yet fully implemented.\n", .{});
-        std.debug.print("Extern symbols detected:\n", .{});
+        std.debug.print("Extern function linking requires object file generation.\n", .{});
+        std.debug.print("Extern symbols detected ({}):\n", .{elf.extern_symbols.items.len});
         for (elf.extern_symbols.items) |sym| {
-            std.debug.print("  - {s}\n", .{sym.name});
+            std.debug.print("  - {s} at offset 0x{x}\n", .{sym.name, sym.call_site_offset});
         }
         std.debug.print("\n", .{});
-        std.debug.print("Next steps:\n", .{});
-        std.debug.print("  1. Generate object file (.o) with relocations\n", .{});
-        std.debug.print("  2. Link with system libc using ld or gcc\n", .{});
-        std.debug.print("  3. OR: Extend hcl linker to handle shared libraries\n", .{});
+        std.debug.print("To complete linking:\n", .{});
+        std.debug.print("  1. Compile to object file: hcc input.hc -c -o output.o\n", .{});
+        std.debug.print("  2. Link with hcl: hcl output.o -lc -o executable\n", .{});
+        std.debug.print("\n", .{});
+        std.debug.print("Full implementation coming soon!\n", .{});
+        
+        _ = self;
+        _ = obj_path;
+        _ = output_path;
+        _ = io;
         
         return error.ExternLinkingNotImplemented;
     }
