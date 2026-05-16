@@ -161,6 +161,7 @@ pub const Linker = struct {
         plt_size: u64,
         got_addr: u64,
         got_size: u64,
+        code_offset: u64, // File offset where code starts (after RO dynamic sections)
     };
     
     fn computeLayout(self: *Linker) !*Layout {
@@ -172,7 +173,37 @@ pub const Linker = struct {
         var data_list = std.ArrayList(SectionLayout).fromOwnedSlice(empty_data);
         defer data_list.deinit(self.allocator);
         
-        const code_start = self.base_address + 0x1000; // After ELF header
+        // Calculate initial code offset
+        // For dynamic executables, RO dynamic sections (interp, hash, dynsym, dynstr, rela.plt)
+        // are placed before code in the second PT_LOAD segment
+        var code_offset: u64 = 0x1000; // Default: right after headers
+        if (self.external_symbols.items.len > 0) {
+            const num_ext_syms = self.external_symbols.items.len;
+            // PT_INTERP: "/lib64/ld-linux-x86-64.so.2\0" (28 bytes) + alignment
+            const interp_size: u64 = 28;
+            const interp_aligned = (code_offset + interp_size + 7) & ~@as(u64, 7);
+            
+            // Hash table: (2 + nbucket + nchain) * 4 bytes
+            const hash_size: u64 = (2 + 1 + 1 + num_ext_syms) * 4;
+            const hash_aligned = (interp_aligned + hash_size + 7) & ~@as(u64, 7);
+            
+            // .dynsym: (1 NULL + N symbols) * 24 bytes
+            const dynsym_size: u64 = (1 + num_ext_syms) * 24;
+            const dynsym_aligned = (hash_aligned + dynsym_size + 7) & ~@as(u64, 7);
+            
+            // .dynstr: "\0libc.so.6\0" + symbol names (rough estimate)
+            // For puts: "\0libc.so.6\0puts\0" = 1 + 9 + 1 + 4 + 1 = 16 bytes
+            const dynstr_size: u64 = 1 + 10 + num_ext_syms * 5; // Better estimate
+            const dynstr_aligned = (dynsym_aligned + dynstr_size + 7) & ~@as(u64, 7);
+            
+            // .rela.plt: N relocations * 24 bytes
+            const rela_plt_size: u64 = num_ext_syms * 24;
+            code_offset = (dynstr_aligned + rela_plt_size + 7) & ~@as(u64, 7);
+            
+            std.debug.print("DEBUG: RO dynamic overhead: 0x{x}, code starts at offset 0x{x}\n", .{code_offset - 0x1000, code_offset});
+        }
+        
+        const code_start = self.base_address + code_offset;
         var current_code_addr = code_start;
         var current_data_addr: u64 = 0;
         
@@ -194,27 +225,30 @@ pub const Linker = struct {
             }
         }
         
-        // Align data section
-        const data_start = ((current_code_addr - self.base_address) + 0xFFF) & ~@as(u64, 0xFFF);
+        // Account for PLT size when calculating data section start
+        // PLT: 16 byte header + 16 bytes per symbol
+        const plt_size = if (self.external_symbols.items.len > 0)
+            16 + (self.external_symbols.items.len * 16)
+        else
+            0;
         
-        // For dynamic executables, account for space needed by .dynamic, GOT, etc.
-        // These will be written before user .data sections
+        // Align code size (including PLT), then add to code_offset to get data_offset
+        // This matches ELFWriter.writeToFile calculation
+        const actual_code_size = current_code_addr - code_start;
+        const code_size_aligned = (actual_code_size + plt_size + 0xFFF) & ~@as(u64, 0xFFF);
+        const data_start = code_offset + code_size_aligned;
+        std.debug.print("DEBUG: code_offset=0x{x}, actual_code_size=0x{x}, plt_size=0x{x}, aligned=0x{x}, data_start=0x{x}\n", .{code_offset, actual_code_size, plt_size, code_size_aligned, data_start});
+        
+        // For dynamic executables, account for space needed by .dynamic and GOT
+        // These will be written before user .data sections in the RW segment
+        // Note: hash, dynsym, dynstr, rela.plt are in the RO segment, not counted here
         var data_overhead: u64 = 0;
         if (self.external_symbols.items.len > 0) {
-            // Rough calculation of dynamic linking overhead:
-            // - .dynamic section: ~15 entries * 16 bytes = 240 bytes
-            // - GOT: 3 header entries + N symbols * 8 bytes
-            // - dynstr, dynsym, hash, rela.plt
-            // This is approximate; actual layout happens in ELFWriter.writeToFile
             const num_ext_syms = self.external_symbols.items.len;
             const got_size = (3 + num_ext_syms) * 8;
-            const dyn_section_size: u64 = 240;
-            const hash_size: u64 = (2 + 1 + 1 + num_ext_syms) * 4; // Rough estimate
-            const dynsym_size = (1 + num_ext_syms) * 24;
-            const dynstr_size: u64 = 32; // libc.so.6 + symbol names (rough)
-            const rela_plt_size = num_ext_syms * 24;
+            const dyn_section_size: u64 = 240; // ~15 entries * 16 bytes
             
-            data_overhead = dyn_section_size + got_size + hash_size + dynsym_size + dynstr_size + rela_plt_size;
+            data_overhead = dyn_section_size + got_size;
             data_overhead = (data_overhead + 7) & ~@as(u64, 7); // Align to 8 bytes
         }
         
@@ -224,6 +258,7 @@ pub const Linker = struct {
         for (self.objects.items, 0..) |obj, obj_idx| {
             for (obj.sections, 0..) |section, sec_idx| {
                 if (std.mem.eql(u8, section.name, ".data")) {
+                    std.debug.print("DEBUG: .data section from obj {}: size={}, vaddr=0x{x}, overhead=0x{x}\n", .{obj_idx, section.size, current_data_addr, data_overhead});
                     try data_list.append(self.allocator, .{
                         .object_index = obj_idx,
                         .section_index = sec_idx,
@@ -239,14 +274,15 @@ pub const Linker = struct {
         }
         
         // Reserve space for PLT and GOT if we have external symbols
-        // PLT entry size: 16 bytes per entry + 16 byte header
+        // PLT entry size: 16 bytes per entry + 16 byte header (already calculated above)
         // GOT entry size: 8 bytes per entry + 24 bytes for GOT[0..2]
         const num_external = self.external_symbols.items.len;
-        const plt_size = if (num_external > 0) 16 + (num_external * 16) else 0;
-        const got_size = if (num_external > 0) 24 + (num_external * 8) else 0;
         
         const plt_addr = current_code_addr;
         const got_addr = current_data_addr;
+        
+        const total_code_size = current_code_addr - code_start + plt_size;
+        const total_data_size = current_data_addr - (data_start + self.base_address) + data_overhead;
         
         // Assign PLT and GOT offsets to each external symbol
         for (self.external_symbols.items, 0..) |*ext, i| {
@@ -258,12 +294,13 @@ pub const Linker = struct {
         layout.* = .{
             .text_sections = try text_list.toOwnedSlice(self.allocator),
             .data_sections = try data_list.toOwnedSlice(self.allocator),
-            .code_size = current_code_addr - code_start,
-            .data_size = current_data_addr - (data_start + self.base_address),
+            .code_size = total_code_size,
+            .data_size = total_data_size,
             .plt_addr = plt_addr,
             .plt_size = plt_size,
             .got_addr = got_addr,
-            .got_size = got_size,
+            .got_size = if (num_external > 0) 24 + (num_external * 8) else 0,
+            .code_offset = code_offset,
         };
         
         return layout;
@@ -360,6 +397,7 @@ pub const Linker = struct {
                         for (self.external_symbols.items) |ext| {
                             if (std.mem.eql(u8, ext.name, symbol.name)) {
                                 ext_addr = ext.plt_offset;
+                                std.debug.print("DEBUG: External symbol '{s}' -> PLT at 0x{x}\n", .{ext.name, ext.plt_offset});
                                 break;
                             }
                         }
@@ -376,6 +414,7 @@ pub const Linker = struct {
                 } else blk: {
                     // Defined in this object - calculate address
                     const sec_vaddr = self.findSectionVAddr(layout, section_layout.object_index, symbol.shndx) orelse return LinkerError.InvalidRelocation;
+                    std.debug.print("DEBUG: Relocating defined symbol, section shndx={}, sec_vaddr=0x{x}, symbol.value={}, final=0x{x}\n", .{symbol.shndx, sec_vaddr, symbol.value, sec_vaddr + symbol.value});
                     break :blk sec_vaddr + symbol.value;
                 };
                 
@@ -389,6 +428,7 @@ pub const Linker = struct {
                     2, 4 => { // R_X86_64_PC32 or R_X86_64_PLT32 - PC-relative 32-bit
                         const patch_addr = section_layout.vaddr + offset_in_section;
                         const value: i64 = @as(i64, @intCast(symbol_addr)) + reloc.addend - @as(i64, @intCast(patch_addr));
+                        std.debug.print("DEBUG: PLT32 reloc: symbol_addr=0x{x}, patch_addr=0x{x}, addend={}, value=0x{x}\n", .{symbol_addr, patch_addr, reloc.addend, value});
                         std.mem.writeInt(i32, data_copy[offset_in_section..][0..4], @intCast(value), .little);
                     },
                     1 => { // R_X86_64_64 - Direct 64-bit
@@ -439,18 +479,15 @@ pub const Linker = struct {
             // in writeToFile after final addresses are calculated
         }
         
-        // Append all data sections and update their vaddrs based on actual offsets
-        // Note: The ELF writer may already have data (e.g., .dynamic, GOT) for dynamic executables
-        const initial_data_offset = elf.data.items.len;
-        for (layout.data_sections) |*section| {
-            const data_offset = try elf.appendData(section.data);
-            // Calculate the virtual address based on the actual data offset
-            section.vaddr = elf.getDataVAddr(data_offset);
+        // Append all data sections
+        // The ELF writer will place these after .dynamic and GOT in the final binary
+        for (layout.data_sections) |section| {
+            _ = try elf.appendData(section.data);
         }
         
         // Now that we have final addresses, apply relocations again with correct data vaddrs
         // We need to re-apply relocations for data sections only
-        _ = initial_data_offset; // TODO: implement proper two-pass relocation
+        // (Placeholder for future two-pass relocation implementation)
         
         // Set entry point
         const entry_name = self.entry_point orelse "_start";
@@ -459,7 +496,8 @@ pub const Linker = struct {
             return LinkerError.NoEntryPoint;
         };
         
-        const entry_offset: u32 = @intCast(entry_symbol.value - (self.base_address + 0x1000));
+        const entry_offset: u32 = @intCast(entry_symbol.value - (self.base_address + layout.code_offset));
+        std.debug.print("DEBUG: Entry point '{s}' at vaddr 0x{x}, offset 0x{x}\n", .{entry_name, entry_symbol.value, entry_offset});
         try elf.setEntryPoint(entry_offset);
         
         // Write the executable

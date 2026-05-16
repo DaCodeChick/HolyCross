@@ -129,10 +129,22 @@ pub const IRBuilder = struct {
             try self.buildDeclaration(decl);
         }
 
-        // Create wrapper main() function that executes top-level statements
-        // This wrapper is needed for native executables to have a 'main' entry point
+        // Check if _start is already defined
+        var has_start = false;
+        for (root.decls) |decl| {
+            if (decl == .function and std.mem.eql(u8, decl.function.name, "_start")) {
+                has_start = true;
+                break;
+            }
+        }
+
+        // Create wrapper _start() function that executes top-level statements
+        // Only if _start is not already defined and there are top-level statements
+        // This wrapper is needed for native executables to have an entry point
         // In HolyC, top-level statements execute when the file is loaded
-        try self.buildMainWrapper(root.top_level_stmts);
+        if (!has_start and root.top_level_stmts.len > 0) {
+            try self.buildMainWrapper(root.top_level_stmts);
+        }
     }
 
     pub fn buildDeclaration(self: *IRBuilder, decl: ast.Decl) !void {

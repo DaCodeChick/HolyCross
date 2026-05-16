@@ -160,34 +160,11 @@ pub const Compiler = struct {
         output_path: []const u8,
         io: std.Io,
     ) !void {
-        // Generate object file with relocations, then link with hcl
-        std.debug.print("      Generating object file with extern relocations...\n", .{});
-        
-        const obj_path = "/tmp/holycross_temp.o";
-        
-        // We need to convert our ELF executable writer data to object format
-        // For now, use a simpler approach: generate the object file separately
-        // TODO: Refactor to avoid duplication
-        
-        std.debug.print("\n", .{});
-        std.debug.print("Extern function linking requires object file generation.\n", .{});
-        std.debug.print("Extern symbols detected ({}):\n", .{elf.extern_symbols.items.len});
-        for (elf.extern_symbols.items) |sym| {
-            std.debug.print("  - {s} at offset 0x{x}\n", .{sym.name, sym.call_site_offset});
-        }
-        std.debug.print("\n", .{});
-        std.debug.print("To complete linking:\n", .{});
-        std.debug.print("  1. Compile to object file: hcc input.hc -c -o output.o\n", .{});
-        std.debug.print("  2. Link with hcl: hcl output.o -lc -o executable\n", .{});
-        std.debug.print("\n", .{});
-        std.debug.print("Full implementation coming soon!\n", .{});
+        // Generate executable with dynamic linking
+        std.debug.print("      Generating dynamically linked executable...\n", .{});
+        try elf.writeToFile(io, output_path);
         
         _ = self;
-        _ = obj_path;
-        _ = output_path;
-        _ = io;
-        
-        return error.ExternLinkingNotImplemented;
     }
 
     /// Compile to TempleOS/ZealOS .BIN format

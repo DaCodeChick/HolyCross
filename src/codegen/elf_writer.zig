@@ -406,6 +406,12 @@ pub const ELFWriter = struct {
         const file = try cwd.createFile(io, path, .{});
         defer file.close(io);
         
+        // Convert extern symbols to dynamic symbols
+        // For now, we use placeholder offsets; they'll be calculated properly when generating PLT/GOT
+        for (self.extern_symbols.items) |extern_sym| {
+            try self.addDynamicSymbol(extern_sym.name, 0, 0);
+        }
+        
         // Check if we need dynamic linking
         const has_dynamic = self.dynamic_symbols.items.len > 0;
         
@@ -420,20 +426,18 @@ pub const ELFWriter = struct {
             // Generate hash table
             try self.generateHash();
             
+            // Generate dynstr and get string offsets
+            var temp_string_offsets = try self.generateDynStr();
+            defer temp_string_offsets.deinit();
+            
+            // Generate dynsym
+            try self.generateDynSym(temp_string_offsets);
+            
             // Generate rela.plt with placeholder GOT
             try self.generateRelaPlt(0xDEADBEEF);
             
             // Generate dynamic section with placeholder addresses
             // This is just to get the size; we'll regenerate with correct addresses later
-            var temp_string_offsets = std.StringHashMap(u32).init(self.allocator);
-            defer temp_string_offsets.deinit();
-            var temp_offset: u32 = 1;
-            try temp_string_offsets.put("libc.so.6", temp_offset);
-            temp_offset += @intCast("libc.so.6\x00".len);
-            for (self.dynamic_symbols.items) |sym| {
-                try temp_string_offsets.put(sym.name, temp_offset);
-                temp_offset += @intCast(sym.name.len + 1);
-            }
             try self.generateDynamic(0, 0, 0, 0, 0, temp_string_offsets);
         }
         
@@ -483,23 +487,52 @@ pub const ELFWriter = struct {
         const code_vaddr = BASE_ADDRESS + code_offset;
         const entry_vaddr = code_vaddr + self.entry_point;
         
-        // PLT comes right after code
-        const plt_addr = code_vaddr + self.code.items.len;
-        
-        // Align data section to next page
-        const code_size_aligned = (self.code.items.len + plt_size + 0xFFF) & ~@as(u64, 0xFFF);
+        // Calculate sizes
+        const code_size = self.code.items.len;
+        const code_size_aligned = (code_size + plt_size + 15) & ~@as(u64, 15);
         const data_offset = code_offset + code_size_aligned;
+        
+        // Calculate data section size
+        var dynamic_size: u64 = 0;
+        var got_size: u64 = 0;
+        var string_data_size: u64 = 0;
+        var dynamic_addr: u64 = 0;
+        var got_addr: u64 = 0;
+        
+        if (has_dynamic) {
+            dynamic_size = self.dynamic.items.len;
+            got_size = (3 + self.extern_symbols.items.len) * 8;
+            string_data_size = self.data.items.len;
+            dynamic_addr = BASE_ADDRESS + data_offset;
+            got_addr = dynamic_addr + dynamic_size;
+        }
+        
+        const data_size = dynamic_size + got_size + string_data_size;
         const data_vaddr = BASE_ADDRESS + data_offset;
         
-        // Dynamic section (writable, so in data segment)
-        const dynamic_offset = if (has_dynamic) data_offset else 0;
-        const dynamic_addr = BASE_ADDRESS + dynamic_offset;
-        const got_addr = if (has_dynamic) dynamic_addr + self.dynamic.items.len else data_vaddr;
+        // Calculate PLT address
+        const plt_addr = BASE_ADDRESS + code_offset + code_size;
         
         // Now generate PLT and GOT with correct addresses
         if (has_dynamic) {
             try self.generatePLT(plt_addr, got_addr);
             try self.generateGOT(dynamic_addr, plt_addr);
+            
+            // Patch extern call sites to point to their PLT entries
+            for (self.extern_symbols.items, 0..) |extern_sym, i| {
+                // Find the PLT entry for this symbol
+                const plt_entry_offset: u32 = 16 + @as(u32, @intCast(i)) * 16; // PLT[0] is 16 bytes, then 16 bytes per entry
+                const plt_entry_addr = plt_addr + plt_entry_offset;
+                
+                // Calculate the relative offset from the call site
+                const call_site_addr = BASE_ADDRESS + code_offset + extern_sym.call_site_offset;
+                const next_instr_addr = call_site_addr + 5; // call instruction is 5 bytes (e8 + 4-byte offset)
+                const relative_offset: i32 = @intCast(plt_entry_addr - next_instr_addr);
+                
+                // Patch the call instruction in the code buffer
+                // call_site_offset already points to the displacement (after the E8 opcode)
+                std.mem.writeInt(i32, self.code.items[extern_sym.call_site_offset..][0..4], relative_offset, .little);
+            }
         }
         
         // Now fix up .rela.plt and .dynamic section with correct addresses
@@ -605,7 +638,7 @@ pub const ELFWriter = struct {
         if (has_dynamic) {
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 2)));  // p_type: PT_DYNAMIC
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 6)));  // p_flags: PF_R | PF_W
-            try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_offset)); // p_offset
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_offset)); // p_offset
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_addr));  // p_vaddr
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_addr));  // p_paddr
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.dynamic.items.len))); // p_filesz
@@ -626,17 +659,13 @@ pub const ELFWriter = struct {
         
         // Program Header: Data segment (PT_LOAD, readable+writable)
         if (self.data.items.len > 0 or has_dynamic) {
-            const total_data_size = if (has_dynamic)
-                self.dynamic.items.len + self.got.items.len + self.data.items.len
-            else
-                self.data.items.len;
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // p_type: PT_LOAD
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 6)));  // p_flags: PF_R | PF_W (readable + writable)
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_offset));   // p_offset
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_vaddr));    // p_vaddr
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_vaddr));    // p_paddr
-            try buffer.appendSlice(self.allocator, &std.mem.toBytes(total_data_size)); // p_filesz
-            try buffer.appendSlice(self.allocator, &std.mem.toBytes(total_data_size)); // p_memsz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_size)); // p_filesz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_size)); // p_memsz
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0x1000))); // p_align: 4KB page alignment
         }
         
@@ -706,6 +735,14 @@ pub const ELFWriter = struct {
         const code_offset: u64 = 0x1000;
         const code_size_aligned = (self.code.items.len + 0xFFF) & ~@as(u64, 0xFFF);
         const data_section_offset = code_offset + code_size_aligned;
-        return BASE_ADDRESS + data_section_offset + data_offset;
+        
+        // Account for dynamic and GOT sections before user data
+        const has_dynamic = self.dynamic_symbols.items.len > 0;
+        const dynamic_got_size = if (has_dynamic)
+            self.dynamic.items.len + self.got.items.len
+        else
+            0;
+        
+        return BASE_ADDRESS + data_section_offset + dynamic_got_size + data_offset;
     }
 };

@@ -319,7 +319,20 @@ pub const X64MachineCodeGen = struct {
         }
 
         // Function epilogue (fallthrough case)
-        try self.emitEpilogue();
+        // Only emit if the last instruction is not already a return
+        if (func.blocks.items.len > 0) {
+            const last_block = func.blocks.items[func.blocks.items.len - 1];
+            if (last_block.instructions.items.len > 0) {
+                const last_instr = last_block.instructions.items[last_block.instructions.items.len - 1];
+                if (last_instr.opcode != .ret and last_instr.opcode != .ret_val) {
+                    try self.emitEpilogue();
+                }
+            } else {
+                try self.emitEpilogue();
+            }
+        } else {
+            try self.emitEpilogue();
+        }
     }
 
     fn generateBlock(self: *X64MachineCodeGen, block: *const ir.BasicBlock) !void {
@@ -429,6 +442,22 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genRet(self: *X64MachineCodeGen) !void {
+        // Special case for _start: do exit syscall with code 0
+        if (self.current_func) |func| {
+            if (std.mem.eql(u8, func.name, "_start")) {
+                // xor rdi, rdi (exit code 0)
+                try self.emitBytes(&[_]u8{ 0x48, 0x31, 0xFF });
+                
+                // Exit syscall: mov rax, 60; syscall
+                // MOV rax, 60 = 48 C7 C0 3C 00 00 00
+                try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00 });
+                
+                // SYSCALL = 0F 05
+                try self.emitBytes(&[_]u8{ 0x0F, 0x05 });
+                return;
+            }
+        }
+        
         try self.emitEpilogue();
     }
 
