@@ -161,8 +161,9 @@ fn calculateAlignment(typ: ast.Type) u64 {
         .i64, .u64, .f64, .bool => 8, // Bool aligned as I64
         .pointer => 8,
         .array => |arr| calculateAlignment(arr.element_type.*),
-        .named => 8, // Named types - should be looked up
-        .function => 8,
+        .named => 8, // Named types - default size (conservative for pointers)
+                     // TODO: Pass type layouts map to look up actual size
+        .function => 8, // Function pointers
     };
 }
 

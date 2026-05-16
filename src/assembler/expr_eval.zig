@@ -215,29 +215,71 @@ fn evalAddressOf(ctx: *EvalContext, var_name: []const u8) error{OutOfMemory}!?i6
 }
 
 /// Try to evaluate a binary expression (e.g., "8+4", "16>>2")
+/// Uses proper operator precedence and left-to-right associativity
 fn evalBinaryExpr(ctx: *EvalContext, expr: []const u8) error{OutOfMemory}!?i64 {
-    // Try each binary operator
-    const operators = [_][]const u8{ "<<", ">>", "+", "-", "*", "/", "%" };
+    // Operator precedence levels (lower number = lower precedence)
+    const Op = struct {
+        str: []const u8,
+        precedence: u8,
+    };
+    
+    const operators = [_]Op{
+        .{ .str = "+", .precedence = 1 },
+        .{ .str = "-", .precedence = 1 },
+        .{ .str = "<<", .precedence = 2 },
+        .{ .str = ">>", .precedence = 2 },
+        .{ .str = "*", .precedence = 3 },
+        .{ .str = "/", .precedence = 3 },
+        .{ .str = "%", .precedence = 3 },
+    };
+    
+    // Find the rightmost operator with the lowest precedence
+    // This ensures left-to-right evaluation: 8-4-2 = (8-4)-2 = 2
+    var best_op: ?Op = null;
+    var best_pos: ?usize = null;
     
     for (operators) |op| {
-        if (std.mem.indexOf(u8, expr, op)) |op_pos| {
-            const left_str = std.mem.trim(u8, expr[0..op_pos], &std.ascii.whitespace);
-            const right_str = std.mem.trim(u8, expr[op_pos+op.len..], &std.ascii.whitespace);
-            
-            const left = (try evalConstExpr(ctx, left_str)) orelse continue;
-            const right = (try evalConstExpr(ctx, right_str)) orelse continue;
-            
-            return switch (op[0]) {
-                '+' => left + right,
-                '-' => left - right,
-                '*' => left * right,
-                '/' => if (right != 0) @divTrunc(left, right) else null,
-                '%' => if (right != 0) @rem(left, right) else null,
-                '<' => left << @intCast(right), // <<
-                '>' => left >> @intCast(right), // >>
-                else => null,
-            };
+        var pos: usize = 0;
+        while (pos < expr.len) {
+            if (std.mem.indexOf(u8, expr[pos..], op.str)) |found| {
+                const abs_pos = pos + found;
+                // Skip if it's at the start (could be unary minus)
+                if (abs_pos == 0) {
+                    pos = abs_pos + op.str.len;
+                    continue;
+                }
+                // Update if this is lower precedence, or same precedence but rightmost
+                if (best_op == null or 
+                    op.precedence < best_op.?.precedence or 
+                    (op.precedence == best_op.?.precedence and abs_pos > best_pos.?)) {
+                    best_op = op;
+                    best_pos = abs_pos;
+                }
+                pos = abs_pos + op.str.len;
+            } else {
+                break;
+            }
         }
+    }
+    
+    if (best_op) |op| {
+        const op_pos = best_pos.?;
+        const left_str = std.mem.trim(u8, expr[0..op_pos], &std.ascii.whitespace);
+        const right_str = std.mem.trim(u8, expr[op_pos+op.str.len..], &std.ascii.whitespace);
+        
+        const left = (try evalConstExpr(ctx, left_str)) orelse return null;
+        const right = (try evalConstExpr(ctx, right_str)) orelse return null;
+        
+        return switch (op.str[0]) {
+            '+' => left + right,
+            '-' => left - right,
+            '*' => left * right,
+            '/' => if (right != 0) @divTrunc(left, right) else null,
+            '%' => if (right != 0) @rem(left, right) else null,
+            '<' => left << @intCast(right), // <<
+            '>' => left >> @intCast(right), // >>
+            else => null,
+        };
     }
     
     return null;

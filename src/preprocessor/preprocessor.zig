@@ -17,6 +17,7 @@ pub const Preprocessor = struct {
     column: usize = 1,
     include_depth: usize = 0, // Track recursion depth to prevent infinite loops
     io: *const std.Io = undefined, // For file operations
+    owns_defines: bool = true, // Whether this preprocessor owns the defines map
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8, filename: []const u8) !Preprocessor {
         return Preprocessor{
@@ -51,17 +52,21 @@ pub const Preprocessor = struct {
             .output = .{ .items = &.{}, .capacity = 0 },
             .include_depth = depth,
             .io = io,
+            .owns_defines = false, // Don't own the parent's defines
         };
     }
 
     pub fn deinit(self: *Preprocessor) void {
-        // Free all macro keys and values
-        var it = self.defines.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
+        // Only free defines if we own them
+        if (self.owns_defines) {
+            // Free all macro keys and values
+            var it = self.defines.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+                self.allocator.free(entry.value_ptr.*);
+            }
+            self.defines.deinit();
         }
-        self.defines.deinit();
         self.output.deinit(self.allocator);
     }
 
@@ -289,7 +294,7 @@ pub const Preprocessor = struct {
             self.defines,
             self.include_depth + 1
         );
-        defer include_preprocessor.defines = std.StringHashMap([]const u8).init(self.allocator); // Prevent double-free
+        defer include_preprocessor.deinit(); // Now safe - won't double-free
         
         // Process the included file
         const processed_include = try include_preprocessor.process();

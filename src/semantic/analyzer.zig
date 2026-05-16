@@ -302,7 +302,11 @@ pub const Analyzer = struct {
             }
 
             const base_name = cls.base_class.?;
-            const base_members = self.class_members.get(base_name) orelse cls.members;
+            const base_members = self.class_members.get(base_name) orelse {
+                // Base class not found - this is an error
+                std.debug.print("Error: Base class '{s}' not found for class '{s}'\n", .{ base_name, cls.name });
+                return AnalyzerError.UndefinedType;
+            };
 
             // Allocate array for base + derived members
             const combined = try self.allocator.alloc(ast.ClassMember, base_members.len + cls.members.len);
@@ -1057,6 +1061,7 @@ pub const AnalyzerError = error{
     SymbolAlreadyDefined,
     SymbolNotDefined,
     TypeError,
+    UndefinedType,
 };
 
 /// Semantic error information
