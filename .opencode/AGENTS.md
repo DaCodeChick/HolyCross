@@ -194,9 +194,12 @@ All tools share common modules via `src/lib.zig`.
 - `I0` / `U0` synonyms for `void`
 - `pad` / `reserved` synonyms for alignment padding
 - Zero-arg function calls use bare identifier: `Foo;` (not `Foo()`)
-- No `continue` keyword
+- **No `continue` keyword** (use different loop structure)
 - No ternary operator (`? :`)
 - Top-level statement execution (like scripting)
+- **No `F32` type** - TempleOS has F64 only, no float
+- **No `#undef`** - TempleOS doesn't support undefining macros
+- **No `#pragma`** - TempleOS doesn't use pragma directives
 
 **Calling Convention:**
 - System V AMD64 ABI for Linux
@@ -290,7 +293,8 @@ Located in `src/codegen/ir.zig`:
    - Macro expansion
    - Include file handling
    - `#ifdef` / `#ifndef` / `#else` / `#endif`
-   - `#define` / `#undef`
+   - `#define` (TempleOS has no `#undef`)
+   - `#assert` directive
 
 2. **Lexical Analysis** (`src/lexer/`)
    - Tokenization
@@ -431,7 +435,7 @@ git push
 - ✅ Text assembly backend (TempleOS-style)
 - ✅ Machine code backend (direct x64 encoding)
 - ✅ ELF writer (native Linux executables)
-- ✅ Preprocessor (`#define`, `#ifdef`, `#include`)
+- ✅ Preprocessor (`#define`, `#ifdef`, `#include`, `#assert`)
 - ✅ Label/goto support
 - ✅ Cast support
 - ✅ x87 FPU float support (TempleOS-compatible)
@@ -441,6 +445,77 @@ git push
 - ✅ Arithmetic/logical operations
 - ✅ Jump instructions
 - ✅ Function calls (register and label)
+- ✅ Inline assembly support (`asm { }` blocks)
+- ✅ `sizeof()` and `offset()` compile-time intrinsics
+- ✅ Type layouts in inline assembly expressions
+
+### Assembler Instruction Set (96 instructions)
+
+**Data Movement:**
+- MOV, MOVSX, MOVZX, LEA, XCHG, PUSH, POP
+
+**Arithmetic:**
+- ADD, SUB, IMUL, MUL, IDIV, DIV, INC, DEC, NEG
+
+**Logical:**
+- AND, OR, XOR, NOT
+
+**Shift/Rotate:**
+- SHL, SHR, SAR, ROL, ROR, RCL, RCR
+
+**Bit Operations:**
+- BT, BTC, BTR, BTS, BSF, BSR, BSWAP
+
+**Control Flow:**
+- CALL, RET, JMP, JE, JNE, JZ, JNZ, JL, JLE, JG, JGE, JA, JAE, JB, JBE, JC, JNC, JO, JNO, JS, JNS, JP, JNP, LOOP
+
+**CPU Information:**
+- RDTSC (read timestamp counter)
+- CPUID (CPU identification)
+
+**x87 FPU (68 instructions):**
+
+*Data Transfer:*
+- FLD, FST, FSTP, FILD, FIST, FISTP, FXCH
+
+*Arithmetic:*
+- FADD, FADDP, FSUB, FSUBP, FMUL, FMULP, FDIV, FDIVP
+- FSUBR, FSUBRP, FDIVR, FDIVRP (reverse operations)
+- FIADD, FISUB, FIMUL, FIDIV (integer operands)
+
+*Comparison:*
+- FCOM, FCOMP, FCOMPP, FUCOM, FUCOMP, FUCOMPP
+- FCOMI, FCOMIP, FTST, FXAM
+
+*Transcendental:*
+- FSIN, FCOS, FSINCOS, FPTAN, FPATAN
+- F2XM1, FYL2X, FYL2XP1, FSCALE
+
+*Constants:*
+- FLD1, FLDZ, FLDPI, FLDL2E, FLDL2T, FLDLG2, FLDLN2
+
+*Arithmetic Helpers:*
+- FABS, FCHS, FSQRT, FRNDINT, FXTRACT
+
+*Control/State:*
+- FINIT, FNINIT, FCLEX, FNCLEX, FNOP, WAIT
+- FLDCW, FNSTCW, FSTCW, FNSTSW, FSTSW
+- FINCSTP, FDECSTP, FFREE
+
+**Special:**
+- NOP, LEAVE
+
+**Directives:**
+- DU8, DU16, DU32 (data bytes)
+- BINFILE (embed binary files)
+- LIST, NOLIST (listing control)
+- USE32, USE64 (mode directives)
+
+**Type Prefixes for Memory Operands:**
+- U64, I64, F64 (qword - 8 bytes)
+- U32, I32 (dword - 4 bytes)
+- U16, I16 (word - 2 bytes)
+- U8, I8 (byte - 1 byte)
 
 ## In Progress / TODO
 
@@ -456,18 +531,22 @@ git push
 
 ### Low Priority
 - ⏳ Add standalone test suite for hcpp
-- ⏳ Implement missing preprocessor directives (`#if`, `#elif`, `#undef`, `#error`, `#warning`)
 - ⏳ String literal / data section refactor
 - ⏳ Print function implementation
+
+### NOT Supported (TempleOS Limitations)
+- ❌ `F32` type - TempleOS has F64 only
+- ❌ `continue` keyword - use different loop structures
+- ❌ `#undef` directive - not in TempleOS
+- ❌ `#pragma` directive - not in TempleOS
 
 ## Known Issues / Limitations
 
 - String literals not yet implemented (data section refactor needed)
 - `print` function is stubbed (TODO: implement proper printf-style formatting)
-- Forward label references in assembler use placeholder zeros (TODO: multi-pass resolution)
-- Limited instruction set coverage (focused on compiler-generated code)
+- Limited instruction set coverage for less common x64 operations
 - No SSE/SIMD support (x87 FPU only, TempleOS-compatible)
-- No inline assembly support in HolyC parser (TempleOS has `asm { }` blocks)
+- Multi-pass label resolution in assembler is complete
 
 ## Reference Paths
 
