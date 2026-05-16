@@ -119,6 +119,8 @@ pub const X64MachineCodeGen = struct {
     forward_jumps: std.ArrayList(ForwardJump),
     /// String literal to data offset mapping
     string_literals: std.StringHashMap(u64),
+    /// Index of .data section symbol (for relocations in object files)
+    data_section_symbol: ?u32 = null,
 
     pub fn init(allocator: Allocator, code_buffer: CodeBuffer) !X64MachineCodeGen {
         const empty_call_sites = try allocator.alloc(CallSite, 0);
@@ -1034,16 +1036,32 @@ pub const X64MachineCodeGen = struct {
                             data_offset = offset;
                         }
                         
-                        // Get the virtual address for the string
-                        const str_vaddr = try self.code_buffer.getDataVAddr(data_offset.?);
-                        
-                        // movabs reg, str_vaddr
+                        // movabs reg, <address>
                         if (i < 4) {
                             try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
                         } else {
                             try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
                         }
-                        try self.emitQword(str_vaddr);
+                        
+                        // For object files, emit a relocation; for executables, emit the actual address
+                        switch (self.code_buffer) {
+                            .object => |obj| {
+                                const reloc_offset = self.code_buffer.getCurrentOffset();
+                                try self.emitQword(0);
+                                // Add R_X86_64_64 relocation for .data section + offset
+                                const data_sym_idx = try self.ensureDataSectionSymbol();
+                                try obj.addRelocation(
+                                    reloc_offset,
+                                    data_sym_idx,
+                                    .R_X86_64_64,
+                                    @intCast(data_offset.?)
+                                );
+                            },
+                            else => {
+                                const str_vaddr = try self.code_buffer.getDataVAddr(data_offset.?);
+                                try self.emitQword(str_vaddr);
+                            },
+                        }
                     },
                     else => return error.UnsupportedArgument,
                 }
@@ -1222,6 +1240,43 @@ pub const X64MachineCodeGen = struct {
                     try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 });
                     try self.emitDword(if (val) 1 else 0);
                 },
+            },
+            .string => |str_literal| {
+                // String literals: store them in data section and load address into rax
+                // Check if string literal already exists in data section
+                var data_offset = self.string_literals.get(str_literal);
+                if (data_offset == null) {
+                    // Add string to data section with null terminator
+                    const str_copy = try self.allocator.dupe(u8, str_literal);
+                    const offset = try self.code_buffer.appendData(str_literal);
+                    try self.string_literals.put(str_copy, offset);
+                    data_offset = offset;
+                }
+                
+                // movabs rax, <address> (load string address into rax)
+                try self.emitBytes(&[_]u8{ 0x48, 0xB8 });
+                
+                // For object files, emit a relocation; for executables, emit the actual address
+                switch (self.code_buffer) {
+                    .object => |obj| {
+                        const reloc_offset = self.code_buffer.getCurrentOffset();
+                        // Emit placeholder (will be filled by linker)
+                        try self.emitQword(0);
+                        // Add R_X86_64_64 relocation for .data section + offset
+                        const data_sym_idx = try self.ensureDataSectionSymbol();
+                        try obj.addRelocation(
+                            reloc_offset,
+                            data_sym_idx,
+                            .R_X86_64_64,
+                            @intCast(data_offset.?)
+                        );
+                    },
+                    else => {
+                        // For executables, get the actual virtual address
+                        const str_vaddr = try self.code_buffer.getDataVAddr(data_offset.?);
+                        try self.emitQword(str_vaddr);
+                    },
+                }
             },
             else => return error.InvalidStoreSource,
         }
@@ -1662,6 +1717,31 @@ pub const X64MachineCodeGen = struct {
         
         // ret
         try self.emitByte(0xC3);
+    }
+
+    /// Ensure .data section symbol exists in object file and return its index
+    fn ensureDataSectionSymbol(self: *X64MachineCodeGen) !u32 {
+        if (self.data_section_symbol) |idx| {
+            return idx;
+        }
+        
+        // Only needed for object files
+        switch (self.code_buffer) {
+            .object => |obj| {
+                // Add .data section symbol (LOCAL, SECTION type)
+                const idx = try obj.addSymbol(
+                    "",  // Section symbols have no name
+                    0,   // value
+                    0,   // size
+                    .data,
+                    .local,
+                    .section
+                );
+                self.data_section_symbol = idx;
+                return idx;
+            },
+            else => return error.NotAnObjectFile,
+        }
     }
 
     fn getTempOffset(self: *X64MachineCodeGen, operand: ir.Operand) !i32 {

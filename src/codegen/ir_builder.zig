@@ -706,12 +706,10 @@ pub const IRBuilder = struct {
             },
             .string => |str| {
                 _ = try self.module.addStringLiteral(str.value);
-                // For HolyC print: "text" is actually a print statement
-                // We'll emit a print instruction
-                try self.emit(.{
-                    .opcode = .print,
-                    .src1 = .{ .string = str.value },
-                });
+                // String literals evaluate to a pointer to the string data
+                // Note: In HolyC, a bare string at statement level prints,
+                // but when used in expressions it's just a pointer value.
+                // The parser handles the statement-level print case.
                 return .{ .string = str.value };
             },
             .char => |ch| {

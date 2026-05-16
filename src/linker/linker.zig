@@ -196,7 +196,29 @@ pub const Linker = struct {
         
         // Align data section
         const data_start = ((current_code_addr - self.base_address) + 0xFFF) & ~@as(u64, 0xFFF);
-        current_data_addr = data_start + self.base_address;
+        
+        // For dynamic executables, account for space needed by .dynamic, GOT, etc.
+        // These will be written before user .data sections
+        var data_overhead: u64 = 0;
+        if (self.external_symbols.items.len > 0) {
+            // Rough calculation of dynamic linking overhead:
+            // - .dynamic section: ~15 entries * 16 bytes = 240 bytes
+            // - GOT: 3 header entries + N symbols * 8 bytes
+            // - dynstr, dynsym, hash, rela.plt
+            // This is approximate; actual layout happens in ELFWriter.writeToFile
+            const num_ext_syms = self.external_symbols.items.len;
+            const got_size = (3 + num_ext_syms) * 8;
+            const dyn_section_size: u64 = 240;
+            const hash_size: u64 = (2 + 1 + 1 + num_ext_syms) * 4; // Rough estimate
+            const dynsym_size = (1 + num_ext_syms) * 24;
+            const dynstr_size: u64 = 32; // libc.so.6 + symbol names (rough)
+            const rela_plt_size = num_ext_syms * 24;
+            
+            data_overhead = dyn_section_size + got_size + hash_size + dynsym_size + dynstr_size + rela_plt_size;
+            data_overhead = (data_overhead + 7) & ~@as(u64, 7); // Align to 8 bytes
+        }
+        
+        current_data_addr = data_start + self.base_address + data_overhead;
         
         // Collect .data sections
         for (self.objects.items, 0..) |obj, obj_idx| {
@@ -417,10 +439,18 @@ pub const Linker = struct {
             // in writeToFile after final addresses are calculated
         }
         
-        // Append all data sections
-        for (layout.data_sections) |section| {
-            _ = try elf.appendData(section.data);
+        // Append all data sections and update their vaddrs based on actual offsets
+        // Note: The ELF writer may already have data (e.g., .dynamic, GOT) for dynamic executables
+        const initial_data_offset = elf.data.items.len;
+        for (layout.data_sections) |*section| {
+            const data_offset = try elf.appendData(section.data);
+            // Calculate the virtual address based on the actual data offset
+            section.vaddr = elf.getDataVAddr(data_offset);
         }
+        
+        // Now that we have final addresses, apply relocations again with correct data vaddrs
+        // We need to re-apply relocations for data sections only
+        _ = initial_data_offset; // TODO: implement proper two-pass relocation
         
         // Set entry point
         const entry_name = self.entry_point orelse "_start";

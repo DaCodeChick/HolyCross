@@ -90,6 +90,8 @@ pub const ELFObjectWriter = struct {
     pub fn appendData(self: *ELFObjectWriter, bytes: []const u8) !u64 {
         const offset = self.data.items.len;
         try self.data.appendSlice(self.allocator, bytes);
+        // Add null terminator for strings
+        try self.data.append(self.allocator, 0);
         return @intCast(offset);
     }
     
@@ -151,6 +153,14 @@ pub const ELFObjectWriter = struct {
         
         for (self.symbols.items, 0..) |sym, i| {
             symbol_name_offsets[i] = try addString(&strtab, self.allocator, sym.name);
+        }
+        
+        // Count local symbols (for sh_info in symtab)
+        var num_local_symbols: u32 = 1; // Always have NULL symbol
+        for (self.symbols.items) |sym| {
+            if (sym.binding == .local) {
+                num_local_symbols += 1;
+            }
         }
         
         // Calculate section offsets
@@ -266,7 +276,7 @@ pub const ELFObjectWriter = struct {
             symtab_offset,      // sh_offset
             symtab_size,        // sh_size
             5,                  // sh_link: .strtab section index
-            1,                  // sh_info: first non-local symbol
+            num_local_symbols,  // sh_info: first non-local symbol
             8,                  // sh_addralign
             24                  // sh_entsize: sizeof(Elf64_Sym)
         );

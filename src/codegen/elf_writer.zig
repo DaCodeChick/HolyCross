@@ -387,6 +387,8 @@ pub const ELFWriter = struct {
     pub fn appendData(self: *ELFWriter, bytes: []const u8) !u64 {
         const offset = self.data.items.len;
         try self.data.appendSlice(self.allocator, bytes);
+        // Add null terminator for strings
+        try self.data.append(self.allocator, 0);
         return @intCast(offset);
     }
     
