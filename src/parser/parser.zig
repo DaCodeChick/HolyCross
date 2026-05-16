@@ -429,7 +429,7 @@ pub const Parser = struct {
         // Check if this is a function (has parenthesis) or variable (has semicolon/assignment)
         if (try self.match(.lparen)) {
             // Function declaration
-            const params = try self.parseParameterList();
+            const param_result = try self.parseParameterList();
 
             // Function body is optional (forward declaration)
             const body: ?Stmt = if (try self.match(.lbrace)) blk: {
@@ -444,7 +444,8 @@ pub const Parser = struct {
                 .function = .{
                     .return_type = final_type,
                     .name = name,
-                    .params = params,
+                    .params = param_result.params,
+                    .is_variadic = param_result.is_variadic,
                     .body = body,
                     .attributes = attrs.func_attrs,
                     .loc = name_loc,
@@ -522,18 +523,36 @@ pub const Parser = struct {
     }
 
     /// Parse parameter list for function: (Type name, Type name, ...)
-    fn parseParameterList(self: *Parser) ParserError![]ast.Param {
+    /// Returns both the parameter list and whether the function is variadic
+    const ParameterListResult = struct {
+        params: []ast.Param,
+        is_variadic: bool,
+    };
+    
+    fn parseParameterList(self: *Parser) ParserError!ParameterListResult {
         const empty_slice = try self.ast_allocator.alloc(ast.Param, 0);
         var params = std.ArrayList(ast.Param).fromOwnedSlice(empty_slice);
         errdefer params.deinit(self.ast_allocator);
+        var is_variadic = false;
 
         // Empty parameter list
         if (try self.match(.rparen)) {
-            return try params.toOwnedSlice(self.ast_allocator);
+            return .{
+                .params = try params.toOwnedSlice(self.ast_allocator),
+                .is_variadic = false,
+            };
         }
 
         // Parse parameters
         while (true) {
+            // Check for variadic marker (...)
+            if (self.check(.op_ellipsis)) {
+                try self.advance();
+                is_variadic = true;
+                try self.consume(.rparen, "Expected ')' after '...'");
+                break;
+            }
+            
             var param_type = try self.parseType();
 
             if (!self.check(.identifier)) {
@@ -583,10 +602,20 @@ pub const Parser = struct {
             if (!try self.match(.comma)) {
                 break;
             }
+            
+            // Check if next token is ... after comma (e.g., "int x, ...")
+            if (self.check(.op_ellipsis)) {
+                try self.advance();
+                is_variadic = true;
+                break;
+            }
         }
 
         try self.consume(.rparen, "Expected ')' after parameter list");
-        return try params.toOwnedSlice(self.ast_allocator);
+        return .{
+            .params = try params.toOwnedSlice(self.ast_allocator),
+            .is_variadic = is_variadic,
+        };
     }
 
     /// Parse class or union members: Type name; Type name; ...

@@ -107,6 +107,7 @@ pub const SymbolTable = struct {
         name: []const u8,
         return_type: ast.Type,
         params: []const ast.Param,
+        is_variadic: bool,
         loc: ast.SourceLocation,
         is_extern: bool,
     ) !void {
@@ -115,6 +116,7 @@ pub const SymbolTable = struct {
                 .name = name,
                 .return_type = return_type,
                 .params = params,
+                .is_variadic = is_variadic,
                 .loc = loc,
                 .is_extern = is_extern,
             },
@@ -129,6 +131,7 @@ pub const SymbolTable = struct {
         name: []const u8,
         return_type: ast.Type,
         params: []const ast.Param,
+        is_variadic: bool,
         loc: ast.SourceLocation,
         is_extern: bool,
     ) !void {
@@ -137,6 +140,7 @@ pub const SymbolTable = struct {
                 .name = name,
                 .return_type = return_type,
                 .params = params,
+                .is_variadic = is_variadic,
                 .loc = loc,
                 .is_extern = is_extern,
             },

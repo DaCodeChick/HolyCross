@@ -45,6 +45,7 @@ pub const FunctionSymbol = struct {
     name: []const u8,
     return_type: ast.Type,
     params: []const ast.Param,
+    is_variadic: bool, // True if function accepts variable arguments (...)
     loc: ast.SourceLocation,
     is_extern: bool, // True if this is an extern declaration without a body
 };

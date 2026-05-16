@@ -1001,6 +1001,43 @@ pub const X64MachineCodeGen = struct {
                             try self.emitModRM(arg_regs[i] & 7, 5, src_offset);
                         }
                     },
+                    .variable => |var_name| {
+                        // Load variable into argument register
+                        const var_offset = self.variable_offsets.get(var_name) orelse {
+                            std.debug.print("Error: Undefined variable '{s}' in call argument\n", .{var_name});
+                            return error.UndefinedVariable;
+                        };
+                        // mov reg, [rbp+offset]
+                        if (i < 4) {
+                            try self.emitBytes(&[_]u8{ 0x48, 0x8B });
+                            try self.emitModRM(arg_regs[i] & 7, 5, var_offset);
+                        } else {
+                            try self.emitBytes(&[_]u8{ 0x4C, 0x8B });
+                            try self.emitModRM(arg_regs[i] & 7, 5, var_offset);
+                        }
+                    },
+                    .string => |str_literal| {
+                        // Load address of string literal into argument register
+                        // First ensure string is in data section
+                        var data_offset = self.string_literals.get(str_literal);
+                        if (data_offset == null) {
+                            const str_copy = try self.allocator.dupe(u8, str_literal);
+                            const offset = try self.code_buffer.appendData(str_literal);
+                            try self.string_literals.put(str_copy, offset);
+                            data_offset = offset;
+                        }
+                        
+                        // Get the virtual address for the string
+                        const str_vaddr = try self.code_buffer.getDataVAddr(data_offset.?);
+                        
+                        // movabs reg, str_vaddr
+                        if (i < 4) {
+                            try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                        } else {
+                            try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                        }
+                        try self.emitQword(str_vaddr);
+                    },
                     else => return error.UnsupportedArgument,
                 }
             }

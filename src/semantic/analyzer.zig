@@ -172,6 +172,7 @@ pub const Analyzer = struct {
                         func.name,
                         func.return_type,
                         func.params,
+                        func.is_variadic,
                         func.loc,
                         false, // Not extern anymore, it's a definition
                     );
@@ -199,6 +200,7 @@ pub const Analyzer = struct {
             func.name,
             func.return_type,
             func.params,
+            func.is_variadic,
             func.loc,
             is_extern and !has_body,
         );
@@ -632,18 +634,34 @@ pub const Analyzer = struct {
         const func_symbol = try self.lookupFunctionSymbol(func_name, loc);
 
         // Check argument count
-        if (args.len != func_symbol.params.len) {
-            const msg = try std.fmt.allocPrint(
-                self.allocator,
-                "Function '{s}' expects {d} argument(s), but got {d}",
-                .{ func_name, func_symbol.params.len, args.len },
-            );
-            try self.addError(.argument_count_mismatch, msg, loc);
-            return;
+        // For variadic functions, we need at least the fixed parameters
+        if (func_symbol.is_variadic) {
+            if (args.len < func_symbol.params.len) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Variadic function '{s}' expects at least {d} argument(s), but got {d}",
+                    .{ func_name, func_symbol.params.len, args.len },
+                );
+                try self.addError(.argument_count_mismatch, msg, loc);
+                return;
+            }
+        } else {
+            if (args.len != func_symbol.params.len) {
+                const msg = try std.fmt.allocPrint(
+                    self.allocator,
+                    "Function '{s}' expects {d} argument(s), but got {d}",
+                    .{ func_name, func_symbol.params.len, args.len },
+                );
+                try self.addError(.argument_count_mismatch, msg, loc);
+                return;
+            }
         }
 
-        // Check argument types
-        for (args, func_symbol.params, 0..) |arg, param, i| {
+        // Check argument types (only for fixed parameters)
+        const params_to_check = @min(args.len, func_symbol.params.len);
+        for (0..params_to_check) |i| {
+            const arg = args[i];
+            const param = func_symbol.params[i];
             const arg_type = try self.inferExprTypeOrPropagate(arg);
 
             const compatible = try self.type_checker.areTypesCompatible(arg_type, param.type);

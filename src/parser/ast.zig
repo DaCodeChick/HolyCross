@@ -396,6 +396,7 @@ pub const Decl = union(enum) {
         return_type: Type,
         name: []const u8,
         params: []Param,
+        is_variadic: bool, // True if function accepts variable arguments (...)
         body: ?Stmt, // null for forward declaration
         attributes: FunctionAttributes,
         loc: SourceLocation,
