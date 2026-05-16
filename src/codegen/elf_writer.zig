@@ -309,6 +309,7 @@ pub const ELFWriter = struct {
         const DT_SYMTAB: i64 = 6;
         const DT_STRSZ: i64 = 10;
         const DT_SYMENT: i64 = 11;
+        const DT_DEBUG: i64 = 21;
         const DT_PLTGOT: i64 = 3;
         const DT_PLTRELSZ: i64 = 2;
         const DT_PLTREL: i64 = 20;
@@ -341,6 +342,10 @@ pub const ELFWriter = struct {
         // DT_SYMENT: size of symbol entry (24 bytes)
         try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_SYMENT));
         try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 24)));
+        
+        // DT_DEBUG: reserved for debugger use (set to 0, filled by dynamic linker)
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_DEBUG));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0)));
         
         // DT_PLTGOT: address of GOT
         try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_PLTGOT));
@@ -524,7 +529,7 @@ pub const ELFWriter = struct {
         }
         
         // Count program headers
-        var num_phdrs: u16 = 1; // At least PT_LOAD for code
+        var num_phdrs: u16 = 2; // PT_LOAD for headers + PT_LOAD for code
         if (has_dynamic) num_phdrs += 3; // PT_LOAD (ro data) + PT_INTERP + PT_DYNAMIC
         if (self.data.items.len > 0 or has_dynamic) num_phdrs += 1; // PT_LOAD for data/GOT
         
@@ -556,6 +561,17 @@ pub const ELFWriter = struct {
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));  // e_shentsize
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));  // e_shnum
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));  // e_shstrndx
+        
+        // PT_LOAD for ELF header and program headers (needed by dynamic linker)
+        // This covers offset 0-0x1000 (the first page)
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // p_type: PT_LOAD
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 4)));  // p_flags: PF_R
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0)));  // p_offset
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(BASE_ADDRESS)); // p_vaddr
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(BASE_ADDRESS)); // p_paddr
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0x1000))); // p_filesz - whole first page
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0x1000))); // p_memsz
+        try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0x1000))); // p_align: 4KB
         
         // PT_LOAD for read-only data (if we have dynamic linking)
         if (has_dynamic) {
