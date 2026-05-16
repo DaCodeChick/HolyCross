@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const ir = @import("ir.zig");
 const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
+const X64Assembler = @import("../assembler/x64.zig").X64Assembler;
 
 /// Generic code buffer interface - works with both ELF and TempleOS writers
 pub const CodeBuffer = union(enum) {
@@ -90,6 +91,8 @@ pub const X64MachineCodeGen = struct {
     function_offsets: std.StringHashMap(u32),
     /// Current function being generated
     current_func: ?*const ir.Function = null,
+    /// Current module being generated (for type layouts in inline asm)
+    current_module: ?*const ir.Module = null,
     /// Stack layout: temp/local offset from rbp
     stack_offsets: std.AutoHashMap(u32, i32),
     /// Variable name to stack offset mapping
@@ -148,6 +151,10 @@ pub const X64MachineCodeGen = struct {
 
     /// Generate machine code from IR module
     pub fn generateFromIR(self: *X64MachineCodeGen, module: *const ir.Module) !void {
+        // Store module reference for inline assembly type layouts
+        self.current_module = module;
+        defer self.current_module = null;
+        
         // For native executables, generate _start wrapper first
         const is_native = switch (self.code_buffer) {
             .elf => true,
@@ -1062,11 +1069,41 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genInlineAsm(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {
-        // TODO: Implement inline assembly support
-        // For now, just skip it
-        _ = self;
-        _ = instr;
-        std.debug.print("Warning: Inline assembly not yet supported in machine code generator\n", .{});
+        // Get the assembly source code from the instruction
+        const asm_code = switch (instr.src1) {
+            .string => |s| s,
+            else => {
+                std.debug.print("Warning: Invalid inline assembly operand\n", .{});
+                return;
+            },
+        };
+        
+        // Get type layouts from the current module if available
+        const type_layouts = if (self.current_module) |mod| mod.type_layouts else null;
+        
+        // Create an x64 assembler instance with type layouts
+        var asm_generator = if (type_layouts) |layouts|
+            X64Assembler.initWithTypes(self.allocator, layouts)
+        else
+            X64Assembler.init(self.allocator);
+        defer asm_generator.deinit();
+        
+        // Parse the assembly code
+        const instructions = asm_generator.parse(asm_code, self.allocator) catch |err| {
+            std.debug.print("Error parsing inline assembly: {}\n", .{err});
+            return err;
+        };
+        defer self.allocator.free(instructions);
+        
+        // Encode to machine code
+        const machine_code = asm_generator.encode(instructions, self.allocator) catch |err| {
+            std.debug.print("Error encoding inline assembly: {}\n", .{err});
+            return err;
+        };
+        defer self.allocator.free(machine_code);
+        
+        // Emit the machine code bytes
+        try self.emitBytes(machine_code);
     }
 
     fn genLoadVar(self: *X64MachineCodeGen, instr: *const ir.Instruction) !void {

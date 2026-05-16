@@ -2437,6 +2437,18 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0xD9);
             try code.append(allocator, 0xFC);
         }
+        else if (std.mem.eql(u8, mnemonic, "FPREM")) {
+            // FPREM - Partial remainder (obsolete, use FPREM1)
+            // ST0 = ST0 - (Q * ST1) where Q is integer quotient
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF8);
+        }
+        else if (std.mem.eql(u8, mnemonic, "FPREM1")) {
+            // FPREM1 - IEEE partial remainder
+            // ST0 = ST0 - (Q * ST1) where Q is integer quotient (IEEE compliant)
+            try code.append(allocator, 0xD9);
+            try code.append(allocator, 0xF5);
+        }
         else if (std.mem.eql(u8, mnemonic, "FXTRACT")) {
             // FXTRACT - Extract exponent and significand
             try code.append(allocator, 0xD9);
