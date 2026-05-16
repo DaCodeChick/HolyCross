@@ -1093,7 +1093,12 @@ pub const X64MachineCodeGen = struct {
             std.debug.print("Error parsing inline assembly: {}\n", .{err});
             return err;
         };
-        defer self.allocator.free(instructions);
+        defer {
+            for (instructions) |parsed_instr| {
+                self.allocator.free(parsed_instr.operands);
+            }
+            self.allocator.free(instructions);
+        }
         
         // Encode to machine code
         const machine_code = asm_generator.encode(instructions, self.allocator) catch |err| {
