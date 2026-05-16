@@ -232,14 +232,21 @@ PUSH    RBP
 POP     RBP
 RET
 
-//Memory operands
+//Memory operands (size from registers)
 MOV     RAX,[RBP-8]
 MOV     [RBP-16],RDX
+
+//Type-prefixed memory operands
+MOV     RAX, I64 [RBP-8]     // Explicit 64-bit signed
+FLD     F64 [RBP-16]         // Load 64-bit float
+FILD    I32 [RBP-4]          // Load 32-bit integer to FPU
+MOV     AL, U8 [RSI]         // Load unsigned byte
 ```
 
 **Key differences from AT&T/Intel:**
 - Uppercase mnemonics
-- No size suffixes (inferred from registers)
+- No size suffixes like MOVL, MOVQ (inferred from registers or type prefix)
+- Type prefixes use I8/U8, I16/U16, I32/U32, I64/U64, F64 (not BYTE, WORD, DWORD, QWORD)
 - Operands separated by commas with whitespace
 - Comments start with `//`
 
@@ -509,13 +516,20 @@ git push
 - DU8, DU16, DU32 (data bytes)
 - BINFILE (embed binary files)
 - LIST, NOLIST (listing control)
-- USE32, USE64 (mode directives)
+- USE16, USE32, USE64 (mode directives)
 
 **Type Prefixes for Memory Operands:**
-- U64, I64, F64 (qword - 8 bytes)
-- U32, I32 (dword - 4 bytes)
-- U16, I16 (word - 2 bytes)
-- U8, I8 (byte - 1 byte)
+- U64, I64, F64 (8 bytes)
+- U32, I32 (4 bytes)
+- U16, I16 (2 bytes)
+- U8, I8 (1 byte)
+
+Examples:
+```asm
+MOV RAX, I64 [RBP-8]    // Load 64-bit signed integer
+FILD I32 [RBP-4]        // Load 32-bit integer to FPU
+MOV AL, U8 [RSI]        // Load unsigned byte
+```
 
 ## In Progress / TODO
 
