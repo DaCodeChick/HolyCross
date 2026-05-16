@@ -456,7 +456,7 @@ git push
 - ✅ `sizeof()` and `offset()` compile-time intrinsics
 - ✅ Type layouts in inline assembly expressions
 
-### Assembler Instruction Set (96 instructions)
+### Assembler Instruction Set (113 instructions)
 
 **Data Movement:**
 - MOV, MOVSX, MOVZX, LEA, XCHG, PUSH, POP
@@ -479,6 +479,29 @@ git push
 **CPU Information:**
 - RDTSC (read timestamp counter)
 - CPUID (CPU identification)
+
+**Privileged/System (TempleOS Ring 0):**
+
+*Interrupt Control:*
+- CLI (clear interrupt flag)
+- STI (set interrupt flag)
+- HLT (halt processor)
+- INT imm8 (software interrupt)
+- IRET, IRETQ (interrupt return)
+
+*Descriptor Tables:*
+- LGDT, LIDT (load GDT/IDT register)
+- SGDT, SIDT (store GDT/IDT register)
+- LTR, STR (load/store task register)
+
+*Model-Specific Registers:*
+- RDMSR (read MSR)
+- WRMSR (write MSR)
+
+*Cache/TLB:*
+- INVLPG (invalidate TLB entry)
+- WBINVD (write back and invalidate cache)
+- INVD (invalidate cache)
 
 **x87 FPU (68 instructions):**
 
