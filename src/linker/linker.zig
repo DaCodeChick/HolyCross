@@ -8,8 +8,15 @@ pub const Linker = struct {
     allocator: Allocator,
     objects: std.ArrayList(*ELFObjectReader),
     symbols: std.StringHashMap(ResolvedSymbol),
+    external_symbols: std.ArrayList(ExternalSymbol),
     entry_point: ?[]const u8,
     base_address: u64,
+    
+    pub const ExternalSymbol = struct {
+        name: []const u8,
+        plt_offset: u64,
+        got_offset: u64,
+    };
     
     pub const ResolvedSymbol = struct {
         name: []const u8,
@@ -28,10 +35,12 @@ pub const Linker = struct {
     
     pub fn init(allocator: Allocator) !Linker {
         const empty_objects = try allocator.alloc(*ELFObjectReader, 0);
+        const empty_externals = try allocator.alloc(ExternalSymbol, 0);
         return .{
             .allocator = allocator,
             .objects = std.ArrayList(*ELFObjectReader).fromOwnedSlice(empty_objects),
             .symbols = std.StringHashMap(ResolvedSymbol).init(allocator),
+            .external_symbols = std.ArrayList(ExternalSymbol).fromOwnedSlice(empty_externals),
             .entry_point = null,
             .base_address = 0x400000, // Standard Linux load address
         };
@@ -51,6 +60,12 @@ pub const Linker = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.symbols.deinit();
+        
+        // Free external symbols
+        for (self.external_symbols.items) |ext| {
+            self.allocator.free(ext.name);
+        }
+        self.external_symbols.deinit(self.allocator);
     }
     
     pub fn addObject(self: *Linker, data: []const u8) !void {
@@ -67,27 +82,64 @@ pub const Linker = struct {
     pub fn link(self: *Linker, output_path: []const u8, io: std.Io) !void {
         std.debug.print("HolyC Linker - Linking {} object(s)\n\n", .{self.objects.items.len});
         
-        // Phase 1: Collect all sections and calculate addresses
-        std.debug.print("[1/4] Collecting sections...\n", .{});
+        // Phase 1: Collect external symbols
+        std.debug.print("[1/5] Collecting external symbols...\n", .{});
+        try self.collectExternalSymbols();
+        if (self.external_symbols.items.len > 0) {
+            std.debug.print("      Found {} external symbol(s)\n", .{self.external_symbols.items.len});
+            for (self.external_symbols.items) |ext| {
+                std.debug.print("        - {s}\n", .{ext.name});
+            }
+        }
+        
+        // Phase 2: Collect all sections and calculate addresses
+        std.debug.print("[2/5] Collecting sections...\n", .{});
         const layout = try self.computeLayout();
         defer self.freeLayout(layout);
         
-        // Phase 2: Resolve symbols
-        std.debug.print("[2/4] Resolving symbols...\n", .{});
+        // Phase 3: Resolve symbols
+        std.debug.print("[3/5] Resolving symbols...\n", .{});
         try self.resolveSymbols(layout);
         
-        // Phase 3: Apply relocations
-        std.debug.print("[3/4] Applying relocations...\n", .{});
+        // Phase 4: Apply relocations
+        std.debug.print("[4/5] Applying relocations...\n", .{});
         const relocated_sections = try self.applyRelocations(layout);
         defer self.freeRelocatedSections(relocated_sections);
         
-        // Check if we have external symbols and libc linking is requested
-        // Phase 4: Generate executable
-        std.debug.print("[4/4] Writing executable...\n", .{});
+        // Phase 5: Generate executable
+        std.debug.print("[5/5] Writing executable...\n", .{});
         try self.writeExecutable(layout, relocated_sections, output_path, io);
         
         std.debug.print("\n✓ Link successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_path});
+    }
+    
+    fn collectExternalSymbols(self: *Linker) !void {
+        // Scan all objects for undefined symbols (shndx == 0)
+        for (self.objects.items) |obj| {
+            for (obj.symbols) |symbol| {
+                if (symbol.shndx != 0) continue; // Skip defined symbols
+                if (symbol.name.len == 0) continue; // Skip NULL symbol
+                
+                // Check if we already have this external symbol
+                var found = false;
+                for (self.external_symbols.items) |ext| {
+                    if (std.mem.eql(u8, ext.name, symbol.name)) {
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (!found) {
+                    const name_copy = try self.allocator.dupe(u8, symbol.name);
+                    try self.external_symbols.append(self.allocator, .{
+                        .name = name_copy,
+                        .plt_offset = 0,
+                        .got_offset = 0,
+                    });
+                }
+            }
+        }
     }
     
     const SectionLayout = struct {
@@ -105,6 +157,10 @@ pub const Linker = struct {
         data_sections: []SectionLayout,
         code_size: u64,
         data_size: u64,
+        plt_addr: u64,
+        plt_size: u64,
+        got_addr: u64,
+        got_size: u64,
     };
     
     fn computeLayout(self: *Linker) !*Layout {
@@ -160,12 +216,32 @@ pub const Linker = struct {
             }
         }
         
+        // Reserve space for PLT and GOT if we have external symbols
+        // PLT entry size: 16 bytes per entry + 16 byte header
+        // GOT entry size: 8 bytes per entry + 24 bytes for GOT[0..2]
+        const num_external = self.external_symbols.items.len;
+        const plt_size = if (num_external > 0) 16 + (num_external * 16) else 0;
+        const got_size = if (num_external > 0) 24 + (num_external * 8) else 0;
+        
+        const plt_addr = current_code_addr;
+        const got_addr = current_data_addr;
+        
+        // Assign PLT and GOT offsets to each external symbol
+        for (self.external_symbols.items, 0..) |*ext, i| {
+            ext.plt_offset = plt_addr + 16 + (i * 16); // After PLT header
+            ext.got_offset = got_addr + 24 + (i * 8);  // After GOT[0..2]
+        }
+        
         const layout = try self.allocator.create(Layout);
         layout.* = .{
             .text_sections = try text_list.toOwnedSlice(self.allocator),
             .data_sections = try data_list.toOwnedSlice(self.allocator),
             .code_size = current_code_addr - code_start,
             .data_size = current_data_addr - (data_start + self.base_address),
+            .plt_addr = plt_addr,
+            .plt_size = plt_size,
+            .got_addr = got_addr,
+            .got_size = got_size,
         };
         
         return layout;
@@ -255,12 +331,24 @@ pub const Linker = struct {
                 
                 // Get the symbol's final address
                 const symbol_addr = if (symbol.shndx == 0) blk: {
-                    // Undefined symbol - look it up in global symbols
+                    // Undefined symbol - look it up in global symbols first
                     const resolved = self.symbols.get(symbol.name) orelse {
-                        // Not in our objects - this is an error for now
-                        std.debug.print("Error: Undefined symbol '{s}'\n", .{symbol.name});
-                        std.debug.print("Note: External library linking (libc, etc.) is not yet implemented\n", .{});
-                        return LinkerError.UndefinedSymbol;
+                        // Not in our objects - look for external symbol
+                        var ext_addr: ?u64 = null;
+                        for (self.external_symbols.items) |ext| {
+                            if (std.mem.eql(u8, ext.name, symbol.name)) {
+                                ext_addr = ext.plt_offset;
+                                break;
+                            }
+                        }
+                        
+                        if (ext_addr) |addr| {
+                            break :blk addr;
+                        } else {
+                            // This shouldn't happen if collectExternalSymbols worked correctly
+                            std.debug.print("Error: Undefined symbol '{s}'\n", .{symbol.name});
+                            return LinkerError.UndefinedSymbol;
+                        }
                     };
                     break :blk resolved.value;
                 } else blk: {
