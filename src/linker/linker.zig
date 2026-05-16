@@ -400,16 +400,25 @@ pub const Linker = struct {
             try elf.appendCode(section.data);
         }
         
-        // Generate PLT and GOT if we have external symbols
+        // Generate PLT/GOT and dynamic sections if we have external symbols
         if (self.external_symbols.items.len > 0) {
             // Add dynamic symbols to ELF writer
             for (self.external_symbols.items) |ext| {
                 try elf.addDynamicSymbol(ext.name, ext.plt_offset, ext.got_offset);
             }
             
-            // Generate PLT and GOT (they will be appended by writeToFile)
+            // Generate PLT and GOT
             try elf.generatePLT(layout.got_addr);
-            try elf.generateGOT(0, layout.plt_addr); // dynamic_addr = 0 for now
+            try elf.generateGOT(0, layout.plt_addr); // dynamic_addr will be calculated in writeToFile
+            
+            // Generate dynamic sections (but NOT rela.plt yet - need actual GOT address)
+            var string_offsets = try elf.generateDynStr();
+            defer string_offsets.deinit();
+            
+            try elf.generateDynSym(string_offsets);
+            // generateRelaPlt will be called from writeToFile with correct GOT address
+            
+            // generateDynamic will be called from writeToFile after we know all addresses
         }
         
         // Append all data sections

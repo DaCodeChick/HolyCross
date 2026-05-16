@@ -9,6 +9,11 @@ pub const ELFWriter = struct {
     data: std.ArrayList(u8),
     plt: std.ArrayList(u8),
     got: std.ArrayList(u8),
+    dynsym: std.ArrayList(u8),
+    dynstr: std.ArrayList(u8),
+    hash: std.ArrayList(u8), // ELF hash table
+    rela_plt: std.ArrayList(u8),
+    dynamic: std.ArrayList(u8),
     entry_point: u32,
     extern_symbols: std.ArrayList(ExternSymbol), // Track extern function calls
     dynamic_symbols: std.ArrayList(DynamicSymbol), // Symbols for .dynsym
@@ -29,6 +34,11 @@ pub const ELFWriter = struct {
         const empty_data = try allocator.alloc(u8, 0);
         const empty_plt = try allocator.alloc(u8, 0);
         const empty_got = try allocator.alloc(u8, 0);
+        const empty_dynsym = try allocator.alloc(u8, 0);
+        const empty_dynstr = try allocator.alloc(u8, 0);
+        const empty_hash = try allocator.alloc(u8, 0);
+        const empty_rela_plt = try allocator.alloc(u8, 0);
+        const empty_dynamic = try allocator.alloc(u8, 0);
         const empty_externs = try allocator.alloc(ExternSymbol, 0);
         const empty_dynsyms = try allocator.alloc(DynamicSymbol, 0);
         return .{
@@ -37,6 +47,11 @@ pub const ELFWriter = struct {
             .data = std.ArrayList(u8).fromOwnedSlice(empty_data),
             .plt = std.ArrayList(u8).fromOwnedSlice(empty_plt),
             .got = std.ArrayList(u8).fromOwnedSlice(empty_got),
+            .dynsym = std.ArrayList(u8).fromOwnedSlice(empty_dynsym),
+            .dynstr = std.ArrayList(u8).fromOwnedSlice(empty_dynstr),
+            .hash = std.ArrayList(u8).fromOwnedSlice(empty_hash),
+            .rela_plt = std.ArrayList(u8).fromOwnedSlice(empty_rela_plt),
+            .dynamic = std.ArrayList(u8).fromOwnedSlice(empty_dynamic),
             .entry_point = 0,
             .extern_symbols = std.ArrayList(ExternSymbol).fromOwnedSlice(empty_externs),
             .dynamic_symbols = std.ArrayList(DynamicSymbol).fromOwnedSlice(empty_dynsyms),
@@ -48,6 +63,11 @@ pub const ELFWriter = struct {
         self.data.deinit(self.allocator);
         self.plt.deinit(self.allocator);
         self.got.deinit(self.allocator);
+        self.dynsym.deinit(self.allocator);
+        self.dynstr.deinit(self.allocator);
+        self.hash.deinit(self.allocator);
+        self.rela_plt.deinit(self.allocator);
+        self.dynamic.deinit(self.allocator);
         for (self.extern_symbols.items) |sym| {
             self.allocator.free(sym.name);
         }
@@ -128,6 +148,213 @@ pub const ELFWriter = struct {
         }
     }
     
+    pub fn generateDynStr(self: *ELFWriter) !std.StringHashMap(u32) {
+        // Build dynamic string table
+        // dynstr always starts with null byte
+        try self.dynstr.append(self.allocator, 0);
+        
+        // Track string offsets
+        var string_offsets = std.StringHashMap(u32).init(self.allocator);
+        
+        // Add libc.so.6
+        const libc_offset: u32 = @intCast(self.dynstr.items.len);
+        try string_offsets.put("libc.so.6", libc_offset);
+        try self.dynstr.appendSlice(self.allocator, "libc.so.6\x00");
+        
+        // Add each dynamic symbol name
+        for (self.dynamic_symbols.items) |sym| {
+            const offset: u32 = @intCast(self.dynstr.items.len);
+            try string_offsets.put(sym.name, offset);
+            try self.dynstr.appendSlice(self.allocator, sym.name);
+            try self.dynstr.append(self.allocator, 0);
+        }
+        
+        return string_offsets;
+    }
+    
+    pub fn generateDynSym(self: *ELFWriter, string_offsets: std.StringHashMap(u32)) !void {
+        // Symbol table entry: 24 bytes each
+        // First entry is always NULL symbol
+        try self.dynsym.appendNTimes(self.allocator, 0, 24);
+        
+        // Add symbol for each external function
+        for (self.dynamic_symbols.items) |sym| {
+            const name_offset = string_offsets.get(sym.name) orelse 0;
+            
+            // st_name (offset in dynstr)
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, name_offset)));
+            
+            // st_info: STB_GLOBAL << 4 | STT_FUNC = 0x12
+            try self.dynsym.append(self.allocator, 0x12);
+            
+            // st_other: STV_DEFAULT = 0
+            try self.dynsym.append(self.allocator, 0);
+            
+            // st_shndx: SHN_UNDEF = 0
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));
+            
+            // st_value: 0 for undefined symbols
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0)));
+            
+            // st_size: 0 for undefined symbols
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0)));
+        }
+    }
+    
+    /// ELF hash function (System V ABI)
+    fn elfHash(name: []const u8) u32 {
+        var h: u32 = 0;
+        for (name) |c| {
+            h = (h << 4) +% c;
+            const g = h & 0xf0000000;
+            if (g != 0) {
+                h ^= g >> 24;
+            }
+            h &= ~g;
+        }
+        return h;
+    }
+    
+    pub fn generateHash(self: *ELFWriter) !void {
+        // ELF hash table structure:
+        // u32 nbucket
+        // u32 nchain
+        // u32 bucket[nbucket]
+        // u32 chain[nchain]
+        
+        const nsymbols = @as(u32, @intCast(self.dynamic_symbols.items.len + 1)); // +1 for NULL symbol
+        const nbucket: u32 = nsymbols; // Simple: one bucket per symbol
+        const nchain: u32 = nsymbols;
+        
+        // Header
+        try self.hash.appendSlice(self.allocator, &std.mem.toBytes(nbucket));
+        try self.hash.appendSlice(self.allocator, &std.mem.toBytes(nchain));
+        
+        // Build buckets array
+        var buckets = try self.allocator.alloc(u32, nbucket);
+        defer self.allocator.free(buckets);
+        @memset(buckets, 0); // Initialize to 0 (STN_UNDEF)
+        
+        // Build chains array  
+        var chains = try self.allocator.alloc(u32, nchain);
+        defer self.allocator.free(chains);
+        @memset(chains, 0); // Initialize to 0 (end of chain)
+        
+        // Hash each symbol (skip index 0 which is NULL)
+        for (self.dynamic_symbols.items, 1..) |sym, sym_index| {
+            const hash_val = elfHash(sym.name);
+            const bucket_index = hash_val % nbucket;
+            
+            // Insert at head of chain
+            chains[sym_index] = buckets[bucket_index];
+            buckets[bucket_index] = @intCast(sym_index);
+        }
+        
+        // Write buckets
+        for (buckets) |bucket| {
+            try self.hash.appendSlice(self.allocator, &std.mem.toBytes(bucket));
+        }
+        
+        // Write chains
+        for (chains) |chain| {
+            try self.hash.appendSlice(self.allocator, &std.mem.toBytes(chain));
+        }
+    }
+    
+    pub fn generateRelaPlt(self: *ELFWriter, got_base_addr: u64) !void {
+        // Relocation entry: 24 bytes each (Elf64_Rela)
+        for (self.dynamic_symbols.items, 0..) |_, i| {
+            // r_offset: address of GOT entry to patch
+            const got_entry_addr = got_base_addr + 24 + (i * 8);
+            try self.rela_plt.appendSlice(self.allocator, &std.mem.toBytes(got_entry_addr));
+            
+            // r_info: (symbol_index << 32) | R_X86_64_JUMP_SLOT (7)
+            const sym_index: u64 = i + 1; // +1 because dynsym[0] is NULL
+            const r_info: u64 = (sym_index << 32) | 7;
+            try self.rela_plt.appendSlice(self.allocator, &std.mem.toBytes(r_info));
+            
+            // r_addend: 0
+            try self.rela_plt.appendSlice(self.allocator, &std.mem.toBytes(@as(i64, 0)));
+        }
+    }
+    
+    pub fn generateDynamic(self: *ELFWriter, hash_addr: u64, dynsym_addr: u64, dynstr_addr: u64, rela_plt_addr: u64, got_addr: u64, string_offsets: std.StringHashMap(u32)) !void {
+        // Dynamic entry: 16 bytes each (Elf64_Dyn)
+        // Each entry is (d_tag: i64, d_val: u64)
+        
+        const DT_NULL: i64 = 0;
+        const DT_NEEDED: i64 = 1;
+        const DT_HASH: i64 = 4;
+        const DT_STRTAB: i64 = 5;
+        const DT_SYMTAB: i64 = 6;
+        const DT_STRSZ: i64 = 10;
+        const DT_SYMENT: i64 = 11;
+        const DT_PLTGOT: i64 = 3;
+        const DT_PLTRELSZ: i64 = 2;
+        const DT_PLTREL: i64 = 20;
+        const DT_JMPREL: i64 = 23;
+        const DT_RELA: i64 = 7;
+        const DT_RELASZ: i64 = 8;
+        const DT_RELAENT: i64 = 9;
+        
+        // DT_NEEDED: libc.so.6
+        const libc_offset = string_offsets.get("libc.so.6") orelse 0;
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_NEEDED));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, libc_offset)));
+        
+        // DT_HASH: address of hash table
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_HASH));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(hash_addr));
+        
+        // DT_STRTAB: address of dynstr
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_STRTAB));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(dynstr_addr));
+        
+        // DT_SYMTAB: address of dynsym
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_SYMTAB));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(dynsym_addr));
+        
+        // DT_STRSZ: size of dynstr
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_STRSZ));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.dynstr.items.len)));
+        
+        // DT_SYMENT: size of symbol entry (24 bytes)
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_SYMENT));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 24)));
+        
+        // DT_PLTGOT: address of GOT
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_PLTGOT));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(got_addr));
+        
+        // DT_JMPREL: address of .rela.plt
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_JMPREL));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(rela_plt_addr));
+        
+        // DT_PLTRELSZ: size of .rela.plt
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_PLTRELSZ));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.rela_plt.items.len)));
+        
+        // DT_PLTREL: type of relocation (DT_RELA = 7)
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_PLTREL));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 7)));
+        
+        // DT_RELA: address of rela (same as JMPREL for now)
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_RELA));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(rela_plt_addr));
+        
+        // DT_RELASZ: size of rela
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_RELASZ));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.rela_plt.items.len)));
+        
+        // DT_RELAENT: size of rela entry (24 bytes)
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_RELAENT));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 24)));
+        
+        // DT_NULL: end of dynamic section
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(DT_NULL));
+        try self.dynamic.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0)));
+    }
+    
     pub fn appendCode(self: *ELFWriter, bytes: []const u8) !void {
         try self.code.appendSlice(self.allocator, bytes);
     }
@@ -158,7 +385,30 @@ pub const ELFWriter = struct {
         // ELF header constants
         const BASE_ADDRESS: u64 = 0x400000; // Standard Linux load address
         
-        // Calculate offsets for segments
+        // For dynamic linking, we need to generate sections early to know their sizes
+        // We'll use placeholder addresses and fix them up later
+        if (has_dynamic) {
+            // Generate hash table
+            try self.generateHash();
+            
+            // Generate rela.plt with placeholder GOT
+            try self.generateRelaPlt(0xDEADBEEF);
+            
+            // Generate dynamic section with placeholder addresses
+            // This is just to get the size; we'll regenerate with correct addresses later
+            var temp_string_offsets = std.StringHashMap(u32).init(self.allocator);
+            defer temp_string_offsets.deinit();
+            var temp_offset: u32 = 1;
+            try temp_string_offsets.put("libc.so.6", temp_offset);
+            temp_offset += @intCast("libc.so.6\x00".len);
+            for (self.dynamic_symbols.items) |sym| {
+                try temp_string_offsets.put(sym.name, temp_offset);
+                temp_offset += @intCast(sym.name.len + 1);
+            }
+            try self.generateDynamic(0, 0, 0, 0, 0, temp_string_offsets);
+        }
+        
+        // Calculate offsets for all segments/sections
         var current_offset: u64 = 0x1000; // Start after header page
         
         // PT_INTERP data
@@ -170,6 +420,36 @@ pub const ELFWriter = struct {
             current_offset = (current_offset + 7) & ~@as(u64, 7); // Align to 8 bytes
         }
         
+        // Dynamic sections (read-only)
+        const hash_offset = if (has_dynamic) current_offset else 0;
+        const hash_addr = BASE_ADDRESS + hash_offset;
+        if (has_dynamic) {
+            current_offset += self.hash.items.len;
+            current_offset = (current_offset + 7) & ~@as(u64, 7);
+        }
+        
+        const dynsym_offset = if (has_dynamic) current_offset else 0;
+        const dynsym_addr = BASE_ADDRESS + dynsym_offset;
+        if (has_dynamic) {
+            current_offset += self.dynsym.items.len;
+            current_offset = (current_offset + 7) & ~@as(u64, 7);
+        }
+        
+        const dynstr_offset = if (has_dynamic) current_offset else 0;
+        const dynstr_addr = BASE_ADDRESS + dynstr_offset;
+        if (has_dynamic) {
+            current_offset += self.dynstr.items.len;
+            current_offset = (current_offset + 7) & ~@as(u64, 7);
+        }
+        
+        const rela_plt_offset = if (has_dynamic) current_offset else 0;
+        const rela_plt_addr = BASE_ADDRESS + rela_plt_offset;
+        if (has_dynamic) {
+            current_offset += self.rela_plt.items.len;
+            current_offset = (current_offset + 7) & ~@as(u64, 7);
+        }
+        
+        // Code section
         const code_offset = current_offset;
         const code_vaddr = BASE_ADDRESS + code_offset;
         const entry_vaddr = code_vaddr + self.entry_point;
@@ -179,9 +459,45 @@ pub const ELFWriter = struct {
         const data_offset = code_offset + code_size_aligned;
         const data_vaddr = BASE_ADDRESS + data_offset;
         
+        // Dynamic section (writable, so in data segment)
+        const dynamic_offset = if (has_dynamic) data_offset else 0;
+        const dynamic_addr = BASE_ADDRESS + dynamic_offset;
+        const got_addr = if (has_dynamic) dynamic_addr + self.dynamic.items.len else data_vaddr;
+        
+        // Now fix up GOT[0], .rela.plt, and .dynamic section with correct addresses
+        if (has_dynamic) {
+            // Fix GOT[0] to point to .dynamic
+            std.mem.writeInt(u64, self.got.items[0..8], dynamic_addr, .little);
+            
+            // Fix up rela.plt relocations with correct GOT address
+            for (self.dynamic_symbols.items, 0..) |_, i| {
+                const got_entry_addr = got_addr + 24 + (i * 8);
+                const reloc_offset = i * 24; // Each relocation is 24 bytes
+                // Overwrite r_offset field (first 8 bytes of relocation)
+                std.mem.writeInt(u64, self.rela_plt.items[reloc_offset..][0..8], got_entry_addr, .little);
+            }
+            
+            // Clear and regenerate dynamic section with correct addresses
+            self.dynamic.clearRetainingCapacity();
+            
+            // Rebuild string offsets
+            var temp_string_offsets = std.StringHashMap(u32).init(self.allocator);
+            defer temp_string_offsets.deinit();
+            var offset: u32 = 1; // Start after null byte
+            try temp_string_offsets.put("libc.so.6", offset);
+            offset += @intCast("libc.so.6\x00".len);
+            
+            for (self.dynamic_symbols.items) |sym| {
+                try temp_string_offsets.put(sym.name, offset);
+                offset += @intCast(sym.name.len + 1);
+            }
+            
+            try self.generateDynamic(hash_addr, dynsym_addr, dynstr_addr, rela_plt_addr, got_addr, temp_string_offsets);
+        }
+        
         // Count program headers
         var num_phdrs: u16 = 1; // At least PT_LOAD for code
-        if (has_dynamic) num_phdrs += 1; // PT_INTERP
+        if (has_dynamic) num_phdrs += 3; // PT_LOAD (ro data) + PT_INTERP + PT_DYNAMIC
         if (self.data.items.len > 0 or has_dynamic) num_phdrs += 1; // PT_LOAD for data/GOT
         
         const empty_buffer = try self.allocator.alloc(u8, 0);
@@ -198,7 +514,7 @@ pub const ELFWriter = struct {
             0, 0, 0, 0, 0, 0, 0, 0,        // Padding
         });
         
-        const e_type: u16 = if (has_dynamic) 3 else 2; // ET_DYN for PIE, ET_EXEC otherwise
+        const e_type: u16 = 2; // Always ET_EXEC for now (not PIE)
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(e_type));
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0x3E))); // e_machine: x86-64
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // e_version
@@ -213,6 +529,20 @@ pub const ELFWriter = struct {
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));  // e_shnum
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0)));  // e_shstrndx
         
+        // PT_LOAD for read-only data (if we have dynamic linking)
+        if (has_dynamic) {
+            // This PT_LOAD covers INTERP, dynsym, dynstr, and rela.plt
+            const ro_data_size = code_offset - interp_offset;
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // p_type: PT_LOAD
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 4)));  // p_flags: PF_R (read-only)
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(interp_offset)); // p_offset
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(BASE_ADDRESS + interp_offset)); // p_vaddr
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(BASE_ADDRESS + interp_offset)); // p_paddr
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(ro_data_size)); // p_filesz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(ro_data_size)); // p_memsz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 0x1000))); // p_align: 4KB
+        }
+        
         // PT_INTERP if we have dynamic linking
         if (has_dynamic) {
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 3)));  // p_type: PT_INTERP
@@ -223,6 +553,18 @@ pub const ELFWriter = struct {
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(interp_size));  // p_filesz
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(interp_size));  // p_memsz
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 1)));  // p_align
+        }
+        
+        // PT_DYNAMIC if we have dynamic linking
+        if (has_dynamic) {
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 2)));  // p_type: PT_DYNAMIC
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 6)));  // p_flags: PF_R | PF_W
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_offset)); // p_offset
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_addr));  // p_vaddr
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(dynamic_addr));  // p_paddr
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.dynamic.items.len))); // p_filesz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, self.dynamic.items.len))); // p_memsz
+            try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, 8)));  // p_align
         }
         
         // Program Header: Code segment (PT_LOAD, executable)
@@ -238,7 +580,10 @@ pub const ELFWriter = struct {
         
         // Program Header: Data segment (PT_LOAD, readable+writable)
         if (self.data.items.len > 0 or has_dynamic) {
-            const total_data_size = self.got.items.len + self.data.items.len;
+            const total_data_size = if (has_dynamic)
+                self.dynamic.items.len + self.got.items.len + self.data.items.len
+            else
+                self.data.items.len;
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // p_type: PT_LOAD
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 6)));  // p_flags: PF_R | PF_W (readable + writable)
             try buffer.appendSlice(self.allocator, &std.mem.toBytes(data_offset));   // p_offset
@@ -258,10 +603,27 @@ pub const ELFWriter = struct {
             // Write interpreter path
             try buffer.appendSlice(self.allocator, interp_path);
             
-            // Pad to code_offset
+            // Pad to hash_offset
             const after_interp = buffer.items.len;
-            const code_padding = code_offset - after_interp;
-            try buffer.appendNTimes(self.allocator, 0, code_padding);
+            const hash_padding = hash_offset - after_interp;
+            try buffer.appendNTimes(self.allocator, 0, hash_padding);
+            
+            // Write dynamic sections
+            try buffer.appendSlice(self.allocator, self.hash.items);
+            const after_hash = buffer.items.len;
+            try buffer.appendNTimes(self.allocator, 0, dynsym_offset - after_hash);
+            
+            try buffer.appendSlice(self.allocator, self.dynsym.items);
+            const after_dynsym = buffer.items.len;
+            try buffer.appendNTimes(self.allocator, 0, dynstr_offset - after_dynsym);
+            
+            try buffer.appendSlice(self.allocator, self.dynstr.items);
+            const after_dynstr = buffer.items.len;
+            try buffer.appendNTimes(self.allocator, 0, rela_plt_offset - after_dynstr);
+            
+            try buffer.appendSlice(self.allocator, self.rela_plt.items);
+            const after_rela = buffer.items.len;
+            try buffer.appendNTimes(self.allocator, 0, code_offset - after_rela);
         } else {
             // Pad to code_offset
             const current_size = buffer.items.len;
@@ -273,15 +635,18 @@ pub const ELFWriter = struct {
         try buffer.appendSlice(self.allocator, self.code.items);
         try buffer.appendSlice(self.allocator, self.plt.items);
         
-        // Append GOT + data section if present
+        // Append dynamic + GOT + data section if present
         if (self.data.items.len > 0 or has_dynamic) {
             // Pad to data_offset
             const current_size_after_code = buffer.items.len;
             const data_padding_needed = data_offset - current_size_after_code;
             try buffer.appendNTimes(self.allocator, 0, data_padding_needed);
             
-            // Append GOT then data
-            try buffer.appendSlice(self.allocator, self.got.items);
+            // Append dynamic, GOT, then data
+            if (has_dynamic) {
+                try buffer.appendSlice(self.allocator, self.dynamic.items);
+                try buffer.appendSlice(self.allocator, self.got.items);
+            }
             try buffer.appendSlice(self.allocator, self.data.items);
         }
         
