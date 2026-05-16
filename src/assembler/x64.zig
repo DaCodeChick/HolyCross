@@ -748,8 +748,9 @@ pub const X64Assembler = struct {
     fn parseTypePrefixedOperand(self: *X64Assembler, text: []const u8, allocator: std.mem.Allocator) !?OperandType {
         _ = allocator;
         
-        // Check for type prefix (U64, I64, U32, I32, U16, I16, U8, I8)
-        const type_prefixes = [_][]const u8{ "U64", "I64", "U32", "I32", "U16", "I16", "U8", "I8" };
+        // Check for type prefix (U64, I64, U32, I32, U16, I16, U8, I8, F64)
+        // Note: TempleOS has F64 only, no F32 type
+        const type_prefixes = [_][]const u8{ "U64", "I64", "F64", "U32", "I32", "U16", "I16", "U8", "I8" };
         
         for (type_prefixes) |prefix| {
             if (std.mem.startsWith(u8, text, prefix)) {
@@ -764,7 +765,7 @@ pub const X64Assembler = struct {
                         .word
                     else if (std.mem.eql(u8, prefix, "U32") or std.mem.eql(u8, prefix, "I32"))
                         .dword
-                    else
+                    else // U64, I64, F64 all map to qword (8 bytes)
                         .qword;
                     
                     // Check if it's a memory operand with brackets
@@ -1786,6 +1787,20 @@ pub const X64Assembler = struct {
             try code.append(allocator, 0x90);
         }
         
+        // RDTSC - Read Time-Stamp Counter (0F 31)
+        // Loads the current value of the processor's time-stamp counter into EDX:EAX
+        else if (std.mem.eql(u8, mnemonic, "RDTSC")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0x31);
+        }
+        
+        // CPUID - CPU Identification (0F A2)
+        // Returns processor identification and feature information in EAX, EBX, ECX, EDX
+        else if (std.mem.eql(u8, mnemonic, "CPUID")) {
+            try code.append(allocator, 0x0F);
+            try code.append(allocator, 0xA2);
+        }
+        
         // LOOP rel8
         else if (std.mem.eql(u8, mnemonic, "LOOP")) {
             try code.append(allocator, 0xE2);
@@ -2172,6 +2187,40 @@ pub const X64Assembler = struct {
             // FDIVP - Divide ST(1) by ST0 and pop
             try code.append(allocator, 0xDE);
             try code.append(allocator, 0xF9); // FDIVP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSUBR")) {
+            // FSUBR - Reverse subtract: ST0 = memory - ST0
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FSUBR qword [mem] - 0xDC /5
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(5, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FSUBRP")) {
+            // FSUBRP - Reverse subtract and pop: ST(1) = ST0 - ST(1), pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xE1); // FSUBRP ST(1), ST0
+        }
+        else if (std.mem.eql(u8, mnemonic, "FDIVR")) {
+            // FDIVR - Reverse divide: ST0 = memory / ST0
+            if (instr.operands.len == 1) {
+                const src = instr.operands[0];
+                if (src == .memory) {
+                    const mem = src.memory;
+                    // FDIVR qword [mem] - 0xDC /7
+                    try code.append(allocator, 0xDC);
+                    try self.encodeModRM(7, mem, code, allocator);
+                }
+            }
+        }
+        else if (std.mem.eql(u8, mnemonic, "FDIVRP")) {
+            // FDIVRP - Reverse divide and pop: ST(1) = ST0 / ST(1), pop
+            try code.append(allocator, 0xDE);
+            try code.append(allocator, 0xF1); // FDIVRP ST(1), ST0
         }
         else if (std.mem.eql(u8, mnemonic, "FCHS")) {
             // FCHS - Change sign of ST0
