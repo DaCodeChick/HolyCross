@@ -407,18 +407,14 @@ pub const Linker = struct {
                 try elf.addDynamicSymbol(ext.name, ext.plt_offset, ext.got_offset);
             }
             
-            // Generate PLT and GOT
-            try elf.generatePLT(layout.got_addr);
-            try elf.generateGOT(0, layout.plt_addr); // dynamic_addr will be calculated in writeToFile
-            
-            // Generate dynamic sections (but NOT rela.plt yet - need actual GOT address)
+            // Generate dynamic string/symbol sections early (don't depend on addresses)
             var string_offsets = try elf.generateDynStr();
             defer string_offsets.deinit();
             
             try elf.generateDynSym(string_offsets);
-            // generateRelaPlt will be called from writeToFile with correct GOT address
             
-            // generateDynamic will be called from writeToFile after we know all addresses
+            // PLT, GOT, hash, rela.plt, and dynamic sections will be generated
+            // in writeToFile after final addresses are calculated
         }
         
         // Append all data sections

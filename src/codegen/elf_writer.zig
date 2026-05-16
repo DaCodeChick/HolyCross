@@ -95,37 +95,57 @@ pub const ELFWriter = struct {
         });
     }
     
-    pub fn generatePLT(self: *ELFWriter, got_base_addr: u64) !void {
+    pub fn generatePLT(self: *ELFWriter, plt_base_addr: u64, got_base_addr: u64) !void {
         // PLT[0] - PLT header (16 bytes)
-        // pushq GOT[1]
+        const plt0_addr = plt_base_addr;
+        
+        // pushq GOT[1] - instruction: ff 35 [disp32]
+        const push_opcode_size: u64 = 2;
+        const push_disp_size: u64 = 4;
+        const push_rip = plt0_addr + push_opcode_size + push_disp_size;
+        const got1_addr = got_base_addr + 8;
+        const got1_rel = @as(i32, @intCast(@as(i64, @intCast(got1_addr)) - @as(i64, @intCast(push_rip))));
         try self.plt.appendSlice(self.allocator, &[_]u8{ 0xFF, 0x35 });
-        const got1_rel = @as(i32, @intCast(@as(i64, @intCast(got_base_addr + 8)) - @as(i64, @intCast(self.plt.items.len + 4))));
         try self.plt.appendSlice(self.allocator, &std.mem.toBytes(got1_rel));
         
-        // jmpq *GOT[2]
+        // jmpq *GOT[2] - instruction: ff 25 [disp32]
+        const jmp_offset_in_plt = push_opcode_size + push_disp_size;
+        const jmp_opcode_size: u64 = 2;
+        const jmp_disp_size: u64 = 4;
+        const jmp_rip = plt0_addr + jmp_offset_in_plt + jmp_opcode_size + jmp_disp_size;
+        const got2_addr = got_base_addr + 16;
+        const got2_rel = @as(i32, @intCast(@as(i64, @intCast(got2_addr)) - @as(i64, @intCast(jmp_rip))));
         try self.plt.appendSlice(self.allocator, &[_]u8{ 0xFF, 0x25 });
-        const got2_rel = @as(i32, @intCast(@as(i64, @intCast(got_base_addr + 16)) - @as(i64, @intCast(self.plt.items.len + 4))));
         try self.plt.appendSlice(self.allocator, &std.mem.toBytes(got2_rel));
         
-        // nopl 0x0(%rax)
+        // nopl 0x0(%rax) - 4 bytes padding
         try self.plt.appendSlice(self.allocator, &[_]u8{ 0x0F, 0x1F, 0x40, 0x00 });
         
         // Generate PLT entries for each dynamic symbol
         for (self.dynamic_symbols.items, 0..) |sym, i| {
             _ = sym;
+            const plt_entry_addr = plt_base_addr + 16 + (i * 16);
+            
             // PLT[i+1] - PLT entry (16 bytes each)
-            // jmpq *GOT[i+3]
-            try self.plt.appendSlice(self.allocator, &[_]u8{ 0xFF, 0x25 });
+            // jmpq *GOT[i+3] - instruction: ff 25 [disp32]
+            const entry_jmp_opcode_size: u64 = 2;
+            const entry_jmp_disp_size: u64 = 4;
+            const entry_jmp_rip = plt_entry_addr + entry_jmp_opcode_size + entry_jmp_disp_size;
             const got_entry_addr = got_base_addr + 24 + (i * 8);
-            const got_rel = @as(i32, @intCast(@as(i64, @intCast(got_entry_addr)) - @as(i64, @intCast(self.plt.items.len + 4))));
+            const got_rel = @as(i32, @intCast(@as(i64, @intCast(got_entry_addr)) - @as(i64, @intCast(entry_jmp_rip))));
+            try self.plt.appendSlice(self.allocator, &[_]u8{ 0xFF, 0x25 });
             try self.plt.appendSlice(self.allocator, &std.mem.toBytes(got_rel));
             
-            // pushq $index
+            // pushq $index - instruction: 68 [imm32]
             try self.plt.appendSlice(self.allocator, &[_]u8{ 0x68 });
             try self.plt.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, @intCast(i))));
             
-            // jmpq PLT[0]
-            const plt0_offset = @as(i32, @intCast(-@as(i64, @intCast(self.plt.items.len + 5))));
+            // jmpq PLT[0] - instruction: e9 [disp32]
+            const jmp_plt0_offset_in_entry: u64 = entry_jmp_opcode_size + entry_jmp_disp_size + 1 + 4; // jmp*GOT + push
+            const jmp_plt0_opcode_size: u64 = 1;
+            const jmp_plt0_disp_size: u64 = 4;
+            const jmp_plt0_rip = plt_entry_addr + jmp_plt0_offset_in_entry + jmp_plt0_opcode_size + jmp_plt0_disp_size;
+            const plt0_offset = @as(i32, @intCast(@as(i64, @intCast(plt0_addr)) - @as(i64, @intCast(jmp_plt0_rip))));
             try self.plt.appendSlice(self.allocator, &[_]u8{ 0xE9 });
             try self.plt.appendSlice(self.allocator, &std.mem.toBytes(plt0_offset));
         }
@@ -387,6 +407,8 @@ pub const ELFWriter = struct {
         
         // For dynamic linking, we need to generate sections early to know their sizes
         // We'll use placeholder addresses and fix them up later
+        const plt_size: u64 = if (has_dynamic) 16 + (self.dynamic_symbols.items.len * 16) else 0;
+        
         if (has_dynamic) {
             // Generate hash table
             try self.generateHash();
@@ -454,8 +476,11 @@ pub const ELFWriter = struct {
         const code_vaddr = BASE_ADDRESS + code_offset;
         const entry_vaddr = code_vaddr + self.entry_point;
         
+        // PLT comes right after code
+        const plt_addr = code_vaddr + self.code.items.len;
+        
         // Align data section to next page
-        const code_size_aligned = (self.code.items.len + self.plt.items.len + 0xFFF) & ~@as(u64, 0xFFF);
+        const code_size_aligned = (self.code.items.len + plt_size + 0xFFF) & ~@as(u64, 0xFFF);
         const data_offset = code_offset + code_size_aligned;
         const data_vaddr = BASE_ADDRESS + data_offset;
         
@@ -464,11 +489,14 @@ pub const ELFWriter = struct {
         const dynamic_addr = BASE_ADDRESS + dynamic_offset;
         const got_addr = if (has_dynamic) dynamic_addr + self.dynamic.items.len else data_vaddr;
         
-        // Now fix up GOT[0], .rela.plt, and .dynamic section with correct addresses
+        // Now generate PLT and GOT with correct addresses
         if (has_dynamic) {
-            // Fix GOT[0] to point to .dynamic
-            std.mem.writeInt(u64, self.got.items[0..8], dynamic_addr, .little);
-            
+            try self.generatePLT(plt_addr, got_addr);
+            try self.generateGOT(dynamic_addr, plt_addr);
+        }
+        
+        // Now fix up .rela.plt and .dynamic section with correct addresses
+        if (has_dynamic) {
             // Fix up rela.plt relocations with correct GOT address
             for (self.dynamic_symbols.items, 0..) |_, i| {
                 const got_entry_addr = got_addr + 24 + (i * 8);
