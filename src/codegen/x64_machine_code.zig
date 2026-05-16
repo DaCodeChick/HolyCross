@@ -1537,23 +1537,32 @@ pub const X64MachineCodeGen = struct {
     fn patchCallSites(self: *X64MachineCodeGen) !void {
         // Get direct access to code buffer for patching
         for (self.call_sites.items) |site| {
-            const target_offset = self.function_offsets.get(site.target) orelse {
-                std.debug.print("Error: Undefined function '{s}'\n", .{site.target});
-                return error.UndefinedFunction;
-            };
+            const target_offset_opt = self.function_offsets.get(site.target);
             
-            // Calculate relative offset
-            // call instruction: E8 <4-byte displacement>
-            // displacement = target - (site.offset + 4)
-            const next_instr = site.offset + 4;
-            const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
-            
-            // Patch the 4-byte displacement in the code buffer
-            const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
-            
-            // We need to modify the code buffer directly
-            // The code is in bin_writer.code.items[site.offset..site.offset+4]
-            @memcpy(self.code_buffer.getCodeItems()[site.offset..][0..4], &disp_bytes);
+            if (target_offset_opt) |target_offset| {
+                // Local function - patch with relative offset
+                // call instruction: E8 <4-byte displacement>
+                // displacement = target - (site.offset + 4)
+                const next_instr = site.offset + 4;
+                const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
+                
+                // Patch the 4-byte displacement in the code buffer
+                const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
+                @memcpy(self.code_buffer.getCodeItems()[site.offset..][0..4], &disp_bytes);
+            } else {
+                // Extern function - add to extern symbols list for ELF relocation
+                // The call site will be left with placeholder (0) for the linker to patch
+                switch (self.code_buffer) {
+                    .elf => |elf| {
+                        try elf.addExternSymbol(site.target, site.offset);
+                    },
+                    .templeos => {
+                        // TempleOS format would use IET_REL_I32 patch table entry
+                        std.debug.print("Error: Undefined function '{s}'\n", .{site.target});
+                        return error.UndefinedFunction;
+                    },
+                }
+            }
         }
     }
 

@@ -101,8 +101,43 @@ pub const Compiler = struct {
         // Generate machine code from IR
         try machine_gen.generateFromIR(&mod);
 
-        // Write ELF file
-        try elf.writeToFile(io, output_path);
+        // Check if we have extern symbols
+        if (elf.extern_symbols.items.len > 0) {
+            // Generate object file and link with gcc
+            std.debug.print("      Detected {} extern symbol(s), linking with libc...\n", .{elf.extern_symbols.items.len});
+            try self.compileAndLinkWithLibc(&elf, output_path, io);
+        } else {
+            // Write ELF executable directly
+            try elf.writeToFile(io, output_path);
+        }
+    }
+    
+    fn compileAndLinkWithLibc(
+        self: *Compiler,
+        elf: *elf_writer.ELFWriter,
+        output_path: []const u8,
+        io: std.Io,
+    ) !void {
+        _ = self;
+        _ = output_path;
+        _ = io;
+        
+        // TODO: Implement full gcc/ld linking or use our hcl linker with libc support
+        // For now, we successfully track extern symbols but don't link them yet
+        
+        std.debug.print("\n", .{});
+        std.debug.print("Extern function linking is not yet fully implemented.\n", .{});
+        std.debug.print("Extern symbols detected:\n", .{});
+        for (elf.extern_symbols.items) |sym| {
+            std.debug.print("  - {s}\n", .{sym.name});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("Next steps:\n", .{});
+        std.debug.print("  1. Generate object file (.o) with relocations\n", .{});
+        std.debug.print("  2. Link with system libc using ld or gcc\n", .{});
+        std.debug.print("  3. OR: Extend hcl linker to handle shared libraries\n", .{});
+        
+        return error.ExternLinkingNotImplemented;
     }
 
     /// Compile to TempleOS/ZealOS .BIN format

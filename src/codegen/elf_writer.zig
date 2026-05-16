@@ -2,27 +2,47 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// ELF64 file writer for Linux x64 executables
-/// Generates minimal ELF files with just code and data sections
+/// Generates ELF files with optional dynamic linking support
 pub const ELFWriter = struct {
     allocator: Allocator,
     code: std.ArrayList(u8),
     data: std.ArrayList(u8),
     entry_point: u32,
+    extern_symbols: std.ArrayList(ExternSymbol), // Track extern function calls
+    
+    const ExternSymbol = struct {
+        name: []const u8,
+        call_site_offset: u32, // Offset in code where relocation is needed
+    };
     
     pub fn init(allocator: Allocator) !ELFWriter {
         const empty_code = try allocator.alloc(u8, 0);
         const empty_data = try allocator.alloc(u8, 0);
+        const empty_externs = try allocator.alloc(ExternSymbol, 0);
         return .{
             .allocator = allocator,
             .code = std.ArrayList(u8).fromOwnedSlice(empty_code),
             .data = std.ArrayList(u8).fromOwnedSlice(empty_data),
             .entry_point = 0,
+            .extern_symbols = std.ArrayList(ExternSymbol).fromOwnedSlice(empty_externs),
         };
     }
     
     pub fn deinit(self: *ELFWriter) void {
         self.code.deinit(self.allocator);
         self.data.deinit(self.allocator);
+        for (self.extern_symbols.items) |sym| {
+            self.allocator.free(sym.name);
+        }
+        self.extern_symbols.deinit(self.allocator);
+    }
+    
+    pub fn addExternSymbol(self: *ELFWriter, name: []const u8, call_site_offset: u32) !void {
+        const name_copy = try self.allocator.dupe(u8, name);
+        try self.extern_symbols.append(self.allocator, .{
+            .name = name_copy,
+            .call_site_offset = call_site_offset,
+        });
     }
     
     pub fn appendCode(self: *ELFWriter, bytes: []const u8) !void {
