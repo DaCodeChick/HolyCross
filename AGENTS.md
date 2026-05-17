@@ -73,10 +73,33 @@ Examples:
 6. **Deterministic builds**: Timestamps set to 0 in COFF/PE
 
 ## Known Issues / TODOs
-- Test suite has unrelated failures (missing `is_variadic` fields in old test data)
-- Windows cross-compilation needs end-to-end testing
-- PE import resolution is basic (assumes msvcrt.dll)
-- No actual linking with external libraries yet
+
+### High Priority
+- **Hardcoded DLL mapping (PE executables only)**: Library hints are hardcoded in `genCall()` (lines 1135-1140 of x64_machine_code.zig)
+  - Only applies when compiling **directly to .exe** (not to .obj)
+  - Only `puts`, `printf`, `exit` map to `msvcrt.dll`
+  - Other functions default to `msvcrt.dll` fallback (line 1751)
+  - **Object files (.obj) work fine**: Linker resolves DLL imports
+  - **Solution needed for .exe**: Import directive parser or library configuration file
+- **No stub generation**: `StubGenerator` trait defined but not implemented
+  - PLT/GOT stubs for Linux `.so` not generated
+  - IAT jump stubs for Windows `.dll` not generated
+  - Call sites still use direct placeholders
+- **Windows executables don't run**: PE import table populated but IAT thunks not patched
+  - `objdump -x` shows correct imports
+  - Call sites have placeholder offsets (0x00000000)
+  - **Blocker for**: Windows runtime testing
+
+### Medium Priority
+- **Test suite failures**: Unrelated to external symbols (missing `is_variadic` fields in old test data)
+- **No shared library output**: Can't generate `.so` or `.dll` files yet
+- **Limited relocation types**: Only R_X86_64_PLT32 (ELF) and REL32 (COFF) supported
+- **Single DLL per symbol**: PE executables assume one DLL per symbol (can't mix kernel32.dll + msvcrt.dll cleanly)
+
+### Low Priority / Future Work
+- **No Windows MinGW testing**: `x64-windows-gnu` target untested
+- **No symbol versioning**: Linux symbol versions not tracked
+- **Empty ArrayList workaround**: Zig 0.16 bug requires special deinit logic (documented in ZIG_0.16_NOTES.md)
 
 ## Testing
 ```bash
