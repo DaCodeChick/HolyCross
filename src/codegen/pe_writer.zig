@@ -147,6 +147,67 @@ pub const PEWriter = struct {
         try self.addImport(dll_name, &[_][]const u8{func_name});
     }
     
+    /// Generate IAT jump stubs for all imported functions
+    /// Returns a map of function name -> stub offset in code section
+    pub fn generateIATStubs(self: *PEWriter, idata_rva: u32) !std.StringHashMap(u32) {
+        var stub_map = std.StringHashMap(u32).init(self.allocator);
+        
+        // Calculate IAT entry RVAs
+        const descriptor_size = 20;
+        const descriptors_size = (@as(u32, @intCast(self.imports.items.len)) + 1) * descriptor_size;
+        
+        var iat_rva = idata_rva + descriptors_size;
+        
+        // Skip ILT entries for each DLL
+        for (self.imports.items) |dll| {
+            const ilt_size = (@as(u32, @intCast(dll.functions.items.len)) + 1) * 8;
+            iat_rva += ilt_size;
+            
+            // Now we're at the IAT for this DLL
+            for (dll.functions.items) |func| {
+                // Generate stub at current code position
+                const stub_offset: u32 = @intCast(self.code.items.len);
+                
+                // Generate: jmp qword ptr [rip + offset_to_iat]
+                // Opcode: FF 25 [4-byte offset]
+                try self.code.append(self.allocator, 0xFF);
+                try self.code.append(self.allocator, 0x25);
+                
+                // Calculate RIP-relative offset to IAT entry
+                // RIP after this instruction = code_rva + stub_offset + 6
+                const code_rva = 0x1000; // Standard .text RVA
+                const rip_after_insn = code_rva + stub_offset + 6;
+                const offset_to_iat = @as(i32, @intCast(iat_rva)) - @as(i32, @intCast(rip_after_insn));
+                
+                // Write the 4-byte offset
+                const offset_bytes = std.mem.toBytes(@as(u32, @bitCast(offset_to_iat)));
+                try self.code.appendSlice(self.allocator, &offset_bytes);
+                
+                // Store stub offset for this function
+                const func_name_copy = try self.allocator.dupe(u8, func.name);
+                try stub_map.put(func_name_copy, stub_offset);
+                
+                // Move to next IAT entry
+                iat_rva += 8;
+            }
+            
+            // Skip null terminator
+            iat_rva += 8;
+            
+            // Skip to next DLL's IAT (skip DLL name, function names, etc.)
+            iat_rva += @as(u32, @intCast(dll.name.len)) + 1;
+            iat_rva = self.alignUp(iat_rva, 2);
+            
+            for (dll.functions.items) |func| {
+                const entry_size = 2 + @as(u32, @intCast(func.name.len)) + 1;
+                iat_rva += entry_size;
+            }
+            iat_rva = self.alignUp(iat_rva, 2);
+        }
+        
+        return stub_map;
+    }
+    
     /// Write PE32+ executable to file
     pub fn writeToFile(self: *PEWriter, io: std.Io, path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
@@ -555,7 +616,7 @@ pub const PEWriter = struct {
         }
     }
     
-    fn alignUp(self: *PEWriter, value: usize, alignment: u32) u32 {
+    pub fn alignUp(self: *PEWriter, value: usize, alignment: u32) u32 {
         _ = self;
         const align_u64: u64 = @intCast(alignment);
         const val_u64: u64 = @intCast(value);

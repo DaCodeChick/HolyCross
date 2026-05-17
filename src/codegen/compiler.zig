@@ -286,8 +286,57 @@ pub const Compiler = struct {
         // Generate machine code from IR
         try machine_gen.generateFromIR(&mod);
 
+        // Generate IAT stubs and patch call sites for PE executables
+        try self.patchPEImports(&pe, &machine_gen);
+
         // Write PE executable
         try pe.writeToFile(io, output_path);
+    }
+    
+    /// Generate IAT stubs and patch call sites for PE executables
+    fn patchPEImports(self: *Compiler, pe: *pe_writer.PEWriter, machine_gen: *x64_machine_code.X64MachineCodeGen) !void {
+        // Calculate where .idata section will be
+        const section_alignment: u32 = 0x1000;
+        const code_rva = section_alignment;  // .text at 0x1000
+        const rdata_rva = code_rva + pe.alignUp(pe.code.items.len, section_alignment);
+        const data_rva = rdata_rva + pe.alignUp(pe.rdata.items.len, section_alignment);
+        const idata_rva = data_rva + pe.alignUp(pe.data.items.len, section_alignment);
+        
+        // Generate IAT stubs in code section
+        var stub_map = try pe.generateIATStubs(idata_rva);
+        defer {
+            var iter = stub_map.keyIterator();
+            while (iter.next()) |key| {
+                self.allocator.free(key.*);
+            }
+            stub_map.deinit();
+        }
+        
+        // Patch call sites to point to stubs
+        var sym_iter = machine_gen.external_symbols.symbols.iterator();
+        while (sym_iter.next()) |entry| {
+            const func_name = entry.key_ptr.*;
+            const symbol = entry.value_ptr.*;
+            
+            // Get stub offset for this function
+            const stub_offset = stub_map.get(func_name) orelse {
+                std.debug.print("Warning: No IAT stub found for {s}\n", .{func_name});
+                continue;
+            };
+            
+            // Patch each call site
+            for (symbol.references.items) |ref| {
+                const call_site = ref.code_offset;
+                // call_site points to the 4-byte displacement field
+                // Calculate displacement: stub_offset - (call_site + 4)
+                const next_instr = call_site + 4;
+                const displacement = @as(i32, @intCast(stub_offset)) - @as(i32, @intCast(next_instr));
+                
+                // Patch the displacement in the code buffer
+                const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
+                @memcpy(pe.code.items[call_site..][0..4], &disp_bytes);
+            }
+        }
     }
 
     pub fn deinit(self: *Compiler) void {
