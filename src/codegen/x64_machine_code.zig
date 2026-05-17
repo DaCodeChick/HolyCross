@@ -128,6 +128,8 @@ pub const X64MachineCodeGen = struct {
     labels: std.AutoHashMap(u32, u32),
     /// Function name to offset mapping
     function_offsets: std.StringHashMap(u32),
+    /// Function name to size mapping
+    function_sizes: std.StringHashMap(u32),
     /// Current function being generated
     current_func: ?*const ir.Function = null,
     /// Current module being generated (for type layouts in inline asm)
@@ -153,6 +155,7 @@ pub const X64MachineCodeGen = struct {
             .calling_convention = calling_convention,
             .labels = std.AutoHashMap(u32, u32).init(allocator),
             .function_offsets = std.StringHashMap(u32).init(allocator),
+            .function_sizes = std.StringHashMap(u32).init(allocator),
             .stack_offsets = std.AutoHashMap(u32, i32).init(allocator),
             .variable_offsets = std.StringHashMap(i32).init(allocator),
             .external_symbols = ExternalSymbolTable.init(allocator),
@@ -169,6 +172,13 @@ pub const X64MachineCodeGen = struct {
             self.allocator.free(key.*);
         }
         self.function_offsets.deinit();
+        
+        var size_iter = self.function_sizes.keyIterator();
+        while (size_iter.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.function_sizes.deinit();
+        
         self.stack_offsets.deinit();
         
         var var_iter = self.variable_offsets.keyIterator();
@@ -217,15 +227,52 @@ pub const X64MachineCodeGen = struct {
             while (func_iter.next()) |entry| {
                 const func_name = entry.key_ptr.*;
                 const func_offset = entry.value_ptr.*;
+                const func_size = self.function_sizes.get(func_name) orelse 0;
                 
                 _ = try obj.addSymbol(
                     func_name,
                     func_offset,
-                    0, // size (we could calculate this if needed)
+                    func_size,
                     .text,
                     .global,
                     .func,
                 );
+            }
+        }
+        
+        // For COFF object files, add symbols for all functions
+        if (self.code_buffer == .coff_object) {
+            const obj = self.code_buffer.coff_object;
+            
+            // Add symbols for all functions
+            var func_iter = self.function_offsets.iterator();
+            while (func_iter.next()) |entry| {
+                const func_name = entry.key_ptr.*;
+                const func_offset = entry.value_ptr.*;
+                
+                _ = try obj.addSymbol(.{
+                    .name = func_name,
+                    .value = func_offset,
+                    .section_number = 1, // .text section
+                    .type = 0x20, // function
+                    .storage_class = 2, // external
+                    .aux_count = 0,
+                });
+            }
+        }
+        
+        // For Mach-O object files, add symbols for all functions
+        if (self.code_buffer == .macho_object) {
+            const obj = self.code_buffer.macho_object;
+            const MachoObject = @import("macho_object.zig");
+            
+            // Add symbols for all functions
+            var func_iter = self.function_offsets.iterator();
+            while (func_iter.next()) |entry| {
+                const func_name = entry.key_ptr.*;
+                const func_offset = entry.value_ptr.*;
+                
+                _ = try obj.addSymbol(func_name, MachoObject.MachoObjectWriter.SymbolSection.text, func_offset, true);
             }
         }
         
@@ -241,9 +288,8 @@ pub const X64MachineCodeGen = struct {
                     // Skip _start function (not needed in shared libraries)
                     if (std.mem.eql(u8, func_name, "_start")) continue;
                     
-                    // TODO: Calculate actual function size
-                    // For now use 0 (loader doesn't strictly require it for functions)
-                    try elf.addExportedSymbol(func_name, func_offset, 0);
+                    const func_size = self.function_sizes.get(func_name) orelse 0;
+                    try elf.addExportedSymbol(func_name, func_offset, func_size);
                 }
             }
         }
@@ -401,6 +447,12 @@ pub const X64MachineCodeGen = struct {
         } else {
             try self.emitEpilogue();
         }
+        
+        // Calculate and store function size
+        const func_end = self.code_buffer.getCurrentOffset();
+        const func_size = func_end - func_start;
+        const size_name = try self.allocator.dupe(u8, func.name);
+        try self.function_sizes.put(size_name, func_size);
     }
 
     fn generateBlock(self: *X64MachineCodeGen, block: *const ir.BasicBlock) !void {
