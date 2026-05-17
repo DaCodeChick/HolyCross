@@ -350,8 +350,11 @@ pub const ELFObjectWriter = struct {
             }
         }
         
-        // Write to file
-        try file.writeStreamingAll(io, buffer.items);
+        // Write to writer using buffered IO
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = file.writer(io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        try buffered_writer.interface.writeAll(buffer.items);
     }
 };
 

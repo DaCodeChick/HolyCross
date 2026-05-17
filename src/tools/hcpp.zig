@@ -123,10 +123,14 @@ pub fn main(init: std.process.Init) !void {
     
     // Output the result
     if (output_file) |out_path| {
-        // Write to file
+        // Write to file using buffered IO
         const out_file = try cwd.createFile(init.io, out_path, .{});
         defer out_file.close(init.io);
-        try out_file.writeStreamingAll(init.io, processed_source);
+        
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = out_file.writer(init.io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        try buffered_writer.interface.writeAll(processed_source);
         
         std.debug.print("Preprocessing complete: {s} -> {s}\n", .{ input_file, out_path });
     } else {

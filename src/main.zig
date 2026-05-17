@@ -171,7 +171,11 @@ pub fn main(init: std.process.Init) !void {
 
         const asm_file = try cwd.createFile(init.io, output_file, .{});
         defer asm_file.close(init.io);
-        try asm_file.writeStreamingAll(init.io, asm_code);
+        
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = asm_file.writer(init.io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        try buffered_writer.interface.writeAll(asm_code);
 
         std.debug.print("\n✓ Assembly generation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});

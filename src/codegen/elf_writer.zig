@@ -400,11 +400,37 @@ pub const ELFWriter = struct {
         self.entry_point = offset;
     }
     
+    /// Write complete ELF file to a writer
+    /// This can write to files, buffers, or any std.Io.Writer implementation
+    pub fn write(self: *ELFWriter, writer: *std.Io.Writer) !void {
+        // Build buffer for the entire ELF file
+        // We need to know all sizes upfront for offsets, so we use a buffer approach
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(self.allocator);
+        
+        try self.buildElfBuffer(&buffer);
+        
+        // Write buffer to the writer
+        try writer.writeAll(buffer.items);
+    }
+    
     /// Write complete ELF file to disk
     pub fn writeToFile(self: *ELFWriter, io: std.Io, path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
         const file = try cwd.createFile(io, path, .{});
         defer file.close(io);
+        
+        // Create a buffered writer for better performance
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = file.writer(io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        
+        // Write to the buffered writer
+        try self.write(&buffered_writer.interface);
+    }
+    
+    /// Build the complete ELF file into a buffer
+    fn buildElfBuffer(self: *ELFWriter, buffer: *std.ArrayList(u8)) !void {
         
         // Convert extern symbols to dynamic symbols
         // For now, we use placeholder offsets; they'll be calculated properly when generating PLT/GOT
@@ -562,10 +588,6 @@ pub const ELFWriter = struct {
         var num_phdrs: u16 = 2; // PT_LOAD for headers + PT_LOAD for code
         if (has_dynamic) num_phdrs += 3; // PT_LOAD (ro data) + PT_INTERP + PT_DYNAMIC
         if (self.data.items.len > 0 or has_dynamic) num_phdrs += 1; // PT_LOAD for data/GOT
-        
-        const empty_buffer = try self.allocator.alloc(u8, 0);
-        var buffer = std.ArrayList(u8).fromOwnedSlice(empty_buffer);
-        defer buffer.deinit(self.allocator);
         
         // ELF Header (64 bytes)
         try buffer.appendSlice(self.allocator, &[_]u8{
@@ -732,9 +754,6 @@ pub const ELFWriter = struct {
             }
             try buffer.appendSlice(self.allocator, self.data.items);
         }
-        
-        // Write to file
-        try file.writeStreamingAll(io, buffer.items);
     }
     
     /// Get the virtual address for a data offset

@@ -187,7 +187,11 @@ pub fn main(init: std.process.Init) !void {
         .raw_binary => {
             const out_file = try cwd.createFile(init.io, output_file.?, .{});
             defer out_file.close(init.io);
-            try out_file.writeStreamingAll(init.io, machine_code);
+            
+            var write_buffer: [8192]u8 = undefined;
+            var buffered_writer = out_file.writer(init.io, &write_buffer);
+            defer buffered_writer.flush() catch {};
+            try buffered_writer.interface.writeAll(machine_code);
         },
         .hex_dump => {
             const out_file = try cwd.createFile(init.io, output_file.?, .{});
@@ -221,13 +225,17 @@ pub fn main(init: std.process.Init) !void {
         const list_file = try cwd.createFile(init.io, list_path, .{});
         defer list_file.close(init.io);
         
-        try list_file.writeStreamingAll(init.io, "Assembly Listing\n");
-        try list_file.writeStreamingAll(init.io, "================\n\n");
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = list_file.writer(init.io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        
+        try buffered_writer.interface.writeAll("Assembly Listing\n");
+        try buffered_writer.interface.writeAll("================\n\n");
         
         for (instructions, 0..) |instr, idx| {
             var line_buf: [256]u8 = undefined;
             const line = try std.fmt.bufPrint(&line_buf, "{d:4}: {s}\n", .{ idx, instr.mnemonic });
-            try list_file.writeStreamingAll(init.io, line);
+            try buffered_writer.interface.writeAll(line);
         }
     }
     

@@ -157,8 +157,11 @@ pub const TempleOSBinWriter = struct {
         // Append END marker
         try bin_data.append(self.allocator, @intFromEnum(IET.END));
 
-        // Write all data to file
-        try file.writeStreamingAll(io, bin_data.items);
+        // Write all data to file using buffered IO
+        var write_buffer: [8192]u8 = undefined;
+        var buffered_writer = file.writer(io, &write_buffer);
+        defer buffered_writer.flush() catch {};
+        try buffered_writer.interface.writeAll(bin_data.items);
     }
 
     /// Get the current code offset (useful for tracking label positions)
