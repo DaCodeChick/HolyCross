@@ -102,7 +102,7 @@ zig build                          # Build compiler
   - Fixed Zig 0.16 API compatibility (ArrayList, std.time)
 
 ## Development Notes
-- **Zig Version**: 0.16.0
+- **Zig Version**: 0.16.0 (see `docs/ZIG_0.16_NOTES.md` for API quirks and gotchas)
 - **Allocator Strategy**: Debug builds use DebugAllocator, release uses ArenaAllocator
-- **File I/O**: All writers use buffered `std.Io.Writer`
+- **File I/O**: All writers use buffered `std.io.Writer`
 - **Design Docs**: See `docs/PE_COFF_DESIGN.md` for Windows format details
