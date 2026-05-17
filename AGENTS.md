@@ -33,6 +33,13 @@ Cross-compile HolyC to multiple platforms:
   - Supports System V (Linux) and Win64 calling conventions
   - `CodeBuffer` union routes output to appropriate writer
   - Handles relocations and extern symbols for each format
+  - Uses unified external symbol table for tracking imported functions
+
+- `src/codegen/external_symbols.zig` - Unified external symbol tracking
+  - `ExternalSymbolTable` tracks all imported functions and their call sites
+  - `ExternalSymbol` represents an imported function with library hints
+  - `SymbolReference` tracks individual call sites for patching/relocation
+  - Prepares for PLT/GOT (Linux) and IAT stub (Windows) generation
 
 ### Compiler Pipeline (`src/codegen/compiler.zig`)
 1. Parse AST → IR
@@ -79,6 +86,13 @@ zig build                          # Build compiler
 ```
 
 ## Recent Changes
+- **2026-05-17**: Integrated unified external symbol table
+  - Created `src/codegen/external_symbols.zig` for cross-platform symbol tracking
+  - Refactored `x64_machine_code.zig` to use `ExternalSymbolTable` instead of `CallSite` list
+  - Added library hint support for Windows DLL imports (msvcrt.dll)
+  - Prepared infrastructure for PLT/GOT (Linux) and IAT stub (Windows) generation
+  - Fixed ArrayList memory management issues in forward_jumps deinit
+
 - **2024-05-17**: Added Windows cross-compilation support
   - Implemented `src/target.zig` with target triple parsing
   - Added COFF object writer (`src/codegen/coff_object.zig`)
