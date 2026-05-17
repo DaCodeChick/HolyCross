@@ -79,23 +79,23 @@ Examples:
   - IAT stubs generated correctly (verified via objdump disassembly)
   - Call sites patched to call stubs
   - Import table structure correct
+  - Multi-DLL imports working (msvcrt.dll + kernel32.dll tested)
   - **Next step**: Test with Wine or actual Windows machine
 
 ### Medium Priority
-- **Hardcoded DLL mapping (PE executables only)**: Library hints hardcoded for direct `.exe` compilation
-  - Only applies when compiling **directly to .exe** (not to .obj)
-  - Only `puts`, `printf`, `exit` map to `msvcrt.dll`
-  - Other functions default to `msvcrt.dll` fallback
-  - **Object files (.obj) work fine**: Linker resolves DLL imports
-  - **Solution options**: Import directive parser or library configuration file
-- **Test suite failures**: Unrelated to external symbols (missing `is_variadic` fields in old test data)
 - **No shared library output**: Can't generate `.so` or `.dll` files yet
+  - Executables and object files work fine
+  - Shared libraries need PLT/GOT (Linux) generation
+  - See docs/PLT_GOT_DESIGN.md for implementation plan (future)
+- **Test suite failures**: Unrelated to external symbols (missing `is_variadic` fields in old test data)
 - **Limited relocation types**: Only R_X86_64_PLT32 (ELF) and REL32 (COFF) supported
-- **PLT/GOT generation**: Not yet implemented for Linux shared libraries
+  - Sufficient for current object file/executable workflow
+  - Shared libraries will need R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT
 
 ### Low Priority / Future Work
 - **No Windows MinGW testing**: `x64-windows-gnu` target untested
 - **No symbol versioning**: Linux symbol versions not tracked
+- **Stack arguments**: Only register parameters supported (max 6 SysV, 4 Win64)
 - **Empty ArrayList workaround**: Zig 0.16 bug requires special deinit logic (documented in ZIG_0.16_NOTES.md)
 
 ## Testing
@@ -106,6 +106,12 @@ zig build                          # Build compiler
 ```
 
 ## Recent Changes
+- **2026-05-17**: Extended DLL mapping with comprehensive function database
+  - Added `getDLLHint()` with 40+ msvcrt.dll and 30+ kernel32.dll functions
+  - Covers stdio, memory, strings, process, console, file I/O, synchronization
+  - Multi-DLL imports now work correctly (verified with test_windows_api.hc)
+  - Default fallback to msvcrt.dll for unknown functions
+
 - **2026-05-17**: Implemented IAT stub generation for Windows PE executables
   - Added `generateIATStubs()` to create RIP-relative jump stubs
   - Added `patchPEImports()` to patch call sites to stubs
