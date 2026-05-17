@@ -85,14 +85,9 @@ Examples:
   - See macOS ld64 documentation for linking requirements
 
 ### Medium Priority
-- **Symbol export for shared libraries**: Can generate .so/.dll files but functions not exported
-  - File generation works (ET_DYN for ELF, IMAGE_FILE_DLL for PE)
-  - Need to add export tables for symbols to be usable by other programs
-  - Linux: Add symbols to .dynsym with STB_GLOBAL binding
-  - Windows: Need export directory table with export address/name/ordinal tables
 - **Limited relocation types**: Only R_X86_64_PLT32 (ELF), REL32 (COFF), and X86_64_RELOC_BRANCH (Mach-O) supported
-  - Sufficient for current object file/executable workflow
-  - Shared libraries will need R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT for full functionality
+  - Sufficient for current object file/executable/shared library workflow
+  - Future dynamic linking may need R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT
 
 ### Low Priority / Future Work
 - **No Windows MinGW testing**: `x64-windows-gnu` target untested
@@ -110,12 +105,19 @@ zig build test                     # Run test suite (216/217 passing)
 ```
 
 ## Recent Changes
-- **2026-05-17**: Shared library support (.so/.dll) added!
+- **2026-05-17**: Symbol export support for shared libraries complete!
+  - ELF .so files now export symbols to .dynsym with STB_GLOBAL binding
+  - PE .dll files now include complete export directory table in .edata section
+  - Export Address Table (EAT), Name Pointer Table (NPT), Ordinal Table all working
+  - All non-_start functions automatically exported from shared libraries
+  - Verified with `nm -D` (Linux) and `objdump -x` (Windows)
+  - Shared libraries now fully usable by other programs
+
+- **2026-05-17**: Shared library file generation (.so/.dll) added!
   - Added `-shared` flag for generating shared libraries
   - Implemented ELF .so generation with ET_DYN file type
   - Implemented PE .dll generation with IMAGE_FILE_DLL characteristics
   - Both Linux .so and Windows .dll files generate correctly
-  - Symbol export not yet implemented (functions not visible to linker)
 
 - **2026-05-17**: String escape sequences now working!
   - Added `unescapeString()` to process `\n`, `\t`, `\r`, `\\`, `\"`, `\0`
