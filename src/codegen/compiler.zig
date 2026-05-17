@@ -83,9 +83,12 @@ pub const Compiler = struct {
         defer obj.deinit();
 
         // Initialize machine code generator targeting object file
+        // TODO: Get calling convention from target triple
+        const CallingConvention = @import("../target.zig").CallingConvention;
         var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
             self.allocator,
-            .{ .object = &obj }
+            .{ .object = &obj },
+            CallingConvention.sysv  // Default to System V for now
         );
         defer machine_gen.deinit();
 
@@ -134,9 +137,11 @@ pub const Compiler = struct {
         defer elf.deinit();
 
         // Initialize machine code generator
+        const CallingConvention = @import("../target.zig").CallingConvention;
         var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
             self.allocator,
-            .{ .elf = &elf }
+            .{ .elf = &elf },
+            CallingConvention.sysv  // Default to System V for now
         );
         defer machine_gen.deinit();
 
@@ -190,9 +195,11 @@ pub const Compiler = struct {
         defer bin_writer.deinit();
 
         // Initialize machine code generator
+        const CallingConvention = @import("../target.zig").CallingConvention;
         var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
             self.allocator,
-            .{ .templeos = &bin_writer }
+            .{ .templeos = &bin_writer },
+            CallingConvention.sysv  // TempleOS uses System V-like convention
         );
         defer machine_gen.deinit();
 

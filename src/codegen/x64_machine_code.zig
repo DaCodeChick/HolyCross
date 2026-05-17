@@ -5,6 +5,8 @@ const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
 const elf_object = @import("elf_object.zig");
 const X64Assembler = @import("../assembler/x64.zig").X64Assembler;
+const Target = @import("../target.zig").Target;
+const CallingConvention = @import("../target.zig").CallingConvention;
 
 /// Generic code buffer interface - works with ELF, object files, and TempleOS writers
 pub const CodeBuffer = union(enum) {
@@ -101,6 +103,7 @@ const ForwardJump = struct {
 pub const X64MachineCodeGen = struct {
     allocator: Allocator,
     code_buffer: CodeBuffer,
+    calling_convention: CallingConvention,
     /// Label ID to offset mapping
     labels: std.AutoHashMap(u32, u32),
     /// Function name to offset mapping
@@ -122,12 +125,13 @@ pub const X64MachineCodeGen = struct {
     /// Index of .data section symbol (for relocations in object files)
     data_section_symbol: ?u32 = null,
 
-    pub fn init(allocator: Allocator, code_buffer: CodeBuffer) !X64MachineCodeGen {
+    pub fn init(allocator: Allocator, code_buffer: CodeBuffer, calling_convention: CallingConvention) !X64MachineCodeGen {
         const empty_call_sites = try allocator.alloc(CallSite, 0);
         const empty_forward_jumps = try allocator.alloc(ForwardJump, 0);
         return .{
             .allocator = allocator,
             .code_buffer = code_buffer,
+            .calling_convention = calling_convention,
             .labels = std.AutoHashMap(u32, u32).init(allocator),
             .function_offsets = std.StringHashMap(u32).init(allocator),
             .stack_offsets = std.AutoHashMap(u32, i32).init(allocator),
@@ -288,30 +292,32 @@ pub const X64MachineCodeGen = struct {
         // Function prologue
         try self.emitPrologue(aligned_stack);
 
-        // Save parameters from registers to stack
-        // x64 calling convention: rdi, rsi, rdx, rcx, r8, r9
+        // Save parameters from registers to stack based on calling convention
         const param_count = param_names.items.len;
-        if (param_count >= 1) {
-            // mov [rbp-8], rdi
-            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
-            try self.emitModRM(7, 5, -8); // rdi = 7
+        const param_regs_str = self.calling_convention.parameterRegisters();
+        
+        // Map register names to their ModRM register numbers
+        // Max 6 registers for sysv, 4 for win64
+        const reg_numbers: []const u8 = switch (self.calling_convention) {
+            .sysv => &[_]u8{ 7, 6, 2, 1, 0, 1 },   // rdi=7, rsi=6, rdx=2, rcx=1, r8=0, r9=1 (r8/r9 need REX.B)
+            .win64 => &[_]u8{ 1, 2, 0, 1 },        // rcx=1, rdx=2, r8=0, r9=1
+        };
+        
+        for (0..@min(param_count, param_regs_str.len)) |param_idx| {
+            const stack_offset = -(@as(i32, @intCast(param_idx + 1)) * 8);
+            const reg_num = reg_numbers[param_idx];
+            const needs_rex_b = (self.calling_convention == .sysv and param_idx >= 4) or 
+                               (self.calling_convention == .win64 and param_idx >= 2);
+            
+            if (needs_rex_b) {
+                // mov [rbp+offset], r8/r9 (need REX.B = 0x4C)
+                try self.emitBytes(&[_]u8{ 0x4C, 0x89 });
+            } else {
+                // mov [rbp+offset], reg
+                try self.emitBytes(&[_]u8{ 0x48, 0x89 });
+            }
+            try self.emitModRM(reg_num, 5, stack_offset);
         }
-        if (param_count >= 2) {
-            // mov [rbp-16], rsi
-            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
-            try self.emitModRM(6, 5, -16); // rsi = 6
-        }
-        if (param_count >= 3) {
-            // mov [rbp-24], rdx
-            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
-            try self.emitModRM(2, 5, -24); // rdx = 2
-        }
-        if (param_count >= 4) {
-            // mov [rbp-32], rcx
-            try self.emitBytes(&[_]u8{ 0x48, 0x89 });
-            try self.emitModRM(1, 5, -32); // rcx = 1
-        }
-        // TODO: Handle more params and r8, r9
 
         // Generate code for each basic block
         for (func.blocks.items) |*block| {
@@ -983,12 +989,18 @@ pub const X64MachineCodeGen = struct {
             else => return error.InvalidCallTarget,
         };
 
-        // Load arguments into registers (x64 calling convention)
-        // rdi, rsi, rdx, rcx, r8, r9 for first 6 integer args
+        // Load arguments into registers based on calling convention
         if (instr.args) |args| {
-            const arg_regs = [_]u8{ 0x3F, 0x37, 0x3A, 0x39, 0x00, 0x01 }; // rdi, rsi, rdx, rcx, r8, r9
+            // Get argument registers for this calling convention
+            const arg_regs_modrm: []const u8 = switch (self.calling_convention) {
+                .sysv => &[_]u8{ 0x3F, 0x37, 0x3A, 0x39, 0x00, 0x01 },  // rdi=0x3F, rsi=0x37, rdx=0x3A, rcx=0x39, r8=0x00, r9=0x01
+                .win64 => &[_]u8{ 0x39, 0x3A, 0x00, 0x01 },             // rcx=0x39, rdx=0x3A, r8=0x00, r9=0x01
+            };
+            
+            const max_reg_params = arg_regs_modrm.len;
+            
             for (args, 0..) |arg, i| {
-                if (i >= 6) return error.TooManyArguments; // Stack args not yet supported
+                if (i >= max_reg_params) return error.TooManyArguments; // Stack args not yet supported
                 
                 switch (arg) {
                     .constant => |c| switch (c) {
@@ -998,19 +1010,19 @@ pub const X64MachineCodeGen = struct {
                                 const imm32 = @as(i32, @intCast(val));
                                 if (i < 4) {
                                     // rdi, rsi, rdx, rcx - use simple encoding
-                                    try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 | (arg_regs[i] & 7) });
+                                    try self.emitBytes(&[_]u8{ 0x48, 0xC7, 0xC0 | (arg_regs_modrm[i] & 7) });
                                     try self.emitDword(@bitCast(imm32));
                                 } else {
                                     // r8, r9 - need REX.B
-                                    try self.emitBytes(&[_]u8{ 0x49, 0xC7, 0xC0 | (arg_regs[i] & 7) });
+                                    try self.emitBytes(&[_]u8{ 0x49, 0xC7, 0xC0 | (arg_regs_modrm[i] & 7) });
                                     try self.emitDword(@bitCast(imm32));
                                 }
                             } else {
                                 // movabs reg, imm64
                                 if (i < 4) {
-                                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                                    try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs_modrm[i] & 7) });
                                 } else {
-                                    try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                                    try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs_modrm[i] & 7) });
                                 }
                                 try self.emitQword(@bitCast(val));
                             }
@@ -1020,9 +1032,9 @@ pub const X64MachineCodeGen = struct {
                             // movabs reg, imm64 (F64 bits)
                             const bits: u64 = @bitCast(val);
                             if (i < 4) {
-                                try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                                try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs_modrm[i] & 7) });
                             } else {
-                                try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                                try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs_modrm[i] & 7) });
                             }
                             try self.emitQword(bits);
                         },
@@ -1033,10 +1045,10 @@ pub const X64MachineCodeGen = struct {
                         // mov reg, [rbp+offset]
                         if (i < 4) {
                             try self.emitBytes(&[_]u8{ 0x48, 0x8B });
-                            try self.emitModRM(arg_regs[i] & 7, 5, src_offset);
+                            try self.emitModRM(arg_regs_modrm[i] & 7, 5, src_offset);
                         } else {
                             try self.emitBytes(&[_]u8{ 0x4C, 0x8B });
-                            try self.emitModRM(arg_regs[i] & 7, 5, src_offset);
+                            try self.emitModRM(arg_regs_modrm[i] & 7, 5, src_offset);
                         }
                     },
                     .variable => |var_name| {
@@ -1048,10 +1060,10 @@ pub const X64MachineCodeGen = struct {
                         // mov reg, [rbp+offset]
                         if (i < 4) {
                             try self.emitBytes(&[_]u8{ 0x48, 0x8B });
-                            try self.emitModRM(arg_regs[i] & 7, 5, var_offset);
+                            try self.emitModRM(arg_regs_modrm[i] & 7, 5, var_offset);
                         } else {
                             try self.emitBytes(&[_]u8{ 0x4C, 0x8B });
-                            try self.emitModRM(arg_regs[i] & 7, 5, var_offset);
+                            try self.emitModRM(arg_regs_modrm[i] & 7, 5, var_offset);
                         }
                     },
                     .string => |str_literal| {
@@ -1067,9 +1079,9 @@ pub const X64MachineCodeGen = struct {
                         
                         // movabs reg, <address>
                         if (i < 4) {
-                            try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs[i] & 7) });
+                            try self.emitBytes(&[_]u8{ 0x48, 0xB8 + (arg_regs_modrm[i] & 7) });
                         } else {
-                            try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs[i] & 7) });
+                            try self.emitBytes(&[_]u8{ 0x49, 0xB8 + (arg_regs_modrm[i] & 7) });
                         }
                         
                         // For object files, emit a relocation; for executables, emit the actual address
@@ -1725,14 +1737,18 @@ pub const X64MachineCodeGen = struct {
         // mov rbp, rsp
         try self.emitBytes(&[_]u8{ 0x48, 0x89, 0xE5 });
         
-        // sub rsp, stack_size
-        if (stack_size > 0) {
-            if (stack_size <= 127) {
+        // Add shadow space for Windows calling convention
+        const shadow_space = self.calling_convention.shadowSpace();
+        const total_stack = stack_size + @as(u32, @intCast(shadow_space));
+        
+        // sub rsp, total_stack_size
+        if (total_stack > 0) {
+            if (total_stack <= 127) {
                 try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xEC });
-                try self.emitByte(@intCast(stack_size));
+                try self.emitByte(@intCast(total_stack));
             } else {
                 try self.emitBytes(&[_]u8{ 0x48, 0x81, 0xEC });
-                try self.emitDword(stack_size);
+                try self.emitDword(total_stack);
             }
         }
     }
