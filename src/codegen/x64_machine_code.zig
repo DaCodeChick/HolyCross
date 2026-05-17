@@ -464,9 +464,9 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn genRet(self: *X64MachineCodeGen) !void {
-        // Special case for _start: do exit syscall with code 0
+        // Special case for _start on Linux: do exit syscall with code 0
         if (self.current_func) |func| {
-            if (std.mem.eql(u8, func.name, "_start")) {
+            if (std.mem.eql(u8, func.name, "_start") and self.calling_convention == .sysv) {
                 // xor rdi, rdi (exit code 0)
                 try self.emitBytes(&[_]u8{ 0x48, 0x31, 0xFF });
                 
@@ -543,9 +543,9 @@ pub const X64MachineCodeGen = struct {
             else => return error.InvalidOperand,
         }
         
-        // Special case for _start: do exit syscall instead of return
+        // Special case for _start on Linux: do exit syscall instead of return
         if (self.current_func) |func| {
-            if (std.mem.eql(u8, func.name, "_start")) {
+            if (std.mem.eql(u8, func.name, "_start") and self.calling_convention == .sysv) {
                 // Move return value (in rax) to rdi for exit syscall
                 // MOV rdi, rax = 48 89 C7
                 try self.emitBytes(&[_]u8{ 0x48, 0x89, 0xC7 });
@@ -1743,7 +1743,7 @@ pub const X64MachineCodeGen = struct {
                         // For PE executable, add import entry
                         // For now, assume all external functions come from standard runtime
                         // TODO: parse import directives or use smart linking
-                        try pe.addImport("msvcrt.dll", &[_][]const u8{site.target});
+                        try pe.addImportFunction("msvcrt.dll", site.target);
                         // The actual IAT thunk will be resolved when writing the PE
                     },
                     .templeos => {

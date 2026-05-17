@@ -123,6 +123,30 @@ pub const PEWriter = struct {
         });
     }
     
+    /// Add a single imported function to a DLL (finds existing DLL or creates new one)
+    pub fn addImportFunction(self: *PEWriter, dll_name: []const u8, func_name: []const u8) !void {
+        // Try to find existing DLL
+        for (self.imports.items) |*dll| {
+            if (std.mem.eql(u8, dll.name, dll_name)) {
+                // Check if function already exists
+                for (dll.functions.items) |func| {
+                    if (std.mem.eql(u8, func.name, func_name)) {
+                        return; // Already imported
+                    }
+                }
+                // Add function to existing DLL
+                try dll.functions.append(self.allocator, .{
+                    .name = try self.allocator.dupe(u8, func_name),
+                    .hint = @intCast(dll.functions.items.len),
+                });
+                return;
+            }
+        }
+        
+        // DLL not found, create new entry
+        try self.addImport(dll_name, &[_][]const u8{func_name});
+    }
+    
     /// Write PE32+ executable to file
     pub fn writeToFile(self: *PEWriter, io: std.Io, path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
@@ -366,6 +390,20 @@ pub const PEWriter = struct {
             var ilt = std.ArrayList(u64).fromOwnedSlice(empty_ilt);
             var iat = std.ArrayList(u64).fromOwnedSlice(empty_iat);
             
+            // Reserve space for ILT and IAT first
+            const ilt_offset = offset;
+            const ilt_size = (@as(u32, @intCast(dll.functions.items.len)) + 1) * 8; // +1 for null terminator
+            offset += ilt_size;
+            
+            const iat_offset = offset;
+            const iat_size = (@as(u32, @intCast(dll.functions.items.len)) + 1) * 8;
+            offset += iat_size;
+            
+            const dll_name_offset = offset;
+            offset += @as(u32, @intCast(dll.name.len)) + 1;
+            offset = self.alignUp(offset, 2);
+            
+            // Now calculate function name offsets
             const name_table_offset = offset;
             var names_size: u32 = 0;
             
@@ -386,19 +424,6 @@ pub const PEWriter = struct {
             
             // Align names size
             names_size = self.alignUp(names_size, 2);
-            
-            const ilt_offset = offset;
-            const ilt_size = @as(u32, @intCast(ilt.items.len)) * 8; // 8 bytes per entry (PE32+)
-            offset += ilt_size;
-            
-            const iat_offset = offset;
-            const iat_size = @as(u32, @intCast(iat.items.len)) * 8;
-            offset += iat_size;
-            
-            const dll_name_offset = offset;
-            offset += @as(u32, @intCast(dll.name.len)) + 1;
-            offset = self.alignUp(offset, 2);
-            
             offset += names_size;
             
             try dll_data.append(self.allocator, .{
