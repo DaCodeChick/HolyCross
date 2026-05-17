@@ -102,10 +102,9 @@ pub const PEWriter = struct {
         try self.code.appendSlice(self.allocator, code);
     }
     
-    /// Compatibility wrapper for appendData (used by CodeBuffer)
     pub fn appendData(self: *PEWriter, bytes: []const u8) !u64 {
         const offset = self.data.items.len;
-        try self.addData(bytes);
+        try self.data.appendSlice(self.allocator, bytes);
         return @intCast(offset);
     }
     
@@ -123,12 +122,6 @@ pub const PEWriter = struct {
         try self.rdata.appendSlice(self.allocator, data);
     }
     
-    /// Add initialized data
-    pub fn addData(self: *PEWriter, data: []const u8) !void {
-        try self.data.appendSlice(self.allocator, data);
-    }
-    
-    /// Set the entry point RVA (relative to code section)
     pub fn setEntryPoint(self: *PEWriter, offset: u32) void {
         self.entry_point_offset = offset;
     }

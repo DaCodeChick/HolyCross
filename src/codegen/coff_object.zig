@@ -87,24 +87,13 @@ pub const COFFObjectWriter = struct {
     }
     
     /// Add machine code to .text section
-    pub fn addCode(self: *COFFObjectWriter, code: []const u8) !void {
+    pub fn appendCode(self: *COFFObjectWriter, code: []const u8) !void {
         try self.text_section.appendSlice(self.allocator, code);
     }
     
-    /// Compatibility wrapper for appendCode (used by CodeBuffer)
-    pub fn appendCode(self: *COFFObjectWriter, code: []const u8) !void {
-        try self.addCode(code);
-    }
-    
-    /// Add initialized data to .data section
-    pub fn addData(self: *COFFObjectWriter, data: []const u8) !void {
-        try self.data_section.appendSlice(self.allocator, data);
-    }
-    
-    /// Compatibility wrapper for appendData (used by CodeBuffer)
     pub fn appendData(self: *COFFObjectWriter, data: []const u8) !u64 {
         const offset = self.data_section.items.len;
-        try self.addData(data);
+        try self.data_section.appendSlice(self.allocator, data);
         return @intCast(offset);
     }
     

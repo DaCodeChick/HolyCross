@@ -28,7 +28,7 @@ pub const CodeBuffer = union(enum) {
             .elf => |writer| try writer.appendCode(bytes),
             .object => |writer| try writer.appendCode(bytes),
             .coff_object => |writer| try writer.appendCode(bytes),
-            .macho_object => |writer| try writer.addCode(bytes),
+            .macho_object => |writer| try writer.appendCode(bytes),
             .pe => |writer| try writer.appendCode(bytes),
         }
     }
@@ -45,11 +45,7 @@ pub const CodeBuffer = union(enum) {
             .elf => |writer| try writer.appendData(bytes),
             .object => |writer| try writer.appendData(bytes),
             .coff_object => |writer| try writer.appendData(bytes),
-            .macho_object => |writer| {
-                const offset = @as(u64, @intCast(writer.data_section.items.len));
-                try writer.addData(bytes);
-                return offset;
-            },
+            .macho_object => |writer| try writer.appendData(bytes),
             .pe => |writer| try writer.appendData(bytes),
         };
     }

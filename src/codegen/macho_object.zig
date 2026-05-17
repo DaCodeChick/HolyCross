@@ -83,13 +83,14 @@ pub const MachoObjectWriter = struct {
     }
 
     /// Add code to the __text section
-    pub fn addCode(self: *MachoObjectWriter, code: []const u8) !void {
+    pub fn appendCode(self: *MachoObjectWriter, code: []const u8) !void {
         try self.text_code.appendSlice(self.allocator, code);
     }
 
-    /// Add data to the __data section
-    pub fn addData(self: *MachoObjectWriter, data: []const u8) !void {
+    pub fn appendData(self: *MachoObjectWriter, data: []const u8) !u64 {
+        const offset = @as(u64, @intCast(self.data_section.items.len));
         try self.data_section.appendSlice(self.allocator, data);
+        return offset;
     }
 
     /// Reserve space in __bss section
