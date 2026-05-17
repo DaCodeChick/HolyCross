@@ -75,26 +75,23 @@ Examples:
 ## Known Issues / TODOs
 
 ### High Priority
-- **Hardcoded DLL mapping (PE executables only)**: Library hints are hardcoded in `genCall()` (lines 1135-1140 of x64_machine_code.zig)
-  - Only applies when compiling **directly to .exe** (not to .obj)
-  - Only `puts`, `printf`, `exit` map to `msvcrt.dll`
-  - Other functions default to `msvcrt.dll` fallback (line 1751)
-  - **Object files (.obj) work fine**: Linker resolves DLL imports
-  - **Solution needed for .exe**: Import directive parser or library configuration file
-- **No stub generation**: `StubGenerator` trait defined but not implemented
-  - PLT/GOT stubs for Linux `.so` not generated
-  - IAT jump stubs for Windows `.dll` not generated
-  - Call sites still use direct placeholders
-- **Windows executables don't run**: PE import table populated but IAT thunks not patched
-  - `objdump -x` shows correct imports
-  - Call sites have placeholder offsets (0x00000000)
-  - **Blocker for**: Windows runtime testing
+- **Windows PE executable testing**: PE executables generate correctly but need Wine/Windows testing
+  - IAT stubs generated correctly (verified via objdump disassembly)
+  - Call sites patched to call stubs
+  - Import table structure correct
+  - **Next step**: Test with Wine or actual Windows machine
 
 ### Medium Priority
+- **Hardcoded DLL mapping (PE executables only)**: Library hints hardcoded for direct `.exe` compilation
+  - Only applies when compiling **directly to .exe** (not to .obj)
+  - Only `puts`, `printf`, `exit` map to `msvcrt.dll`
+  - Other functions default to `msvcrt.dll` fallback
+  - **Object files (.obj) work fine**: Linker resolves DLL imports
+  - **Solution options**: Import directive parser or library configuration file
 - **Test suite failures**: Unrelated to external symbols (missing `is_variadic` fields in old test data)
 - **No shared library output**: Can't generate `.so` or `.dll` files yet
 - **Limited relocation types**: Only R_X86_64_PLT32 (ELF) and REL32 (COFF) supported
-- **Single DLL per symbol**: PE executables assume one DLL per symbol (can't mix kernel32.dll + msvcrt.dll cleanly)
+- **PLT/GOT generation**: Not yet implemented for Linux shared libraries
 
 ### Low Priority / Future Work
 - **No Windows MinGW testing**: `x64-windows-gnu` target untested
@@ -109,6 +106,13 @@ zig build                          # Build compiler
 ```
 
 ## Recent Changes
+- **2026-05-17**: Implemented IAT stub generation for Windows PE executables
+  - Added `generateIATStubs()` to create RIP-relative jump stubs
+  - Added `patchPEImports()` to patch call sites to stubs
+  - Each stub is 6 bytes: `FF 25 [offset]` (jmp qword ptr [rip+offset])
+  - Verified correct disassembly: calls → stubs → IAT entries
+  - Windows PE executables now have complete import mechanism
+
 - **2026-05-17**: Integrated unified external symbol table
   - Created `src/codegen/external_symbols.zig` for cross-platform symbol tracking
   - Refactored `x64_machine_code.zig` to use `ExternalSymbolTable` instead of `CallSite` list
