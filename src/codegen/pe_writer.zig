@@ -69,6 +69,27 @@ pub const PEWriter = struct {
         try self.code.appendSlice(self.allocator, code);
     }
     
+    /// Compatibility wrapper for appendCode (used by CodeBuffer)
+    pub fn appendCode(self: *PEWriter, code: []const u8) !void {
+        try self.addCode(code);
+    }
+    
+    /// Compatibility wrapper for appendData (used by CodeBuffer)
+    pub fn appendData(self: *PEWriter, bytes: []const u8) !u64 {
+        const offset = self.data.items.len;
+        try self.addData(bytes);
+        return @intCast(offset);
+    }
+    
+    /// Get data virtual address for a given offset
+    pub fn getDataVAddr(self: *PEWriter, data_offset: u64) u64 {
+        // RVA of .data section = code_base + aligned code size + aligned rdata size
+        const code_aligned = self.alignUp(self.code.items.len, 0x1000);
+        const rdata_aligned = self.alignUp(self.rdata.items.len, 0x1000);
+        const data_rva = self.code_base + code_aligned + rdata_aligned;
+        return self.image_base + data_rva + data_offset;
+    }
+    
     /// Add read-only data (string literals, constants)
     pub fn addReadOnlyData(self: *PEWriter, data: []const u8) !void {
         try self.rdata.appendSlice(self.allocator, data);
@@ -176,17 +197,17 @@ pub const PEWriter = struct {
         
         // Write section data
         try writer.writeAll(self.code.items);
-        try self.writePadding(writer, code_size - self.code.items.len);
+        try self.writePadding(writer, @as(u32, @intCast(code_size - self.code.items.len)));
         
         try writer.writeAll(self.rdata.items);
-        try self.writePadding(writer, rdata_size - self.rdata.items.len);
+        try self.writePadding(writer, @as(u32, @intCast(rdata_size - self.rdata.items.len)));
         
         try writer.writeAll(self.data.items);
-        try self.writePadding(writer, data_size - self.data.items.len);
+        try self.writePadding(writer, @as(u32, @intCast(data_size - self.data.items.len)));
         
         // Write import directory
         try self.writeImportDirectory(writer, idata_rva);
-        try self.writePadding(writer, idata_size - import_size);
+        try self.writePadding(writer, @as(u32, @intCast(idata_size - import_size)));
     }
     
     fn writeDOSHeader(self: *PEWriter, writer: *std.Io.Writer) !void {
@@ -236,7 +257,7 @@ pub const PEWriter = struct {
         _ = self;
         try writer.writeInt(u16, 0x8664, .little);  // Machine: AMD64
         try writer.writeInt(u16, section_count, .little);
-        try writer.writeInt(u32, @intCast(std.time.timestamp()), .little); // Timestamp
+        try writer.writeInt(u32, 0, .little); // Timestamp (0 for deterministic builds)
         try writer.writeInt(u32, 0, .little);       // PointerToSymbolTable (deprecated)
         try writer.writeInt(u32, 0, .little);       // NumberOfSymbols (deprecated)
         try writer.writeInt(u16, 240, .little);     // SizeOfOptionalHeader (PE32+)
@@ -328,7 +349,8 @@ pub const PEWriter = struct {
         var offset = descriptors_size;
         
         // Build Import Lookup Table (ILT) and Import Address Table (IAT)
-        var dll_data: std.ArrayList(DLLImportData) = std.ArrayList(DLLImportData).init(self.allocator);
+        const empty_dll_data = try self.allocator.alloc(DLLImportData, 0);
+        var dll_data: std.ArrayList(DLLImportData) = std.ArrayList(DLLImportData).fromOwnedSlice(empty_dll_data);
         defer {
             for (dll_data.items) |*data| {
                 data.ilt.deinit(self.allocator);

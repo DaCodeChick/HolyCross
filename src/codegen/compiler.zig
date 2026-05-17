@@ -6,27 +6,39 @@ const x64 = @import("x64.zig");
 const ast = @import("../parser/ast.zig");
 const type_checker_module = @import("../semantic/type_checker.zig");
 const type_layout_module = @import("../semantic/type_layout.zig");
-const target_module = @import("target.zig");
+const old_target = @import("target.zig");  // Old target system (to be phased out)
+const Target = @import("../target.zig").Target;
+const CallingConvention = @import("../target.zig").CallingConvention;
 const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
 const elf_object = @import("elf_object.zig");
+const coff_object = @import("coff_object.zig");
+const pe_writer = @import("pe_writer.zig");
 const x64_machine_code = @import("x64_machine_code.zig");
 
 const TypeChecker = type_checker_module.TypeChecker;
 const TypeLayout = type_layout_module.TypeLayout;
-const Target = target_module.Target;
-const TargetConfig = target_module.TargetConfig;
 
 /// Compiler - orchestrates the compilation pipeline
 pub const Compiler = struct {
     allocator: Allocator,
-    target_config: TargetConfig,
+    target: Target,
 
-    pub fn init(allocator: Allocator, target_config: TargetConfig) Compiler {
+    pub fn init(allocator: Allocator, target: Target) Compiler {
         return .{
             .allocator = allocator,
-            .target_config = target_config,
+            .target = target,
         };
+    }
+
+    /// Convert new Target to old TargetConfig (temporary compatibility shim)
+    fn legacyTargetConfig(self: *const Compiler) old_target.TargetConfig {
+        const legacy_target = switch (self.target.os) {
+            .linux => old_target.Target.native_x64_linux,
+            .templeos => old_target.Target.templeos,
+            .windows => old_target.Target.native_x64_linux,  // Treat as native for now
+        };
+        return old_target.TargetConfig.init(legacy_target);
     }
 
     /// Compile AST to x64 assembly string
@@ -37,7 +49,8 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
     ) ![]const u8 {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
+        const target_config = self.legacyTargetConfig();
+        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -64,13 +77,9 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
         io: std.Io,
     ) !void {
-        // Only support native x64 Linux for now
-        if (self.target_config.target != .native_x64_linux) {
-            return error.ObjectFileNotSupportedForTarget;
-        }
-
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
+        const target_config = self.legacyTargetConfig();
+        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -78,25 +87,53 @@ pub const Compiler = struct {
         var mod = module;
         defer mod.deinit();
 
-        // Initialize object file writer
-        var obj = try elf_object.ELFObjectWriter.init(self.allocator);
-        defer obj.deinit();
+        // Route to appropriate object file writer based on target
+        const obj_format = self.target.objectFormat();
+        const calling_conv = self.target.callingConvention();
+        
+        switch (obj_format) {
+            .elf => {
+                // Initialize ELF object file writer
+                var obj = try elf_object.ELFObjectWriter.init(self.allocator);
+                defer obj.deinit();
 
-        // Initialize machine code generator targeting object file
-        // TODO: Get calling convention from target triple
-        const CallingConvention = @import("../target.zig").CallingConvention;
-        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
-            self.allocator,
-            .{ .object = &obj },
-            CallingConvention.sysv  // Default to System V for now
-        );
-        defer machine_gen.deinit();
+                // Initialize machine code generator targeting object file
+                var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+                    self.allocator,
+                    .{ .object = &obj },
+                    calling_conv
+                );
+                defer machine_gen.deinit();
 
-        // Generate machine code from IR
-        try machine_gen.generateFromIR(&mod);
+                // Generate machine code from IR
+                try machine_gen.generateFromIR(&mod);
 
-        // Write object file
-        try obj.writeToFile(io, output_path);
+                // Write object file
+                try obj.writeToFile(io, output_path);
+            },
+            .coff => {
+                // Initialize COFF object file writer (Windows .obj)
+                var obj = try coff_object.COFFObjectWriter.init(self.allocator);
+                defer obj.deinit();
+
+                // Initialize machine code generator targeting object file
+                var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+                    self.allocator,
+                    .{ .coff_object = &obj },
+                    calling_conv
+                );
+                defer machine_gen.deinit();
+
+                // Generate machine code from IR
+                try machine_gen.generateFromIR(&mod);
+
+                // Write COFF object file
+                try obj.writeToFile(io, output_path);
+            },
+            .bin => {
+                return error.ObjectFileNotSupportedForTarget;  // TempleOS doesn't use object files
+            },
+        }
     }
 
     /// Compile AST to executable file
@@ -108,14 +145,17 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
         io: std.Io,
     ) !void {
-        switch (self.target_config.target) {
-            .native_x64_linux => try self.compileToNativeExecutable(program, output_path, type_checker, type_layouts, io),
-            .templeos, .zealos => try self.compileToTempleOSBin(program, output_path, type_checker, type_layouts, io),
+        const exec_format = self.target.executableFormat();
+        
+        switch (exec_format) {
+            .elf => try self.compileToELFExecutable(program, output_path, type_checker, type_layouts, io),
+            .pe => try self.compileToPEExecutable(program, output_path, type_checker, type_layouts, io),
+            .bin => try self.compileToTempleOSBin(program, output_path, type_checker, type_layouts, io),
         }
     }
 
-    /// Compile to native Linux x64 executable using machine code generator
-    fn compileToNativeExecutable(
+    /// Compile to ELF executable (Linux)
+    fn compileToELFExecutable(
         self: *Compiler,
         program: *const ast.Program,
         output_path: []const u8,
@@ -124,7 +164,8 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
+        const target_config = self.legacyTargetConfig();
+        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -136,12 +177,12 @@ pub const Compiler = struct {
         var elf = try elf_writer.ELFWriter.init(self.allocator);
         defer elf.deinit();
 
-        // Initialize machine code generator
-        const CallingConvention = @import("../target.zig").CallingConvention;
+        // Initialize machine code generator with correct calling convention
+        const calling_conv = self.target.callingConvention();
         var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
             self.allocator,
             .{ .elf = &elf },
-            CallingConvention.sysv  // Default to System V for now
+            calling_conv
         );
         defer machine_gen.deinit();
 
@@ -182,7 +223,8 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        var builder = try ir_builder.IRBuilder.init(self.allocator, self.target_config, type_checker, type_layouts);
+        const target_config = self.legacyTargetConfig();
+        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -194,12 +236,12 @@ pub const Compiler = struct {
         var bin_writer = try templeos_bin.TempleOSBinWriter.init(self.allocator);
         defer bin_writer.deinit();
 
-        // Initialize machine code generator
-        const CallingConvention = @import("../target.zig").CallingConvention;
+        // Initialize machine code generator with correct calling convention
+        const calling_conv = self.target.callingConvention();
         var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
             self.allocator,
             .{ .templeos = &bin_writer },
-            CallingConvention.sysv  // TempleOS uses System V-like convention
+            calling_conv
         );
         defer machine_gen.deinit();
 
@@ -207,6 +249,45 @@ pub const Compiler = struct {
 
         // Write .BIN file
         try bin_writer.writeToBinFile(io, output_path);
+    }
+
+    /// Compile to PE executable (Windows)
+    fn compileToPEExecutable(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
+    ) !void {
+        // Build IR from AST
+        const target_config = self.legacyTargetConfig();
+        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        defer builder.deinit();
+
+        try builder.buildFromAST(program);
+        const module = try builder.finish();
+        var mod = module;
+        defer mod.deinit();
+
+        // Initialize PE writer
+        var pe = try pe_writer.PEWriter.init(self.allocator);
+        defer pe.deinit();
+
+        // Initialize machine code generator with Win64 calling convention
+        const calling_conv = self.target.callingConvention();
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .pe = &pe },
+            calling_conv
+        );
+        defer machine_gen.deinit();
+
+        // Generate machine code from IR
+        try machine_gen.generateFromIR(&mod);
+
+        // Write PE executable
+        try pe.writeToFile(io, output_path);
     }
 
     pub fn deinit(self: *Compiler) void {

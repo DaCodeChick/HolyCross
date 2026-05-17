@@ -4,21 +4,27 @@ const ir = @import("ir.zig");
 const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
 const elf_object = @import("elf_object.zig");
+const coff_object = @import("coff_object.zig");
+const pe_writer = @import("pe_writer.zig");
 const X64Assembler = @import("../assembler/x64.zig").X64Assembler;
 const Target = @import("../target.zig").Target;
 const CallingConvention = @import("../target.zig").CallingConvention;
 
-/// Generic code buffer interface - works with ELF, object files, and TempleOS writers
+/// Generic code buffer interface - works with ELF, COFF, PE, object files, and TempleOS writers
 pub const CodeBuffer = union(enum) {
     templeos: *templeos_bin.TempleOSBinWriter,
     elf: *elf_writer.ELFWriter,
     object: *elf_object.ELFObjectWriter,
+    coff_object: *coff_object.COFFObjectWriter,
+    pe: *pe_writer.PEWriter,
     
     pub fn appendCode(self: CodeBuffer, bytes: []const u8) !void {
         switch (self) {
             .templeos => |writer| try writer.appendCode(bytes),
             .elf => |writer| try writer.appendCode(bytes),
             .object => |writer| try writer.appendCode(bytes),
+            .coff_object => |writer| try writer.appendCode(bytes),
+            .pe => |writer| try writer.appendCode(bytes),
         }
     }
     
@@ -33,6 +39,8 @@ pub const CodeBuffer = union(enum) {
             },
             .elf => |writer| try writer.appendData(bytes),
             .object => |writer| try writer.appendData(bytes),
+            .coff_object => |writer| try writer.appendData(bytes),
+            .pe => |writer| try writer.appendData(bytes),
         };
     }
     
@@ -44,11 +52,12 @@ pub const CodeBuffer = union(enum) {
                 return data_offset;
             },
             .elf => |writer| writer.getDataVAddr(data_offset),
-            .object => {
+            .object, .coff_object => {
                 // For object files, return the data offset directly
                 // It will be resolved by the linker
                 return data_offset;
             },
+            .pe => |writer| writer.getDataVAddr(data_offset),
         };
     }
     
@@ -57,6 +66,8 @@ pub const CodeBuffer = union(enum) {
             .templeos => |writer| writer.getCurrentOffset(),
             .elf => |writer| writer.getCurrentOffset(),
             .object => |writer| @intCast(writer.code.items.len),
+            .coff_object => |writer| @intCast(writer.text_section.items.len),
+            .pe => |writer| @intCast(writer.code.items.len),
         };
     }
     
@@ -64,7 +75,8 @@ pub const CodeBuffer = union(enum) {
         switch (self) {
             .templeos => |writer| try writer.setEntryPoint(offset),
             .elf => |writer| try writer.setEntryPoint(offset),
-            .object => {
+            .pe => |writer| writer.setEntryPoint(offset),
+            .object, .coff_object => {
                 // Object files don't have entry points
                 // Entry is determined by the linker
             },
@@ -76,6 +88,8 @@ pub const CodeBuffer = union(enum) {
             .templeos => |writer| writer.code.items,
             .elf => |writer| writer.code.items,
             .object => |writer| writer.code.items,
+            .coff_object => |writer| writer.text_section.items,
+            .pe => |writer| writer.code.items,
         };
     }
     
@@ -84,6 +98,8 @@ pub const CodeBuffer = union(enum) {
             .templeos => |writer| writer.code.items[offset] = value,
             .elf => |writer| writer.code.items[offset] = value,
             .object => |writer| writer.code.items[offset] = value,
+            .coff_object => |writer| writer.text_section.items[offset] = value,
+            .pe => |writer| writer.code.items[offset] = value,
         }
     }
 };
@@ -1692,6 +1708,43 @@ pub const X64MachineCodeGen = struct {
                             .R_X86_64_PLT32,
                             -4,
                         );
+                    },
+                    .coff_object => |obj| {
+                        // For COFF object files, add extern symbol and relocation
+                        // Find or add the extern symbol
+                        var symbol_idx: ?u32 = null;
+                        for (obj.symbols.items, 0..) |sym, idx| {
+                            if (std.mem.eql(u8, sym.name, site.target)) {
+                                symbol_idx = @intCast(idx);
+                                break;
+                            }
+                        }
+                        
+                        if (symbol_idx == null) {
+                            // Add undefined extern symbol (section_number = 0 means undefined/external)
+                            symbol_idx = try obj.addSymbol(.{
+                                .name = site.target,
+                                .value = 0,
+                                .section_number = 0,  // 0 = external/undefined
+                                .type = 0x20,         // Function
+                                .storage_class = 2,   // External
+                                .aux_count = 0,
+                            });
+                        }
+                        
+                        // Add REL32 relocation for call instruction
+                        try obj.addRelocation(.{
+                            .virtual_address = site.offset,
+                            .symbol_index = symbol_idx.?,
+                            .type = .REL32,
+                        });
+                    },
+                    .pe => |pe| {
+                        // For PE executable, add import entry
+                        // For now, assume all external functions come from standard runtime
+                        // TODO: parse import directives or use smart linking
+                        try pe.addImport("msvcrt.dll", &[_][]const u8{site.target});
+                        // The actual IAT thunk will be resolved when writing the PE
                     },
                     .templeos => {
                         // TempleOS format would use IET_REL_I32 patch table entry

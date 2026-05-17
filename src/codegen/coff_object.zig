@@ -91,9 +91,21 @@ pub const COFFObjectWriter = struct {
         try self.text_section.appendSlice(self.allocator, code);
     }
     
+    /// Compatibility wrapper for appendCode (used by CodeBuffer)
+    pub fn appendCode(self: *COFFObjectWriter, code: []const u8) !void {
+        try self.addCode(code);
+    }
+    
     /// Add initialized data to .data section
     pub fn addData(self: *COFFObjectWriter, data: []const u8) !void {
         try self.data_section.appendSlice(self.allocator, data);
+    }
+    
+    /// Compatibility wrapper for appendData (used by CodeBuffer)
+    pub fn appendData(self: *COFFObjectWriter, data: []const u8) !u64 {
+        const offset = self.data_section.items.len;
+        try self.addData(data);
+        return @intCast(offset);
     }
     
     /// Add read-only data to .rdata section (string literals, constants)
@@ -256,7 +268,8 @@ pub const COFFObjectWriter = struct {
         _ = self;
         try writer.writeInt(u16, 0x8664, .little);  // Machine: AMD64
         try writer.writeInt(u16, section_count, .little);
-        try writer.writeInt(u32, @intCast(std.time.timestamp()), .little);  // Timestamp
+        // For now, just use 0 for timestamp (deterministic builds)
+        try writer.writeInt(u32, 0, .little);  // Timestamp
         try writer.writeInt(u32, symbol_table_offset, .little);
         try writer.writeInt(u32, symbol_count, .little);
         try writer.writeInt(u16, 0, .little);  // Size of optional header (0 for objects)
