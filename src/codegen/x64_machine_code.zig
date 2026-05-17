@@ -1132,12 +1132,7 @@ pub const X64MachineCodeGen = struct {
 
         // Track this call site for later patching via external symbol table
         // Determine the library hint based on the function name
-        const library_hint: ?[]const u8 = if (std.mem.eql(u8, func_name, "puts") or 
-                                              std.mem.eql(u8, func_name, "printf") or
-                                              std.mem.eql(u8, func_name, "exit"))
-            "msvcrt.dll"
-        else
-            null;
+        const library_hint = self.getDLLHint(func_name);
         
         try self.external_symbols.addReference(func_name, call_site, library_hint);
 
@@ -1847,6 +1842,87 @@ pub const X64MachineCodeGen = struct {
             },
             else => return error.NotAnObjectFile,
         }
+    }
+    
+    /// Get DLL hint for Windows PE executables based on function name
+    /// Returns null for Linux targets or unknown functions
+    fn getDLLHint(self: *X64MachineCodeGen, func_name: []const u8) ?[]const u8 {
+        _ = self;
+        
+        // MSVCRT.DLL - C Runtime Library functions
+        const msvcrt_funcs = &[_][]const u8{
+            // Standard I/O
+            "printf", "fprintf", "sprintf", "snprintf",
+            "scanf", "fscanf", "sscanf",
+            "puts", "fputs", "gets", "fgets",
+            "putchar", "getchar", "fputc", "fgetc",
+            "fopen", "fclose", "fread", "fwrite", "fseek", "ftell",
+            "perror", "clearerr", "feof", "ferror",
+            
+            // Memory management
+            "malloc", "calloc", "realloc", "free",
+            
+            // String functions
+            "strlen", "strcpy", "strncpy", "strcat", "strncat",
+            "strcmp", "strncmp", "strchr", "strrchr", "strstr",
+            "memcpy", "memmove", "memset", "memcmp",
+            
+            // Process control
+            "exit", "abort", "atexit",
+            "system", "getenv",
+            
+            // Math (some basic ones)
+            "abs", "labs", "div", "ldiv",
+        };
+        
+        // KERNEL32.DLL - Windows API functions
+        const kernel32_funcs = &[_][]const u8{
+            // Process/Thread
+            "ExitProcess", "GetCurrentProcess", "GetCurrentProcessId",
+            "CreateProcessA", "CreateProcessW", "TerminateProcess",
+            "CreateThread", "ExitThread", "GetCurrentThread",
+            "Sleep", "SleepEx",
+            
+            // Console I/O
+            "GetStdHandle", "SetStdHandle",
+            "WriteConsoleA", "WriteConsoleW", "ReadConsoleA", "ReadConsoleW",
+            "WriteFile", "ReadFile",
+            
+            // Memory
+            "VirtualAlloc", "VirtualFree", "VirtualProtect",
+            "HeapCreate", "HeapDestroy", "HeapAlloc", "HeapFree",
+            "GetProcessHeap",
+            
+            // File operations
+            "CreateFileA", "CreateFileW", "DeleteFileA", "DeleteFileW",
+            "FindFirstFileA", "FindFirstFileW", "FindNextFileA", "FindNextFileW",
+            "GetFileSize", "SetFilePointer", "CloseHandle",
+            
+            // DLL loading
+            "LoadLibraryA", "LoadLibraryW", "LoadLibraryExA", "LoadLibraryExW",
+            "GetProcAddress", "FreeLibrary",
+            
+            // Synchronization
+            "CreateMutexA", "CreateMutexW", "ReleaseMutex",
+            "CreateEventA", "CreateEventW", "SetEvent", "ResetEvent", "WaitForSingleObject",
+        };
+        
+        // Check MSVCRT functions
+        for (msvcrt_funcs) |msvcrt_func| {
+            if (std.mem.eql(u8, func_name, msvcrt_func)) {
+                return "msvcrt.dll";
+            }
+        }
+        
+        // Check KERNEL32 functions
+        for (kernel32_funcs) |kernel32_func| {
+            if (std.mem.eql(u8, func_name, kernel32_func)) {
+                return "kernel32.dll";
+            }
+        }
+        
+        // Default to msvcrt.dll for unknown functions (most C functions are there)
+        return "msvcrt.dll";
     }
 
     fn getTempOffset(self: *X64MachineCodeGen, operand: ir.Operand) !i32 {
