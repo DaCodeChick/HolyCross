@@ -313,21 +313,180 @@ pub const PEWriter = struct {
     }
     
     fn writeImportDirectory(self: *PEWriter, writer: *std.Io.Writer, base_rva: u32) !void {
-        // TODO: Implement full import directory structure
-        // For now, write minimal import table for testing
-        _ = self;
-        _ = base_rva;
+        if (self.imports.items.len == 0) {
+            // No imports - just write null descriptor
+            try writer.writeInt(u64, 0, .little);
+            try writer.writeInt(u64, 0, .little);
+            try writer.writeInt(u32, 0, .little);
+            return;
+        }
         
-        // Null import descriptor to terminate table
+        // Calculate offsets within .idata section
+        const descriptor_size = 20; // IMAGE_IMPORT_DESCRIPTOR size
+        const descriptors_size = (@as(u32, @intCast(self.imports.items.len)) + 1) * descriptor_size; // +1 for null terminator
+        
+        var offset = descriptors_size;
+        
+        // Build Import Lookup Table (ILT) and Import Address Table (IAT)
+        var dll_data: std.ArrayList(DLLImportData) = std.ArrayList(DLLImportData).init(self.allocator);
+        defer {
+            for (dll_data.items) |*data| {
+                data.ilt.deinit(self.allocator);
+                data.iat.deinit(self.allocator);
+            }
+            dll_data.deinit(self.allocator);
+        }
+        
+        for (self.imports.items) |dll| {
+            const empty_ilt = try self.allocator.alloc(u64, 0);
+            const empty_iat = try self.allocator.alloc(u64, 0);
+            
+            var ilt = std.ArrayList(u64).fromOwnedSlice(empty_ilt);
+            var iat = std.ArrayList(u64).fromOwnedSlice(empty_iat);
+            
+            const name_table_offset = offset;
+            var names_size: u32 = 0;
+            
+            for (dll.functions.items) |func| {
+                // Each name entry: 2 bytes hint + name + null terminator
+                const entry_size = 2 + @as(u32, @intCast(func.name.len)) + 1;
+                const name_rva = base_rva + name_table_offset + names_size;
+                
+                try ilt.append(self.allocator, name_rva);
+                try iat.append(self.allocator, name_rva);
+                
+                names_size += entry_size;
+            }
+            
+            // Null terminator for ILT/IAT
+            try ilt.append(self.allocator, 0);
+            try iat.append(self.allocator, 0);
+            
+            // Align names size
+            names_size = self.alignUp(names_size, 2);
+            
+            const ilt_offset = offset;
+            const ilt_size = @as(u32, @intCast(ilt.items.len)) * 8; // 8 bytes per entry (PE32+)
+            offset += ilt_size;
+            
+            const iat_offset = offset;
+            const iat_size = @as(u32, @intCast(iat.items.len)) * 8;
+            offset += iat_size;
+            
+            const dll_name_offset = offset;
+            offset += @as(u32, @intCast(dll.name.len)) + 1;
+            offset = self.alignUp(offset, 2);
+            
+            offset += names_size;
+            
+            try dll_data.append(self.allocator, .{
+                .ilt = ilt,
+                .iat = iat,
+                .ilt_rva = base_rva + ilt_offset,
+                .iat_rva = base_rva + iat_offset,
+                .name_rva = base_rva + dll_name_offset,
+                .names_offset = name_table_offset,
+            });
+        }
+        
+        // Write import descriptors
+        for (dll_data.items, 0..) |data, idx| {
+            try writer.writeInt(u32, data.ilt_rva, .little); // OriginalFirstThunk (ILT)
+            try writer.writeInt(u32, 0, .little);             // TimeDateStamp
+            try writer.writeInt(u32, 0, .little);             // ForwarderChain
+            try writer.writeInt(u32, data.name_rva, .little); // Name
+            try writer.writeInt(u32, data.iat_rva, .little);  // FirstThunk (IAT)
+            
+            _ = idx;
+        }
+        
+        // Null descriptor
         try writer.writeInt(u64, 0, .little);
         try writer.writeInt(u64, 0, .little);
         try writer.writeInt(u32, 0, .little);
+        
+        // Write ILTs, IATs, DLL names, and function names
+        for (dll_data.items, 0..) |data, dll_idx| {
+            // Write ILT
+            for (data.ilt.items) |entry| {
+                try writer.writeInt(u64, entry, .little);
+            }
+            
+            // Write IAT
+            for (data.iat.items) |entry| {
+                try writer.writeInt(u64, entry, .little);
+            }
+            
+            // Write DLL name
+            const dll = self.imports.items[dll_idx];
+            try writer.writeAll(dll.name);
+            try writer.writeInt(u8, 0, .little); // Null terminator
+            
+            // Align to 2 bytes
+            const dll_name_size = dll.name.len + 1;
+            const dll_padding = self.alignUp(dll_name_size, 2) - @as(u32, @intCast(dll_name_size));
+            var p: u32 = 0;
+            while (p < dll_padding) : (p += 1) {
+                try writer.writeInt(u8, 0, .little);
+            }
+            
+            // Write function names (hint + name)
+            for (dll.functions.items) |func| {
+                try writer.writeInt(u16, func.hint, .little);
+                try writer.writeAll(func.name);
+                try writer.writeInt(u8, 0, .little); // Null terminator
+            }
+            
+            // Align names section
+            const funcs_size: u32 = blk: {
+                var size: u32 = 0;
+                for (dll.functions.items) |func| {
+                    size += 2 + @as(u32, @intCast(func.name.len)) + 1;
+                }
+                break :blk size;
+            };
+            const names_padding = self.alignUp(funcs_size, 2) - funcs_size;
+            p = 0;
+            while (p < names_padding) : (p += 1) {
+                try writer.writeInt(u8, 0, .little);
+            }
+        }
     }
     
+    const DLLImportData = struct {
+        ilt: std.ArrayList(u64),
+        iat: std.ArrayList(u64),
+        ilt_rva: u32,
+        iat_rva: u32,
+        name_rva: u32,
+        names_offset: u32,
+    };
+    
     fn calculateImportSize(self: *PEWriter) u32 {
-        // Rough calculation - will be refined when implementing full import tables
-        _ = self;
-        return 256; // Placeholder
+        if (self.imports.items.len == 0) {
+            return 20; // Just null descriptor
+        }
+        
+        const descriptor_size: u32 = 20;
+        var size = (@as(u32, @intCast(self.imports.items.len)) + 1) * descriptor_size;
+        
+        for (self.imports.items) |dll| {
+            // ILT and IAT: (num_functions + 1 null) * 8 bytes each
+            const num_entries = (@as(u32, @intCast(dll.functions.items.len)) + 1) * 8;
+            size += num_entries * 2; // ILT + IAT
+            
+            // DLL name
+            size += @as(u32, @intCast(dll.name.len)) + 1;
+            size = self.alignUp(size, 2);
+            
+            // Function names (hint + name + null)
+            for (dll.functions.items) |func| {
+                size += 2 + @as(u32, @intCast(func.name.len)) + 1;
+            }
+            size = self.alignUp(size, 2);
+        }
+        
+        return size;
     }
     
     fn calculateHeadersSize(self: *PEWriter) u32 {
