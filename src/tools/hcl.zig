@@ -1,11 +1,15 @@
 const std = @import("std");
 const lib = @import("holycross");
 const Linker = lib.linker.Linker;
+const GlobalAllocator = lib.allocator;
 
 /// hcl - HolyC Linker
 /// Standalone linker for HolyC object files
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
+    
+    const allocator = GlobalAllocator.allocator(&gpa);
     
     // Create arena for args allocation
     var arena = std.heap.ArenaAllocator.init(allocator);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const GlobalAllocator = @import("allocator.zig");
 const preprocessor = @import("preprocessor/preprocessor.zig");
 const lexer = @import("lexer/lexer.zig");
 const parser = @import("parser/parser.zig");
@@ -13,8 +14,11 @@ const Target = target_module.Target;
 const TargetConfig = target_module.TargetConfig;
 
 pub fn main(init: std.process.Init) !void {
-    // Get allocator - use the one provided by init
-    const allocator = init.gpa;
+    // Use DebugAllocator in debug builds, ArenaAllocator in release builds
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
+    
+    const allocator = GlobalAllocator.allocator(&gpa);
     
     // Create arena for args allocation
     var arena = std.heap.ArenaAllocator.init(allocator);

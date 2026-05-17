@@ -3,11 +3,15 @@ const lib = @import("holycross");
 const X64Assembler = lib.assembler.X64Assembler;
 const Preprocessor = lib.preprocessor.Preprocessor;
 const ELFObjectWriter = lib.elf_object.ELFObjectWriter;
+const GlobalAllocator = lib.allocator;
 
 /// hcas - HolyC Assembler
 /// Standalone assembler tool for HolyC/TempleOS-style x64 assembly
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
+    
+    const allocator = GlobalAllocator.allocator(&gpa);
     
     // Create arena for args allocation
     var arena = std.heap.ArenaAllocator.init(allocator);

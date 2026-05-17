@@ -1,6 +1,7 @@
 const std = @import("std");
 const lib = @import("holycross");
 const Preprocessor = lib.preprocessor.Preprocessor;
+const GlobalAllocator = lib.allocator;
 
 const Define = struct {
     name: []const u8,
@@ -10,7 +11,10 @@ const Define = struct {
 /// holypp - HolyC Preprocessor
 /// Standalone preprocessor tool for HolyC source files
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
+    
+    const allocator = GlobalAllocator.allocator(&gpa);
     
     // Create arena for args allocation
     var arena = std.heap.ArenaAllocator.init(allocator);

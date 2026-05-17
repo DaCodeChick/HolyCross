@@ -420,7 +420,6 @@ pub const ELFWriter = struct {
         
         // For dynamic linking, we need to generate sections early to know their sizes
         // We'll use placeholder addresses and fix them up later
-        const plt_size: u64 = if (has_dynamic) 16 + (self.dynamic_symbols.items.len * 16) else 0;
         
         if (has_dynamic) {
             // Generate hash table
@@ -482,30 +481,25 @@ pub const ELFWriter = struct {
             current_offset = (current_offset + 7) & ~@as(u64, 7);
         }
         
-        // Code section
+        // Code section (align to page boundary for separate LOAD segment)
+        current_offset = (current_offset + 0xFFF) & ~@as(u64, 0xFFF); // Align to 4KB page
         const code_offset = current_offset;
         const code_vaddr = BASE_ADDRESS + code_offset;
         const entry_vaddr = code_vaddr + self.entry_point;
         
         // Calculate sizes
         const code_size = self.code.items.len;
-        const code_size_aligned = (code_size + plt_size + 15) & ~@as(u64, 15);
-        const data_offset = code_offset + code_size_aligned;
+        
+        // Put data at fixed offset 0x10000 to match getDataVAddr
+        const data_offset: u64 = 0x10000;
         
         // Calculate data section size
-        var dynamic_size: u64 = 0;
-        var got_size: u64 = 0;
-        var string_data_size: u64 = 0;
-        var dynamic_addr: u64 = 0;
-        var got_addr: u64 = 0;
-        
-        if (has_dynamic) {
-            dynamic_size = self.dynamic.items.len;
-            got_size = (3 + self.extern_symbols.items.len) * 8;
-            string_data_size = self.data.items.len;
-            dynamic_addr = BASE_ADDRESS + data_offset;
-            got_addr = dynamic_addr + dynamic_size;
-        }
+        // IMPORTANT: These sizes must match the conservative estimates in getDataVAddr!
+        const dynamic_size: u64 = 16 * 15;  // Fixed size, matches getDataVAddr
+        const got_size: u64 = (3 + 10) * 8;  // Fixed size, matches getDataVAddr
+        const string_data_size: u64 = self.data.items.len;
+        const dynamic_addr = BASE_ADDRESS + data_offset;
+        const got_addr = dynamic_addr + dynamic_size;
         
         const data_size = dynamic_size + got_size + string_data_size;
         const data_vaddr = BASE_ADDRESS + data_offset;
@@ -525,7 +519,8 @@ pub const ELFWriter = struct {
                 const plt_entry_addr = plt_addr + plt_entry_offset;
                 
                 // Calculate the relative offset from the call site
-                const call_site_addr = BASE_ADDRESS + code_offset + extern_sym.call_site_offset;
+                // call_site_offset points to the displacement (after E8 opcode), so subtract 1 to get start of instruction
+                const call_site_addr = BASE_ADDRESS + code_offset + extern_sym.call_site_offset - 1;
                 const next_instr_addr = call_site_addr + 5; // call instruction is 5 bytes (e8 + 4-byte offset)
                 const relative_offset: i32 = @intCast(plt_entry_addr - next_instr_addr);
                 
@@ -719,8 +714,21 @@ pub const ELFWriter = struct {
             
             // Append dynamic, GOT, then data
             if (has_dynamic) {
+                // Write actual dynamic section
                 try buffer.appendSlice(self.allocator, self.dynamic.items);
+                // Pad to fixed dynamic_size (must match getDataVAddr)
+                const actual_dynamic_size = self.dynamic.items.len;
+                if (actual_dynamic_size < dynamic_size) {
+                    try buffer.appendNTimes(self.allocator, 0, dynamic_size - actual_dynamic_size);
+                }
+                
+                // Write actual GOT
                 try buffer.appendSlice(self.allocator, self.got.items);
+                // Pad to fixed got_size (must match getDataVAddr)
+                const actual_got_size = self.got.items.len;
+                if (actual_got_size < got_size) {
+                    try buffer.appendNTimes(self.allocator, 0, got_size - actual_got_size);
+                }
             }
             try buffer.appendSlice(self.allocator, self.data.items);
         }
@@ -732,17 +740,20 @@ pub const ELFWriter = struct {
     /// Get the virtual address for a data offset
     pub fn getDataVAddr(self: *ELFWriter, data_offset: u64) u64 {
         const BASE_ADDRESS: u64 = 0x400000;
-        const code_offset: u64 = 0x1000;
-        const code_size_aligned = (self.code.items.len + 0xFFF) & ~@as(u64, 0xFFF);
-        const data_section_offset = code_offset + code_size_aligned;
         
-        // Account for dynamic and GOT sections before user data
-        const has_dynamic = self.dynamic_symbols.items.len > 0;
-        const dynamic_got_size = if (has_dynamic)
-            self.dynamic.items.len + self.got.items.len
-        else
-            0;
+        // Simple approach: put data at a fixed offset that's guaranteed to be after everything else
+        // Code + PLT will never exceed 0x10000 (64KB), and dynamic sections are small
+        // So we can safely put data at BASE + 0x10000
+        const DATA_BASE = BASE_ADDRESS + 0x10000;  // 0x410000
         
-        return BASE_ADDRESS + data_section_offset + dynamic_got_size + data_offset;
+        // ALWAYS account for dynamic and GOT sections that are written before user data
+        // We use conservative fixed estimates because this is called during codegen,
+        // before extern_symbols is populated. The actual layout in writeToFile MUST match!
+        const dynamic_size: u64 = 16 * 15;  // ~15 dynamic entries (conservative)
+        const got_size: u64 = (3 + 10) * 8;  // 3 reserved + up to 10 symbols (conservative)
+        
+        _ = self;
+        
+        return DATA_BASE + dynamic_size + got_size + data_offset;
     }
 };

@@ -334,20 +334,72 @@ Located in `src/codegen/ir.zig`:
 
 ## Memory Management
 
-- **Primary allocator**: Passed from main (usually arena or GPA)
-- **Pattern**: Create allocator at top level, pass down
+- **Primary allocator**: `src/allocator.zig` - Centralized allocator with conditional compilation
+- **Pattern**: Import and initialize at program entry, pass allocator down
 - **Cleanup**: Defer `deinit()` at allocation site
 
+### Allocator Strategy (Conditional Compilation)
+
+The codebase uses a centralized allocator module (`src/allocator.zig`) with conditional compilation:
+
+**Debug builds:**
+- Uses `std.heap.DebugAllocator` (renamed from `GeneralPurposeAllocator` in Zig 0.16)
+- Detects memory leaks, double-free, use-after-free
+- Slower but catches memory errors early
+
+**Release builds:**
+- Uses `std.heap.ArenaAllocator` with `std.heap.page_allocator`
+- Fast bulk allocation and deallocation
+- No per-allocation overhead
+
+### Usage Pattern
+
 ```zig
+const std = @import("std");
+const GlobalAllocator = @import("allocator.zig"); // or lib.allocator for tools
+
 pub fn main(init: std.process.Init) !void {
-    const allocator = init.gpa;
+    // Initialize allocator (automatically selects debug/release strategy)
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
     
+    const allocator = GlobalAllocator.allocator(&gpa);
+    
+    // Use allocator normally
     var list: std.ArrayList(u8) = .empty;
     defer list.deinit(allocator);
     
     try list.append(allocator, 42);
 }
 ```
+
+**For tools (hcc, hcpp, hcas, hcl):**
+
+```zig
+const lib = @import("holycross");
+const GlobalAllocator = lib.allocator;
+
+pub fn main(init: std.process.Init) !void {
+    var gpa = GlobalAllocator.init();
+    defer GlobalAllocator.deinit(&gpa);
+    
+    const allocator = GlobalAllocator.allocator(&gpa);
+    // ... rest of code
+}
+```
+
+**Benefits:**
+- No need for scattered `std.debug.print` statements for debugging allocations
+- Memory leaks are automatically detected in debug builds
+- Consistent allocator strategy across entire codebase
+- Zero runtime overhead in release builds
+- Easy to test with different allocator strategies
+
+### IMPORTANT: DebugAllocator (Zig 0.16)
+
+In Zig 0.16, `GeneralPurposeAllocator` was renamed to **`DebugAllocator`**. The allocator module handles this automatically.
+
+**Legacy note:** If you see `GeneralPurposeAllocator` in old code, it should be replaced with the centralized `GlobalAllocator` pattern above.
 
 ## Building and Running
 
