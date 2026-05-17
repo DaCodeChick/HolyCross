@@ -1008,9 +1008,10 @@ pub const X64MachineCodeGen = struct {
         // Load arguments into registers based on calling convention
         if (instr.args) |args| {
             // Get argument registers for this calling convention
+            // Register numbers: RAX=0, RCX=1, RDX=2, RBX=3, RSP=4, RBP=5, RSI=6, RDI=7, R8=8, R9=9
             const arg_regs_modrm: []const u8 = switch (self.calling_convention) {
-                .sysv => &[_]u8{ 0x3F, 0x37, 0x3A, 0x39, 0x00, 0x01 },  // rdi=0x3F, rsi=0x37, rdx=0x3A, rcx=0x39, r8=0x00, r9=0x01
-                .win64 => &[_]u8{ 0x39, 0x3A, 0x00, 0x01 },             // rcx=0x39, rdx=0x3A, r8=0x00, r9=0x01
+                .sysv => &[_]u8{ 7, 6, 2, 1, 8, 9 },  // rdi, rsi, rdx, rcx, r8, r9
+                .win64 => &[_]u8{ 1, 2, 8, 9 },       // rcx, rdx, r8, r9
             };
             
             const max_reg_params = arg_regs_modrm.len;

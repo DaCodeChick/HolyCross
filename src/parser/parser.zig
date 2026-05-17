@@ -199,6 +199,16 @@ pub const Parser = struct {
     fn check(self: *Parser, token_type: TokenType) bool {
         return self.current.type == token_type;
     }
+    
+    /// Check if current token can be used as a parameter/variable name
+    /// Allows identifiers and context-sensitive keywords like 'reserved' and 'pad'
+    fn canBeParameterName(self: *Parser) bool {
+        return switch (self.current.type) {
+            .identifier => true,
+            .keyword_pad => true,  // 'reserved' and 'pad' are OK in parameter context
+            else => false,
+        };
+    }
 
     /// Consume current token if it matches, otherwise error
     fn consume(self: *Parser, token_type: TokenType, message: []const u8) ParserError!void {
@@ -207,6 +217,17 @@ pub const Parser = struct {
             return;
         }
 
+        self.reportErrorAtCurrent(message);
+        return error.ParseError;
+    }
+    
+    /// Consume a token that can be used as a name (identifier or context-sensitive keyword)
+    fn consumeName(self: *Parser, message: []const u8) ParserError!void {
+        if (self.canBeParameterName()) {
+            try self.advance();
+            return;
+        }
+        
         self.reportErrorAtCurrent(message);
         return error.ParseError;
     }
@@ -555,7 +576,7 @@ pub const Parser = struct {
             
             var param_type = try self.parseType();
 
-            if (!self.check(.identifier)) {
+            if (!self.canBeParameterName()) {
                 self.reportErrorAtCurrent("Expected parameter name");
                 return error.ParseError;
             }
@@ -1002,7 +1023,8 @@ pub const Parser = struct {
         }
 
         // Identifier (or macro substitution)
-        if (try self.match(.identifier)) {
+        // Also allow context-sensitive keywords (reserved, pad) as identifiers
+        if (try self.match(.identifier) or try self.match(.keyword_pad)) {
             const name = self.previous.lexeme;
             const loc = self.locationFromToken(self.previous);
 
@@ -1334,8 +1356,8 @@ pub const Parser = struct {
         while (true) {
             var var_type = base_type;
             
-            // Parse variable name
-            try self.consume(.identifier, "Expected variable name");
+            // Parse variable name (allow context-sensitive keywords like 'reserved')
+            try self.consumeName("Expected variable name");
             const var_name = self.previous.lexeme;
 
             // Check for array suffix: name[size]
