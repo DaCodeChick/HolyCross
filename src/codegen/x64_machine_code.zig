@@ -9,6 +9,8 @@ const pe_writer = @import("pe_writer.zig");
 const X64Assembler = @import("../assembler/x64.zig").X64Assembler;
 const Target = @import("../target.zig").Target;
 const CallingConvention = @import("../target.zig").CallingConvention;
+const external_symbols = @import("external_symbols.zig");
+const ExternalSymbolTable = external_symbols.ExternalSymbolTable;
 
 /// Generic code buffer interface - works with ELF, COFF, PE, object files, and TempleOS writers
 pub const CodeBuffer = union(enum) {
@@ -104,11 +106,6 @@ pub const CodeBuffer = union(enum) {
     }
 };
 
-const CallSite = struct {
-    offset: u32, // Offset in code where the 4-byte displacement starts
-    target: []const u8, // Target function name
-};
-
 const ForwardJump = struct {
     offset: u32, // Offset in code where the 4-byte displacement starts
     target_label: u32, // Target label ID
@@ -132,8 +129,8 @@ pub const X64MachineCodeGen = struct {
     stack_offsets: std.AutoHashMap(u32, i32),
     /// Variable name to stack offset mapping
     variable_offsets: std.StringHashMap(i32),
-    /// Call sites needing relocation (call_site_offset, target_function_name)
-    call_sites: std.ArrayList(CallSite),
+    /// External symbols (imported functions) - unified for PLT/GOT and IAT
+    external_symbols: ExternalSymbolTable,
     /// Forward jump sites needing patching (jump_offset, target_label_id)
     forward_jumps: std.ArrayList(ForwardJump),
     /// String literal to data offset mapping
@@ -142,7 +139,6 @@ pub const X64MachineCodeGen = struct {
     data_section_symbol: ?u32 = null,
 
     pub fn init(allocator: Allocator, code_buffer: CodeBuffer, calling_convention: CallingConvention) !X64MachineCodeGen {
-        const empty_call_sites = try allocator.alloc(CallSite, 0);
         const empty_forward_jumps = try allocator.alloc(ForwardJump, 0);
         return .{
             .allocator = allocator,
@@ -152,7 +148,7 @@ pub const X64MachineCodeGen = struct {
             .function_offsets = std.StringHashMap(u32).init(allocator),
             .stack_offsets = std.AutoHashMap(u32, i32).init(allocator),
             .variable_offsets = std.StringHashMap(i32).init(allocator),
-            .call_sites = std.ArrayList(CallSite).fromOwnedSlice(empty_call_sites),
+            .external_symbols = ExternalSymbolTable.init(allocator),
             .forward_jumps = std.ArrayList(ForwardJump).fromOwnedSlice(empty_forward_jumps),
             .string_literals = std.StringHashMap(u64).init(allocator),
         };
@@ -174,10 +170,14 @@ pub const X64MachineCodeGen = struct {
         }
         self.variable_offsets.deinit();
         
-        for (self.call_sites.items) |site| {
-            self.allocator.free(site.target);
+        self.external_symbols.deinit();
+        if (self.forward_jumps.items.len > 0) {
+            self.forward_jumps.deinit(self.allocator);
+        } else {
+            // Empty list allocated with fromOwnedSlice needs special handling
+            // Free the backing slice directly
+            self.allocator.free(self.forward_jumps.allocatedSlice());
         }
-        self.call_sites.deinit(self.allocator);
         self.forward_jumps.deinit(self.allocator);
         
         var str_iter = self.string_literals.keyIterator();
@@ -1130,12 +1130,16 @@ pub const X64MachineCodeGen = struct {
         const call_site = self.code_buffer.getCurrentOffset();
         try self.emitDword(0); // Placeholder - will be patched
 
-        // Track this call site for later patching
-        const owned_name = try self.allocator.dupe(u8, func_name);
-        try self.call_sites.append(self.allocator, .{
-            .offset = call_site,
-            .target = owned_name,
-        });
+        // Track this call site for later patching via external symbol table
+        // Determine the library hint based on the function name
+        const library_hint: ?[]const u8 = if (std.mem.eql(u8, func_name, "puts") or 
+                                              std.mem.eql(u8, func_name, "printf") or
+                                              std.mem.eql(u8, func_name, "exit"))
+            "msvcrt.dll"
+        else
+            null;
+        
+        try self.external_symbols.addReference(func_name, call_site, library_hint);
 
         // Store return value if needed
         if (instr.dest != .none) {
@@ -1654,103 +1658,106 @@ pub const X64MachineCodeGen = struct {
     }
 
     fn patchCallSites(self: *X64MachineCodeGen) !void {
-        // Get direct access to code buffer for patching
-        for (self.call_sites.items) |site| {
-            const target_offset_opt = self.function_offsets.get(site.target);
+        // Iterate over all external symbols and their references
+        var sym_iter = self.external_symbols.symbols.iterator();
+        while (sym_iter.next()) |entry| {
+            const func_name = entry.key_ptr.*;
+            const symbol = entry.value_ptr.*;
             
-            if (target_offset_opt) |target_offset| {
-                // Local function - patch with relative offset
-                // call instruction: E8 <4-byte displacement>
-                // displacement = target - (site.offset + 4)
-                const next_instr = site.offset + 4;
-                const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
+            for (symbol.references.items) |ref| {
+                const site_offset = ref.code_offset;
+                const target_offset_opt = self.function_offsets.get(func_name);
                 
-                // Patch the 4-byte displacement in the code buffer
-                const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
-                @memcpy(self.code_buffer.getCodeItems()[site.offset..][0..4], &disp_bytes);
-            } else {
-                // Extern function - add to extern symbols list for ELF relocation
-                // The call site will be left with placeholder (0) for the linker to patch
-                switch (self.code_buffer) {
-                    .elf => |elf| {
-                        try elf.addExternSymbol(site.target, site.offset);
-                    },
-                    .object => |obj| {
-                        // For object files, we need to add relocations
-                        // First, ensure the extern symbol exists in the symbol table
-                        // Find or add the symbol
-                        var symbol_idx: ?u32 = null;
-                        for (obj.symbols.items, 0..) |sym, idx| {
-                            if (std.mem.eql(u8, sym.name, site.target)) {
-                                symbol_idx = @intCast(idx);
-                                break;
+                if (target_offset_opt) |target_offset| {
+                    // Local function - patch with relative offset
+                    // call instruction: E8 <4-byte displacement>
+                    // displacement = target - (site.offset + 4)
+                    const next_instr = site_offset + 4;
+                    const displacement = @as(i32, @intCast(target_offset)) - @as(i32, @intCast(next_instr));
+                    
+                    // Patch the 4-byte displacement in the code buffer
+                    const disp_bytes = std.mem.toBytes(@as(u32, @bitCast(displacement)));
+                    @memcpy(self.code_buffer.getCodeItems()[site_offset..][0..4], &disp_bytes);
+                } else {
+                    // Extern function - add to extern symbols list for relocation/import
+                    switch (self.code_buffer) {
+                        .elf => |elf| {
+                            try elf.addExternSymbol(func_name, site_offset);
+                        },
+                        .object => |obj| {
+                            // For object files, we need to add relocations
+                            // First, ensure the extern symbol exists in the symbol table
+                            var symbol_idx: ?u32 = null;
+                            for (obj.symbols.items, 0..) |sym, idx| {
+                                if (std.mem.eql(u8, sym.name, func_name)) {
+                                    symbol_idx = @intCast(idx);
+                                    break;
+                                }
                             }
-                        }
-                        
-                        if (symbol_idx == null) {
-                            // Add undefined extern symbol
-                            symbol_idx = try obj.addSymbol(
-                                site.target,
-                                0, // value (undefined)
-                                0, // size
-                                .undefined, // section
-                                .global, // binding
-                                .notype, // type
+                            
+                            if (symbol_idx == null) {
+                                // Add undefined extern symbol
+                                symbol_idx = try obj.addSymbol(
+                                    func_name,
+                                    0, // value (undefined)
+                                    0, // size
+                                    .undefined, // section
+                                    .global, // binding
+                                    .notype, // type
+                                );
+                            }
+                            
+                            // Add PC-relative relocation for the call site
+                            // offset points to where the 32-bit displacement starts
+                            // We need to add -4 to the addend because PC-relative is calculated from the end of the instruction
+                            try obj.addRelocation(
+                                site_offset,
+                                symbol_idx.?,
+                                .R_X86_64_PLT32,
+                                -4,
                             );
-                        }
-                        
-                        // Add PC-relative relocation for the call site
-                        // offset points to where the 32-bit displacement starts
-                        // We need to add -4 to the addend because PC-relative is calculated from the end of the instruction
-                        try obj.addRelocation(
-                            site.offset,
-                            symbol_idx.?,
-                            .R_X86_64_PLT32,
-                            -4,
-                        );
-                    },
-                    .coff_object => |obj| {
-                        // For COFF object files, add extern symbol and relocation
-                        // Find or add the extern symbol
-                        var symbol_idx: ?u32 = null;
-                        for (obj.symbols.items, 0..) |sym, idx| {
-                            if (std.mem.eql(u8, sym.name, site.target)) {
-                                symbol_idx = @intCast(idx);
-                                break;
+                        },
+                        .coff_object => |obj| {
+                            // For COFF object files, add extern symbol and relocation
+                            var symbol_idx: ?u32 = null;
+                            for (obj.symbols.items, 0..) |sym, idx| {
+                                if (std.mem.eql(u8, sym.name, func_name)) {
+                                    symbol_idx = @intCast(idx);
+                                    break;
+                                }
                             }
-                        }
-                        
-                        if (symbol_idx == null) {
-                            // Add undefined extern symbol (section_number = 0 means undefined/external)
-                            symbol_idx = try obj.addSymbol(.{
-                                .name = site.target,
-                                .value = 0,
-                                .section_number = 0,  // 0 = external/undefined
-                                .type = 0x20,         // Function
-                                .storage_class = 2,   // External
-                                .aux_count = 0,
+                            
+                            if (symbol_idx == null) {
+                                // Add undefined extern symbol (section_number = 0 means undefined/external)
+                                symbol_idx = try obj.addSymbol(.{
+                                    .name = func_name,
+                                    .value = 0,
+                                    .section_number = 0,  // 0 = external/undefined
+                                    .type = 0x20,         // Function
+                                    .storage_class = 2,   // External
+                                    .aux_count = 0,
+                                });
+                            }
+                            
+                            // Add REL32 relocation for call instruction
+                            try obj.addRelocation(.{
+                                .virtual_address = site_offset,
+                                .symbol_index = symbol_idx.?,
+                                .type = .REL32,
                             });
-                        }
-                        
-                        // Add REL32 relocation for call instruction
-                        try obj.addRelocation(.{
-                            .virtual_address = site.offset,
-                            .symbol_index = symbol_idx.?,
-                            .type = .REL32,
-                        });
-                    },
-                    .pe => |pe| {
-                        // For PE executable, add import entry
-                        // For now, assume all external functions come from standard runtime
-                        // TODO: parse import directives or use smart linking
-                        try pe.addImportFunction("msvcrt.dll", site.target);
-                        // The actual IAT thunk will be resolved when writing the PE
-                    },
-                    .templeos => {
-                        // TempleOS format would use IET_REL_I32 patch table entry
-                        std.debug.print("Error: Undefined function '{s}'\n", .{site.target});
-                        return error.UndefinedFunction;
-                    },
+                        },
+                        .pe => |pe| {
+                            // For PE executable, add import entry with library hint
+                            const library = symbol.library_hint orelse "msvcrt.dll";
+                            try pe.addImportFunction(library, func_name);
+                            // The actual IAT thunk will be resolved when writing the PE
+                        },
+                        .templeos => {
+                            // TempleOS format would use IET_REL_I32 patch table entry
+                            std.debug.print("Error: Undefined function '{s}'\n", .{func_name});
+                            return error.UndefinedFunction;
+                        },
+                    }
                 }
             }
         }
