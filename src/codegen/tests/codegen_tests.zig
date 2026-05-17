@@ -16,6 +16,7 @@ test "IRBuilder: simple function" {
         .return_type = .u0,
         .name = "Main",
         .params = &[_]ast.Param{},
+        .is_variadic = false,
         .body = null,
         .attributes = .{},
         .loc = .{ .line = 1, .column = 1 },
@@ -62,6 +63,7 @@ test "IRBuilder: function with string expression" {
         .return_type = .u0,
         .name = "Main",
         .params = &[_]ast.Param{},
+        .is_variadic = false,
         .body = block_stmt,
         .attributes = .{},
         .loc = .{ .line = 1, .column = 1 },
@@ -73,20 +75,19 @@ test "IRBuilder: function with string expression" {
     var mod = module;
     defer mod.deinit();
 
-    // Verify we have a print instruction
+    // Verify we have a function and the string literal was added to the module
     try testing.expectEqual(@as(usize, 1), mod.functions.items.len);
-    const ir_func = &mod.functions.items[0];
-    try testing.expect(ir_func.blocks.items.len > 0);
-
-    var has_print = false;
-    for (ir_func.blocks.items) |block| {
-        for (block.instructions.items) |instr| {
-            if (instr.opcode == .print) {
-                has_print = true;
-            }
+    try testing.expect(mod.string_table.items.len > 0);
+    
+    // Verify the string literal is in the string table
+    var found = false;
+    for (mod.string_table.items) |str| {
+        if (std.mem.eql(u8, str, "Hello, World!\\n")) {
+            found = true;
+            break;
         }
     }
-    try testing.expect(has_print);
+    try testing.expect(found);
 }
 
 test "IR: print module" {

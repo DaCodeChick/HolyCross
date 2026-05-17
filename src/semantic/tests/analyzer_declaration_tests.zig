@@ -18,6 +18,7 @@ test "Analyzer: simple function declaration" {
             .return_type = .i64,
             .name = "TestFunc",
             .params = &[_]ast.Param{},
+        .is_variadic = false,
             .body = null, // Forward declaration
             .attributes = .{},
             .loc = loc,
@@ -43,6 +44,7 @@ test "Analyzer: duplicate function declaration" {
             .return_type = .i64,
             .name = "DuplicateFunc",
             .params = &[_]ast.Param{},
+        .is_variadic = false,
             .body = null,
             .attributes = .{},
             .loc = loc,
@@ -53,6 +55,7 @@ test "Analyzer: duplicate function declaration" {
             .return_type = .f64,
             .name = "DuplicateFunc",
             .params = &[_]ast.Param{},
+        .is_variadic = false,
             .body = null,
             .attributes = .{},
             .loc = .{ .line = 5, .column = 1 },

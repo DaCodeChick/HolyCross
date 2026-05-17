@@ -57,7 +57,7 @@ test "SymbolTable: Define and lookup functions" {
         .{ .name = "b", .type = .i64, .loc = loc },
     };
 
-    try sym_table.defineFunction("Add", .i64, &params, loc, false);
+    try sym_table.defineFunction("Add", .i64, &params, false, loc, false);
 
     // Lookup should find the function
     const symbol = sym_table.lookupSymbol("Add");
@@ -246,7 +246,7 @@ test "SymbolTable: Mixed symbol types in same scope" {
 
     // Define different symbol types with different names
     try sym_table.defineVariable("x", .i64, true, true, loc);
-    try sym_table.defineFunction("Add", .i64, &params, loc, false);
+    try sym_table.defineFunction("Add", .i64, &params, false, loc, false);
     try sym_table.defineType("MyType", .i32, loc, false);
 
     // Each should be found with correct type
