@@ -32,7 +32,7 @@ pub const Target = struct {
     
     pub const ABI = enum {
         none,      // TempleOS (no standard ABI)
-        gnu,       // Linux GNU
+        gnu,       // Linux GNU / MinGW (GCC-based Windows)
         msvc,      // Windows MSVC
         
         pub fn toString(self: ABI) []const u8 {
@@ -41,6 +41,16 @@ pub const Target = struct {
                 .gnu => "gnu",
                 .msvc => "msvc",
             };
+        }
+        
+        /// Check if this ABI uses GCC/GNU toolchain conventions
+        pub fn isGNU(self: ABI) bool {
+            return self == .gnu;
+        }
+        
+        /// Check if this ABI uses Microsoft conventions
+        pub fn isMSVC(self: ABI) bool {
+            return self == .msvc;
         }
     };
     
@@ -62,7 +72,7 @@ pub const Target = struct {
         };
     }
     
-    /// Parse a target triple string (e.g., "x64-linux-gnu", "windows-x64")
+    /// Parse a target triple string (e.g., "x64-linux-gnu", "windows-x64-msvc", "x64-windows-gnu")
     pub fn parse(triple: []const u8) !Target {
         var parts = std.mem.splitScalar(u8, triple, '-');
         
@@ -75,11 +85,11 @@ pub const Target = struct {
                 arch = .x64;
             } else if (std.mem.eql(u8, part, "linux")) {
                 os = .linux;
-            } else if (std.mem.eql(u8, part, "windows") or std.mem.eql(u8, part, "win64")) {
+            } else if (std.mem.eql(u8, part, "windows") or std.mem.eql(u8, part, "win64") or std.mem.eql(u8, part, "mingw64") or std.mem.eql(u8, part, "w64")) {
                 os = .windows;
             } else if (std.mem.eql(u8, part, "templeos")) {
                 os = .templeos;
-            } else if (std.mem.eql(u8, part, "gnu")) {
+            } else if (std.mem.eql(u8, part, "gnu") or std.mem.eql(u8, part, "mingw")) {
                 abi = .gnu;
             } else if (std.mem.eql(u8, part, "msvc")) {
                 abi = .msvc;
@@ -156,6 +166,24 @@ pub const Target = struct {
             .windows => ".obj",
             .templeos => ".OBJ",
         };
+    }
+    
+    /// Check if this is a MinGW target (Windows + GNU ABI)
+    pub fn isMinGW(self: Target) bool {
+        return self.os == .windows and self.abi == .gnu;
+    }
+    
+    /// Check if this is an MSVC target (Windows + MSVC ABI)
+    pub fn isMSVC(self: Target) bool {
+        return self.os == .windows and self.abi == .msvc;
+    }
+    
+    /// Get default C runtime library for linking
+    pub fn defaultCRuntime(self: Target) []const u8 {
+        if (self.os == .windows) {
+            return if (self.abi == .gnu) "msvcrt.dll" else "ucrt.dll";  // MinGW uses msvcrt, MSVC uses UCRT
+        }
+        return "libc.so.6";
     }
 };
 
@@ -234,6 +262,23 @@ test "Target.parse - Windows x64" {
     try std.testing.expectEqual(Target.OS.windows, target.os);
     try std.testing.expectEqual(Target.Arch.x64, target.arch);
     try std.testing.expectEqual(Target.ABI.msvc, target.abi);
+}
+
+test "Target.parse - MinGW x64" {
+    const target = try Target.parse("x64-windows-gnu");
+    try std.testing.expectEqual(Target.OS.windows, target.os);
+    try std.testing.expectEqual(Target.Arch.x64, target.arch);
+    try std.testing.expectEqual(Target.ABI.gnu, target.abi);
+    try std.testing.expect(target.isMinGW());
+    try std.testing.expect(!target.isMSVC());
+}
+
+test "Target.parse - MSVC explicit" {
+    const target = try Target.parse("x64-windows-msvc");
+    try std.testing.expectEqual(Target.OS.windows, target.os);
+    try std.testing.expectEqual(Target.ABI.msvc, target.abi);
+    try std.testing.expect(target.isMSVC());
+    try std.testing.expect(!target.isMinGW());
 }
 
 test "Target.parse - TempleOS" {
