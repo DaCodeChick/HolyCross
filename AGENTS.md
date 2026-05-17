@@ -76,13 +76,6 @@ Examples:
 ## Known Issues / TODOs
 
 ### High Priority
-- **Windows PE executable testing**: PE executables generate correctly but need Wine/Windows testing
-  - IAT stubs generated correctly (verified via objdump disassembly)
-  - Call sites patched to call stubs
-  - Import table structure correct
-  - Multi-DLL imports working (msvcrt.dll + kernel32.dll tested)
-  - **Next step**: Test with Wine or actual Windows machine
-
 - **macOS Mach-O executable/dylib support**: Object files work, but no executable/dylib writer yet
   - Can generate `.o` files successfully
   - Need Mach-O executable writer for standalone apps
@@ -114,6 +107,19 @@ zig build test                     # Run test suite (216/217 passing)
 ```
 
 ## Recent Changes
+- **2026-05-17**: String escape sequences now working!
+  - Added `unescapeString()` to process `\n`, `\t`, `\r`, `\\`, `\"`, `\0`
+  - Fixed IR builder to use processed strings from `string_table`
+  - Fixed memory leak in `Module.deinit()` by freeing unescaped strings
+  - Tested on Windows (Wine) and Linux - output now correct
+
+- **2026-05-17**: Windows PE executables fully tested and working!
+  - Successfully tested with Wine on Linux
+  - `test_hello.hc` runs correctly
+  - `test_windows_api.hc` with multi-DLL imports (msvcrt.dll + kernel32.dll) works
+  - `test_context_keywords.hc` executes successfully
+  - IAT stubs, import tables, and relocations all functioning correctly
+
 - **2026-05-17**: Fixed test suite (216/217 tests passing)
   - Added missing `is_variadic` parameter to all function test fixtures
   - Updated `defineFunction()` calls in symbol table tests
