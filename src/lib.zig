@@ -2,6 +2,7 @@
 // Re-exports all modules for use by tools
 
 pub const allocator = @import("allocator.zig");
+pub const target = @import("target.zig");
 pub const preprocessor = @import("preprocessor/preprocessor.zig");
 pub const lexer = @import("lexer/lexer.zig");
 pub const parser = @import("parser/parser.zig");
