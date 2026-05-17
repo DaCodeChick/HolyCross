@@ -232,6 +232,44 @@ pub const X64MachineCodeGen = struct {
                 );
             }
         }
+        
+        // For shared libraries, export all non-_start functions
+        if (self.code_buffer == .elf) {
+            const elf = self.code_buffer.elf;
+            if (elf.is_shared_library) {
+                var func_iter = self.function_offsets.iterator();
+                while (func_iter.next()) |entry| {
+                    const func_name = entry.key_ptr.*;
+                    const func_offset = entry.value_ptr.*;
+                    
+                    // Skip _start function (not needed in shared libraries)
+                    if (std.mem.eql(u8, func_name, "_start")) continue;
+                    
+                    // TODO: Calculate actual function size
+                    // For now use 0 (loader doesn't strictly require it for functions)
+                    try elf.addExportedSymbol(func_name, func_offset, 0);
+                }
+            }
+        }
+        
+        // For Windows DLLs, export all non-_start functions
+        if (self.code_buffer == .pe) {
+            const pe = self.code_buffer.pe;
+            if (pe.is_dll) {
+                var ordinal: u16 = 1;
+                var func_iter = self.function_offsets.iterator();
+                while (func_iter.next()) |entry| {
+                    const func_name = entry.key_ptr.*;
+                    const func_offset = entry.value_ptr.*;
+                    
+                    // Skip _start function (not needed in DLLs)
+                    if (std.mem.eql(u8, func_name, "_start")) continue;
+                    
+                    try pe.addExport(func_name, func_offset, ordinal);
+                    ordinal += 1;
+                }
+            }
+        }
 
         // Set entry point to _start (if it exists - shared libraries don't need it)
         if (self.function_offsets.get("_start")) |start_offset| {

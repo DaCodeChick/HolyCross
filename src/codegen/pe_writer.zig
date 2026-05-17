@@ -14,6 +14,9 @@ pub const PEWriter = struct {
     // Import information
     imports: std.ArrayList(ImportedDLL),
     
+    // Export information (for DLLs)
+    exports: std.ArrayList(ExportedFunction),
+    
     // Entry point
     entry_point_offset: u32,
     
@@ -34,11 +37,18 @@ pub const PEWriter = struct {
         };
     };
     
+    pub const ExportedFunction = struct {
+        name: []const u8,
+        rva: u32,   // Relative Virtual Address in .text
+        ordinal: u16,  // Ordinal number (optional, usually just sequential)
+    };
+    
     pub fn init(allocator: Allocator) !PEWriter {
         const empty_code = try allocator.alloc(u8, 0);
         const empty_rdata = try allocator.alloc(u8, 0);
         const empty_data = try allocator.alloc(u8, 0);
         const empty_imports = try allocator.alloc(ImportedDLL, 0);
+        const empty_exports = try allocator.alloc(ExportedFunction, 0);
         
         return .{
             .allocator = allocator,
@@ -46,6 +56,7 @@ pub const PEWriter = struct {
             .rdata = std.ArrayList(u8).fromOwnedSlice(empty_rdata),
             .data = std.ArrayList(u8).fromOwnedSlice(empty_data),
             .imports = std.ArrayList(ImportedDLL).fromOwnedSlice(empty_imports),
+            .exports = std.ArrayList(ExportedFunction).fromOwnedSlice(empty_exports),
             .entry_point_offset = 0,
             .image_base = 0x140000000,  // Standard Windows x64 image base
             .code_base = 0x1000,         // .text starts at 4KB (after headers)
@@ -66,6 +77,11 @@ pub const PEWriter = struct {
             self.allocator.free(dll.name);
         }
         self.imports.deinit(self.allocator);
+        
+        for (self.exports.items) |exp| {
+            self.allocator.free(exp.name);
+        }
+        self.exports.deinit(self.allocator);
     }
     
     /// Set DLL mode (generate shared library instead of executable)
@@ -73,14 +89,17 @@ pub const PEWriter = struct {
         self.is_dll = is_dll;
     }
     
-    /// Add machine code to .text section
-    pub fn addCode(self: *PEWriter, code: []const u8) !void {
-        try self.code.appendSlice(self.allocator, code);
+    pub fn addExport(self: *PEWriter, name: []const u8, rva: u32, ordinal: u16) !void {
+        const name_copy = try self.allocator.dupe(u8, name);
+        try self.exports.append(self.allocator, .{
+            .name = name_copy,
+            .rva = rva,
+            .ordinal = ordinal,
+        });
     }
     
-    /// Compatibility wrapper for appendCode (used by CodeBuffer)
     pub fn appendCode(self: *PEWriter, code: []const u8) !void {
-        try self.addCode(code);
+        try self.code.appendSlice(self.allocator, code);
     }
     
     /// Compatibility wrapper for appendData (used by CodeBuffer)
@@ -245,11 +264,19 @@ pub const PEWriter = struct {
         const import_size = self.calculateImportSize();
         const idata_size = self.alignUp(import_size, file_alignment);
         
+        // Calculate export directory size (for DLLs)
+        const export_size = if (self.is_dll) self.calculateExportSize() else 0;
+        const edata_size = if (self.is_dll) self.alignUp(export_size, file_alignment) else 0;
+        
+        // Calculate number of sections
+        const num_sections: u16 = if (self.is_dll) 5 else 4; // Add .edata for DLLs
+        
         // Calculate RVAs (Relative Virtual Addresses)
         const code_rva = section_alignment;  // .text at 0x1000
         const rdata_rva = code_rva + self.alignUp(self.code.items.len, section_alignment);
         const data_rva = rdata_rva + self.alignUp(self.rdata.items.len, section_alignment);
         const idata_rva = data_rva + self.alignUp(self.data.items.len, section_alignment);
+        const edata_rva = idata_rva + self.alignUp(import_size, section_alignment);
         
         // Calculate file offsets
         const headers_size = self.alignUp(self.calculateHeadersSize(), file_alignment);
@@ -257,9 +284,13 @@ pub const PEWriter = struct {
         const rdata_offset = code_offset + code_size;
         const data_offset = rdata_offset + rdata_size;
         const idata_offset = data_offset + data_size;
+        const edata_offset = idata_offset + idata_size;
         
         // Calculate total image size
-        const image_size = idata_rva + self.alignUp(import_size, section_alignment);
+        const image_size = if (self.is_dll) 
+            edata_rva + self.alignUp(export_size, section_alignment)
+        else
+            idata_rva + self.alignUp(import_size, section_alignment);
         
         // Write DOS header and stub
         try self.writeDOSHeader(writer);
@@ -269,12 +300,12 @@ pub const PEWriter = struct {
         try writer.writeAll("PE\x00\x00");
         
         // Write COFF file header
-        try self.writeCOFFHeader(writer, 4); // 4 sections: .text, .rdata, .data, .idata
+        try self.writeCOFFHeader(writer, num_sections);
         
         // Write optional header (PE32+)
         try self.writeOptionalHeader(writer, code_rva + self.entry_point_offset, 
-            code_size, rdata_size + data_size + idata_size, image_size,
-            headers_size, idata_rva, import_size);
+            code_size, rdata_size + data_size + idata_size + edata_size, image_size,
+            headers_size, edata_rva, export_size, idata_rva, import_size);
         
         // Write section headers
         try self.writeSectionHeader(writer, ".text", code_size, code_rva, code_size, code_offset,
@@ -285,6 +316,12 @@ pub const PEWriter = struct {
             0xC0000040); // INITIALIZED_DATA | READ | WRITE
         try self.writeSectionHeader(writer, ".idata", idata_size, idata_rva, idata_size, idata_offset,
             0x40000040); // INITIALIZED_DATA | READ
+        
+        // Add .edata section for DLLs
+        if (self.is_dll) {
+            try self.writeSectionHeader(writer, ".edata", edata_size, edata_rva, edata_size, edata_offset,
+                0x40000040); // INITIALIZED_DATA | READ
+        }
         
         // Pad to file alignment
         try self.writePadding(writer, headers_size - self.calculateHeadersSize());
@@ -302,6 +339,12 @@ pub const PEWriter = struct {
         // Write import directory
         try self.writeImportDirectory(writer, idata_rva);
         try self.writePadding(writer, @as(u32, @intCast(idata_size - import_size)));
+        
+        // Write export directory (for DLLs)
+        if (self.is_dll) {
+            try self.writeExportDirectory(writer, edata_rva, code_rva);
+            try self.writePadding(writer, @as(u32, @intCast(edata_size - export_size)));
+        }
     }
     
     fn writeDOSHeader(self: *PEWriter, writer: *std.Io.Writer) !void {
@@ -362,7 +405,8 @@ pub const PEWriter = struct {
     
     fn writeOptionalHeader(self: *PEWriter, writer: *std.Io.Writer, entry_point: u32,
                            code_size: u32, data_size: u32, image_size: u32,
-                           headers_size: u32, import_rva: u32, import_size: u32) !void {
+                           headers_size: u32, export_rva: u32, export_size: u32, 
+                           import_rva: u32, import_size: u32) !void {
         // Standard fields
         try writer.writeInt(u16, 0x020B, .little);  // Magic: PE32+
         try writer.writeInt(u8, 14, .little);       // MajorLinkerVersion
@@ -398,7 +442,8 @@ pub const PEWriter = struct {
         
         // Data directories (16 entries)
         // 0: Export Directory
-        try writer.writeInt(u64, 0, .little);
+        try writer.writeInt(u32, export_rva, .little);
+        try writer.writeInt(u32, export_size, .little);
         // 1: Import Directory
         try writer.writeInt(u32, import_rva, .little);
         try writer.writeInt(u32, import_size, .little);
@@ -609,13 +654,13 @@ pub const PEWriter = struct {
     }
     
     fn calculateHeadersSize(self: *PEWriter) u32 {
-        _ = self;
         const dos_header = 64;
         const dos_stub = 64;
         const pe_signature = 4;
         const coff_header = 20;
         const optional_header = 240;
-        const section_headers = 40 * 4; // 4 sections
+        const num_sections: u32 = if (self.is_dll) 5 else 4;
+        const section_headers = 40 * num_sections;
         return dos_header + dos_stub + pe_signature + coff_header + optional_header + section_headers;
     }
     
@@ -633,5 +678,87 @@ pub const PEWriter = struct {
         const val_u64: u64 = @intCast(value);
         const aligned = (val_u64 + align_u64 - 1) / align_u64 * align_u64;
         return @intCast(aligned);
+    }
+    
+    fn calculateExportSize(self: *PEWriter) u32 {
+        if (self.exports.items.len == 0) {
+            return 0;
+        }
+        
+        // Export Directory Table: 40 bytes
+        var size: u32 = 40;
+        
+        // Export Address Table: 4 bytes per function
+        size += @as(u32, @intCast(self.exports.items.len)) * 4;
+        
+        // Export Name Pointer Table: 4 bytes per function
+        size += @as(u32, @intCast(self.exports.items.len)) * 4;
+        
+        // Export Ordinal Table: 2 bytes per function
+        size += @as(u32, @intCast(self.exports.items.len)) * 2;
+        
+        // DLL name (e.g., "test.dll\0" = 9 bytes)
+        size += 9;
+        
+        // Function names (each name + null terminator)
+        for (self.exports.items) |exp| {
+            size += @as(u32, @intCast(exp.name.len)) + 1;
+        }
+        
+        return size;
+    }
+    
+    fn writeExportDirectory(self: *PEWriter, writer: *std.Io.Writer, base_rva: u32, code_rva: u32) !void {
+        if (self.exports.items.len == 0) {
+            return;
+        }
+        
+        const num_exports: u32 = @intCast(self.exports.items.len);
+        
+        // Calculate offsets within .edata section
+        const eat_offset: u32 = 40; // After directory table
+        const npt_offset: u32 = eat_offset + (num_exports * 4); // Name Pointer Table
+        const ordinal_offset: u32 = npt_offset + (num_exports * 4); // Ordinal Table
+        const dll_name_offset: u32 = ordinal_offset + (num_exports * 2);
+        const names_offset: u32 = dll_name_offset + 9; // After "test.dll\0" (9 bytes)
+        
+        // Export Directory Table (40 bytes)
+        try writer.writeInt(u32, 0, .little); // Characteristics
+        try writer.writeInt(u32, 0, .little); // TimeDateStamp (deterministic build)
+        try writer.writeInt(u16, 0, .little); // MajorVersion
+        try writer.writeInt(u16, 0, .little); // MinorVersion
+        try writer.writeInt(u32, base_rva + dll_name_offset, .little); // Name RVA
+        try writer.writeInt(u32, 1, .little); // Base (ordinals start at 1)
+        try writer.writeInt(u32, num_exports, .little); // NumberOfFunctions
+        try writer.writeInt(u32, num_exports, .little); // NumberOfNames
+        try writer.writeInt(u32, base_rva + eat_offset, .little); // AddressOfFunctions
+        try writer.writeInt(u32, base_rva + npt_offset, .little); // AddressOfNames
+        try writer.writeInt(u32, base_rva + ordinal_offset, .little); // AddressOfNameOrdinals
+        
+        // Export Address Table (EAT): RVAs of functions
+        for (self.exports.items) |exp| {
+            try writer.writeInt(u32, code_rva + exp.rva, .little);
+        }
+        
+        // Export Name Pointer Table (NPT): RVAs of name strings
+        var current_name_offset = names_offset;
+        for (self.exports.items) |exp| {
+            try writer.writeInt(u32, base_rva + current_name_offset, .little);
+            current_name_offset += @as(u32, @intCast(exp.name.len)) + 1;
+        }
+        
+        // Export Ordinal Table: ordinal - base for each name
+        for (self.exports.items) |exp| {
+            try writer.writeInt(u16, exp.ordinal - 1, .little); // ordinal - base(1) = ordinal - 1
+        }
+        
+        // DLL name
+        try writer.writeAll("test.dll\x00");
+        
+        // Function names
+        for (self.exports.items) |exp| {
+            try writer.writeAll(exp.name);
+            try writer.writeInt(u8, 0, .little);
+        }
     }
 };

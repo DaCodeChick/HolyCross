@@ -17,6 +17,7 @@ pub const ELFWriter = struct {
     entry_point: u32,
     extern_symbols: std.ArrayList(ExternSymbol), // Track extern function calls
     dynamic_symbols: std.ArrayList(DynamicSymbol), // Symbols for .dynsym
+    exported_symbols: std.ArrayList(ExportedSymbol), // Functions to export from shared library
     is_shared_library: bool, // If true, generate ET_DYN instead of ET_EXEC
     
     const ExternSymbol = struct {
@@ -28,6 +29,12 @@ pub const ELFWriter = struct {
         name: []const u8,
         plt_offset: u64,
         got_offset: u64,
+    };
+    
+    const ExportedSymbol = struct {
+        name: []const u8,
+        offset: u32,  // Offset in .text section
+        size: u32,    // Size of function
     };
     
     pub fn init(allocator: Allocator) !ELFWriter {
@@ -42,6 +49,7 @@ pub const ELFWriter = struct {
         const empty_dynamic = try allocator.alloc(u8, 0);
         const empty_externs = try allocator.alloc(ExternSymbol, 0);
         const empty_dynsyms = try allocator.alloc(DynamicSymbol, 0);
+        const empty_exports = try allocator.alloc(ExportedSymbol, 0);
         return .{
             .allocator = allocator,
             .code = std.ArrayList(u8).fromOwnedSlice(empty_code),
@@ -56,6 +64,7 @@ pub const ELFWriter = struct {
             .entry_point = 0,
             .extern_symbols = std.ArrayList(ExternSymbol).fromOwnedSlice(empty_externs),
             .dynamic_symbols = std.ArrayList(DynamicSymbol).fromOwnedSlice(empty_dynsyms),
+            .exported_symbols = std.ArrayList(ExportedSymbol).fromOwnedSlice(empty_exports),
             .is_shared_library = false, // Default to executable
         };
     }
@@ -78,6 +87,10 @@ pub const ELFWriter = struct {
             self.allocator.free(sym.name);
         }
         self.dynamic_symbols.deinit(self.allocator);
+        for (self.exported_symbols.items) |sym| {
+            self.allocator.free(sym.name);
+        }
+        self.exported_symbols.deinit(self.allocator);
     }
     
     pub fn addExternSymbol(self: *ELFWriter, name: []const u8, call_site_offset: u32) !void {
@@ -99,6 +112,15 @@ pub const ELFWriter = struct {
     
     pub fn setSharedLibrary(self: *ELFWriter, is_shared: bool) void {
         self.is_shared_library = is_shared;
+    }
+    
+    pub fn addExportedSymbol(self: *ELFWriter, name: []const u8, offset: u32, size: u32) !void {
+        const name_copy = try self.allocator.dupe(u8, name);
+        try self.exported_symbols.append(self.allocator, .{
+            .name = name_copy,
+            .offset = offset,
+            .size = size,
+        });
     }
     
     pub fn generatePLT(self: *ELFWriter, plt_base_addr: u64, got_base_addr: u64) !void {
@@ -187,7 +209,15 @@ pub const ELFWriter = struct {
         try string_offsets.put("libc.so.6", libc_offset);
         try self.dynstr.appendSlice(self.allocator, "libc.so.6\x00");
         
-        // Add each dynamic symbol name
+        // Add exported symbol names first
+        for (self.exported_symbols.items) |sym| {
+            const offset: u32 = @intCast(self.dynstr.items.len);
+            try string_offsets.put(sym.name, offset);
+            try self.dynstr.appendSlice(self.allocator, sym.name);
+            try self.dynstr.append(self.allocator, 0);
+        }
+        
+        // Add each dynamic symbol name (imports)
         for (self.dynamic_symbols.items) |sym| {
             const offset: u32 = @intCast(self.dynstr.items.len);
             try string_offsets.put(sym.name, offset);
@@ -203,7 +233,30 @@ pub const ELFWriter = struct {
         // First entry is always NULL symbol
         try self.dynsym.appendNTimes(self.allocator, 0, 24);
         
-        // Add symbol for each external function
+        // Add exported symbols first (for shared libraries)
+        for (self.exported_symbols.items) |sym| {
+            const name_offset = string_offsets.get(sym.name) orelse 0;
+            
+            // st_name (offset in dynstr)
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, name_offset)));
+            
+            // st_info: STB_GLOBAL << 4 | STT_FUNC = 0x12
+            try self.dynsym.append(self.allocator, 0x12);
+            
+            // st_other: STV_DEFAULT = 0
+            try self.dynsym.append(self.allocator, 0);
+            
+            // st_shndx: 1 for .text section
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 1)));
+            
+            // st_value: offset of function in .text
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, sym.offset)));
+            
+            // st_size: size of function
+            try self.dynsym.appendSlice(self.allocator, &std.mem.toBytes(@as(u64, sym.size)));
+        }
+        
+        // Add symbol for each external function (undefined imports)
         for (self.dynamic_symbols.items) |sym| {
             const name_offset = string_offsets.get(sym.name) orelse 0;
             
@@ -248,9 +301,9 @@ pub const ELFWriter = struct {
         // u32 bucket[nbucket]
         // u32 chain[nchain]
         
-        const nsymbols = @as(u32, @intCast(self.dynamic_symbols.items.len + 1)); // +1 for NULL symbol
-        const nbucket: u32 = nsymbols; // Simple: one bucket per symbol
-        const nchain: u32 = nsymbols;
+        const total_symbols = @as(u32, @intCast(self.exported_symbols.items.len + self.dynamic_symbols.items.len + 1)); // +1 for NULL symbol
+        const nbucket: u32 = total_symbols; // Simple: one bucket per symbol
+        const nchain: u32 = total_symbols;
         
         // Header
         try self.hash.appendSlice(self.allocator, &std.mem.toBytes(nbucket));
@@ -266,14 +319,28 @@ pub const ELFWriter = struct {
         defer self.allocator.free(chains);
         @memset(chains, 0); // Initialize to 0 (end of chain)
         
-        // Hash each symbol (skip index 0 which is NULL)
-        for (self.dynamic_symbols.items, 1..) |sym, sym_index| {
+        var sym_index: u32 = 1; // Start at 1 (skip NULL symbol at 0)
+        
+        // Hash exported symbols first (they come first in dynsym)
+        for (self.exported_symbols.items) |sym| {
             const hash_val = elfHash(sym.name);
             const bucket_index = hash_val % nbucket;
             
             // Insert at head of chain
             chains[sym_index] = buckets[bucket_index];
-            buckets[bucket_index] = @intCast(sym_index);
+            buckets[bucket_index] = sym_index;
+            sym_index += 1;
+        }
+        
+        // Hash imported symbols (dynamic_symbols)
+        for (self.dynamic_symbols.items) |sym| {
+            const hash_val = elfHash(sym.name);
+            const bucket_index = hash_val % nbucket;
+            
+            // Insert at head of chain
+            chains[sym_index] = buckets[bucket_index];
+            buckets[bucket_index] = sym_index;
+            sym_index += 1;
         }
         
         // Write buckets
@@ -295,7 +362,8 @@ pub const ELFWriter = struct {
             try self.rela_plt.appendSlice(self.allocator, &std.mem.toBytes(got_entry_addr));
             
             // r_info: (symbol_index << 32) | R_X86_64_JUMP_SLOT (7)
-            const sym_index: u64 = i + 1; // +1 because dynsym[0] is NULL
+            // Symbol index must account for exported symbols coming first
+            const sym_index: u64 = @as(u64, @intCast(self.exported_symbols.items.len)) + i + 1; // +1 for NULL symbol
             const r_info: u64 = (sym_index << 32) | 7;
             try self.rela_plt.appendSlice(self.allocator, &std.mem.toBytes(r_info));
             
