@@ -22,11 +22,12 @@ Cross-compile HolyC to multiple platforms:
 - Provides calling convention, object format, and executable format mapping
 
 ### File Format Writers
-- `src/codegen/elf_writer.zig` - Linux ELF executables
-- `src/codegen/elf_object.zig` - Linux ELF `.o` object files
-- `src/codegen/coff_object.zig` - Windows COFF `.obj` object files
-- `src/codegen/pe_writer.zig` - Windows PE32+ `.exe` executables
-- `src/codegen/templeos_bin.zig` - TempleOS/ZealOS `.BIN` format
+- `src/codegen/elf_writer.zig` - Linux ELF executables ✓
+- `src/codegen/elf_object.zig` - Linux ELF `.o` object files ✓
+- `src/codegen/coff_object.zig` - Windows COFF `.obj` object files ✓
+- `src/codegen/pe_writer.zig` - Windows PE32+ `.exe` executables ✓
+- `src/codegen/macho_object.zig` - macOS Mach-O `.o` object files ✓
+- `src/codegen/templeos_bin.zig` - TempleOS/ZealOS `.BIN` format ✓
 
 ### Code Generation
 - `src/codegen/x64_machine_code.zig` - ABI-aware x64 machine code generation
@@ -75,19 +76,18 @@ Examples:
 ## Known Issues / TODOs
 
 ### High Priority
-- **macOS Mach-O object files now working!** (RESOLVED)
-  - Issue was using `var writer = buffered_writer.interface` then calling `writer.writeAll()`
-  - **Solution**: Use `buffered_writer.interface.writeAll()` directly (don't extract to var)
-  - Pattern: `try buffered_writer.interface.writeAll(bytes)` NOT `try writer.writeAll(bytes)`
-  - Same applies to writeStruct: `try buffered_writer.interface.writeStruct(data, .little)`
-  - See docs/ZIG_0.16_NOTES.md for updated file I/O patterns
-
 - **Windows PE executable testing**: PE executables generate correctly but need Wine/Windows testing
   - IAT stubs generated correctly (verified via objdump disassembly)
   - Call sites patched to call stubs
   - Import table structure correct
   - Multi-DLL imports working (msvcrt.dll + kernel32.dll tested)
   - **Next step**: Test with Wine or actual Windows machine
+
+- **macOS Mach-O executable/dylib support**: Object files work, but no executable/dylib writer yet
+  - Can generate `.o` files successfully
+  - Need Mach-O executable writer for standalone apps
+  - Need Mach-O dylib writer for shared libraries
+  - See macOS ld64 documentation for linking requirements
 
 ### Medium Priority
 - **No shared library output**: Can't generate `.so` or `.dll` files yet
