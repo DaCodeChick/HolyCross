@@ -713,12 +713,14 @@ pub const IRBuilder = struct {
                 return .{ .constant = .{ .float = flt.value } };
             },
             .string => |str| {
-                _ = try self.module.addStringLiteral(str.value);
+                const string_id = try self.module.addStringLiteral(str.value);
+                // Get the processed string from the string table
+                const processed_string = self.module.string_table.items[string_id];
                 // String literals evaluate to a pointer to the string data
                 // Note: In HolyC, a bare string at statement level prints,
                 // but when used in expressions it's just a pointer value.
                 // The parser handles the statement-level print case.
-                return .{ .string = str.value };
+                return .{ .string = processed_string };
             },
             .char => |ch| {
                 return .{ .constant = .{ .int = @intCast(ch.value) } };

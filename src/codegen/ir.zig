@@ -3,6 +3,34 @@ const Allocator = std.mem.Allocator;
 const ast = @import("../parser/ast.zig");
 const TypeLayout = @import("../semantic/type_layout.zig").TypeLayout;
 
+/// Process escape sequences in a string literal
+fn unescapeString(allocator: Allocator, str: []const u8) ![]const u8 {
+    const empty = try allocator.alloc(u8, 0);
+    var result = std.ArrayList(u8).fromOwnedSlice(empty);
+    errdefer result.deinit(allocator);
+    
+    var i: usize = 0;
+    while (i < str.len) : (i += 1) {
+        if (str[i] == '\\' and i + 1 < str.len) {
+            i += 1;
+            const escaped = switch (str[i]) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '"' => '"',
+                '0' => 0,
+                else => str[i],
+            };
+            try result.append(allocator, escaped);
+        } else {
+            try result.append(allocator, str[i]);
+        }
+    }
+    
+    return result.toOwnedSlice(allocator);
+}
+
 /// Intermediate Representation for HolyCross compiler
 /// Uses a simple three-address code format that's easy to generate from AST
 /// and straightforward to translate to x64 assembly
@@ -272,6 +300,10 @@ pub const Module = struct {
         self.functions.deinit(self.allocator);
         self.globals.deinit(self.allocator);
         self.string_literals.deinit();
+        // Free the unescaped strings we allocated
+        for (self.string_table.items) |str| {
+            self.allocator.free(str);
+        }
         self.string_table.deinit(self.allocator);
     }
 
@@ -289,12 +321,16 @@ pub const Module = struct {
     }
 
     pub fn addStringLiteral(self: *Module, str: []const u8) !u32 {
-        if (self.string_literals.get(str)) |id| {
+        // Process escape sequences in the string
+        const unescaped = try unescapeString(self.allocator, str);
+        
+        if (self.string_literals.get(unescaped)) |id| {
+            self.allocator.free(unescaped);
             return id;
         }
         const id = @as(u32, @intCast(self.string_table.items.len));
-        try self.string_table.append(self.allocator, str);
-        try self.string_literals.put(str, id);
+        try self.string_table.append(self.allocator, unescaped);
+        try self.string_literals.put(unescaped, id);
         return id;
     }
 
