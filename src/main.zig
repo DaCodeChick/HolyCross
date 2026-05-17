@@ -34,6 +34,7 @@ pub fn main(init: std.process.Init) !void {
     // Parse flags
     var emit_asm_only = false;
     var compile_only = false; // -c flag: compile to object file
+    var shared_library = false; // -shared flag: generate shared library (.so/.dll)
     var input_file: []const u8 = "";
     var output_file: []const u8 = "";
     var target: Target = Target.native(); // Default to native platform
@@ -45,6 +46,8 @@ pub fn main(init: std.process.Init) !void {
             emit_asm_only = true;
         } else if (std.mem.eql(u8, arg, "-c")) {
             compile_only = true;
+        } else if (std.mem.eql(u8, arg, "-shared")) {
+            shared_library = true;
         } else if (std.mem.eql(u8, arg, "-o")) {
             i += 1;
             if (i < args.len) {
@@ -91,6 +94,10 @@ pub fn main(init: std.process.Init) !void {
             output_file = try std.fmt.allocPrint(arena.allocator(), "{s}.s", .{basename});
         } else if (compile_only) {
             output_file = try std.fmt.allocPrint(arena.allocator(), "{s}{s}", .{basename, target.objectExtension()});
+        } else if (shared_library) {
+            // Shared library extension based on target
+            const extension = target.sharedLibraryExtension();
+            output_file = try std.fmt.allocPrint(arena.allocator(), "{s}{s}", .{ basename, extension });
         } else {
             // Use default extension based on target
             const extension = target.executableExtension();
@@ -183,6 +190,12 @@ pub fn main(init: std.process.Init) !void {
 
         std.debug.print("\n✓ Object file generation successful!\n", .{});
         std.debug.print("Output: {s}\n", .{output_file});
+    } else if (shared_library) {
+        // Generate shared library (-shared flag)
+        try compiler.compileToSharedLibrary(&program, output_file, &anal.type_checker, &anal.type_layouts, init.io);
+
+        std.debug.print("\n✓ Shared library generation successful!\n", .{});
+        std.debug.print("Output: {s}\n", .{output_file});
     } else {
         // Generate executable
         try compiler.compileToExecutable(&program, output_file, &anal.type_checker, &anal.type_layouts, init.io);
@@ -200,6 +213,7 @@ fn printUsage(program_name: []const u8) void {
     std.debug.print("Options:\n", .{});
     std.debug.print("  -S                    Emit assembly code only\n", .{});
     std.debug.print("  -c                    Compile to object file only\n", .{});
+    std.debug.print("  -shared               Generate shared library (.so/.dll/.dylib)\n", .{});
     std.debug.print("  -o <file>             Specify output file name\n", .{});
     std.debug.print("  --target=<triple>     Set compilation target (default: native)\n", .{});
     std.debug.print("\n", .{});
@@ -217,6 +231,7 @@ fn printUsage(program_name: []const u8) void {
     std.debug.print("  {s} hello.hc                    # Compile for native platform\n", .{program_name});
     std.debug.print("  {s} --target=x64-windows-msvc hello.hc hello.exe\n", .{program_name});
     std.debug.print("  {s} -c hello.hc -o hello.obj   # Compile to object file\n", .{program_name});
+    std.debug.print("  {s} -shared lib.hc -o lib.so   # Create shared library\n", .{program_name});
 }
 
 test "main module" {

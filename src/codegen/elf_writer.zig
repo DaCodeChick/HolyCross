@@ -17,6 +17,7 @@ pub const ELFWriter = struct {
     entry_point: u32,
     extern_symbols: std.ArrayList(ExternSymbol), // Track extern function calls
     dynamic_symbols: std.ArrayList(DynamicSymbol), // Symbols for .dynsym
+    is_shared_library: bool, // If true, generate ET_DYN instead of ET_EXEC
     
     const ExternSymbol = struct {
         name: []const u8,
@@ -55,6 +56,7 @@ pub const ELFWriter = struct {
             .entry_point = 0,
             .extern_symbols = std.ArrayList(ExternSymbol).fromOwnedSlice(empty_externs),
             .dynamic_symbols = std.ArrayList(DynamicSymbol).fromOwnedSlice(empty_dynsyms),
+            .is_shared_library = false, // Default to executable
         };
     }
     
@@ -93,6 +95,10 @@ pub const ELFWriter = struct {
             .plt_offset = plt_offset,
             .got_offset = got_offset,
         });
+    }
+    
+    pub fn setSharedLibrary(self: *ELFWriter, is_shared: bool) void {
+        self.is_shared_library = is_shared;
     }
     
     pub fn generatePLT(self: *ELFWriter, plt_base_addr: u64, got_base_addr: u64) !void {
@@ -599,7 +605,8 @@ pub const ELFWriter = struct {
             0, 0, 0, 0, 0, 0, 0, 0,        // Padding
         });
         
-        const e_type: u16 = 2; // Always ET_EXEC for now (not PIE)
+        // ET_EXEC = 2 (executable), ET_DYN = 3 (shared library / PIE)
+        const e_type: u16 = if (self.is_shared_library) 3 else 2;
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(e_type));
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u16, 0x3E))); // e_machine: x86-64
         try buffer.appendSlice(self.allocator, &std.mem.toBytes(@as(u32, 1)));  // e_version

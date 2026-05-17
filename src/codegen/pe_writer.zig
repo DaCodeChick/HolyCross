@@ -21,6 +21,9 @@ pub const PEWriter = struct {
     image_base: u64,  // Preferred load address
     code_base: u32,   // RVA of .text section
     
+    // DLL mode
+    is_dll: bool,     // If true, generate DLL instead of EXE
+    
     pub const ImportedDLL = struct {
         name: []const u8,
         functions: std.ArrayList(ImportedFunction),
@@ -46,6 +49,7 @@ pub const PEWriter = struct {
             .entry_point_offset = 0,
             .image_base = 0x140000000,  // Standard Windows x64 image base
             .code_base = 0x1000,         // .text starts at 4KB (after headers)
+            .is_dll = false,             // Default to executable
         };
     }
     
@@ -62,6 +66,11 @@ pub const PEWriter = struct {
             self.allocator.free(dll.name);
         }
         self.imports.deinit(self.allocator);
+    }
+    
+    /// Set DLL mode (generate shared library instead of executable)
+    pub fn setDLL(self: *PEWriter, is_dll: bool) void {
+        self.is_dll = is_dll;
     }
     
     /// Add machine code to .text section
@@ -339,14 +348,16 @@ pub const PEWriter = struct {
     }
     
     fn writeCOFFHeader(self: *PEWriter, writer: *std.Io.Writer, section_count: u16) !void {
-        _ = self;
         try writer.writeInt(u16, 0x8664, .little);  // Machine: AMD64
         try writer.writeInt(u16, section_count, .little);
         try writer.writeInt(u32, 0, .little); // Timestamp (0 for deterministic builds)
         try writer.writeInt(u32, 0, .little);       // PointerToSymbolTable (deprecated)
         try writer.writeInt(u32, 0, .little);       // NumberOfSymbols (deprecated)
         try writer.writeInt(u16, 240, .little);     // SizeOfOptionalHeader (PE32+)
-        try writer.writeInt(u16, 0x0022, .little);  // Characteristics: EXECUTABLE | LARGE_ADDRESS_AWARE
+        // Characteristics: EXECUTABLE | LARGE_ADDRESS_AWARE [| DLL]
+        // 0x0002 = EXECUTABLE_IMAGE, 0x0020 = LARGE_ADDRESS_AWARE, 0x2000 = DLL
+        const characteristics: u16 = if (self.is_dll) 0x2022 else 0x0022;
+        try writer.writeInt(u16, characteristics, .little);
     }
     
     fn writeOptionalHeader(self: *PEWriter, writer: *std.Io.Writer, entry_point: u32,

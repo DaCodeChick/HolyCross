@@ -162,6 +162,25 @@ pub const Compiler = struct {
         }
     }
 
+    /// Compile AST to shared library file (.so, .dll, .dylib)
+    pub fn compileToSharedLibrary(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
+    ) !void {
+        const exec_format = self.target.executableFormat();
+        
+        switch (exec_format) {
+            .elf => try self.compileToELFSharedLibrary(program, output_path, type_checker, type_layouts, io),
+            .pe => try self.compileToPEDLL(program, output_path, type_checker, type_layouts, io),
+            .macho => return error.MachoDylibNotYetImplemented,
+            .bin => return error.SharedLibrariesNotSupportedOnTempleOS,
+        }
+    }
+
     /// Compile to ELF executable (Linux)
     fn compileToELFExecutable(
         self: *Compiler,
@@ -218,6 +237,46 @@ pub const Compiler = struct {
         try elf.writeToFile(io, output_path);
         
         _ = self;
+    }
+
+    /// Compile to ELF shared library (.so)
+    fn compileToELFSharedLibrary(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
+    ) !void {
+        // Build IR from AST
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        defer builder.deinit();
+
+        try builder.buildFromAST(program);
+        const module = try builder.finish();
+        var mod = module;
+        defer mod.deinit();
+
+        // Initialize ELF writer in shared library mode
+        var elf = try elf_writer.ELFWriter.init(self.allocator);
+        defer elf.deinit();
+        elf.setSharedLibrary(true); // Set ET_DYN mode
+
+        // Initialize machine code generator with correct calling convention
+        const calling_conv = self.target.callingConvention();
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .elf = &elf },
+            calling_conv
+        );
+        defer machine_gen.deinit();
+
+        // Generate machine code from IR
+        try machine_gen.generateFromIR(&mod);
+
+        // Write shared library
+        std.debug.print("      Generating position-independent shared library...\n", .{});
+        try elf.writeToFile(io, output_path);
     }
 
     /// Compile to TempleOS/ZealOS .BIN format
@@ -295,6 +354,49 @@ pub const Compiler = struct {
         try self.patchPEImports(&pe, &machine_gen);
 
         // Write PE executable
+        try pe.writeToFile(io, output_path);
+    }
+    
+    /// Compile to PE DLL (Windows shared library)
+    fn compileToPEDLL(
+        self: *Compiler,
+        program: *const ast.Program,
+        output_path: []const u8,
+        type_checker: ?*TypeChecker,
+        type_layouts: ?*const std.StringHashMap(TypeLayout),
+        io: std.Io,
+    ) !void {
+        // Build IR from AST
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
+        defer builder.deinit();
+
+        try builder.buildFromAST(program);
+        const module = try builder.finish();
+        var mod = module;
+        defer mod.deinit();
+
+        // Initialize PE writer in DLL mode
+        var pe = try pe_writer.PEWriter.init(self.allocator);
+        defer pe.deinit();
+        pe.setDLL(true); // Set DLL characteristics
+
+        // Initialize machine code generator with Win64 calling convention
+        const calling_conv = self.target.callingConvention();
+        var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+            self.allocator,
+            .{ .pe = &pe },
+            calling_conv
+        );
+        defer machine_gen.deinit();
+
+        // Generate machine code from IR
+        try machine_gen.generateFromIR(&mod);
+
+        // Generate IAT stubs and patch call sites
+        try self.patchPEImports(&pe, &machine_gen);
+
+        // Write PE DLL
+        std.debug.print("      Generating Windows DLL...\n", .{});
         try pe.writeToFile(io, output_path);
     }
     

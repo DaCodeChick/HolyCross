@@ -180,6 +180,16 @@ pub const Target = struct {
         };
     }
     
+    /// Get the default file extension for shared libraries
+    pub fn sharedLibraryExtension(self: Target) []const u8 {
+        return switch (self.os) {
+            .linux => ".so",
+            .windows => ".dll",
+            .macos => ".dylib",
+            .templeos => "", // TempleOS uses no extension
+        };
+    }
+    
     /// Check if this is a MinGW target (Windows + GNU ABI)
     pub fn isMinGW(self: Target) bool {
         return self.os == .windows and self.abi == .gnu;

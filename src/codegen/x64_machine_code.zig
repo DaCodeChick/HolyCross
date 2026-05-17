@@ -233,9 +233,10 @@ pub const X64MachineCodeGen = struct {
             }
         }
 
-        // Set entry point to _start
-        const start_offset = self.function_offsets.get("_start") orelse return error.NoStartFunction;
-        try self.code_buffer.setEntryPoint(start_offset);
+        // Set entry point to _start (if it exists - shared libraries don't need it)
+        if (self.function_offsets.get("_start")) |start_offset| {
+            try self.code_buffer.setEntryPoint(start_offset);
+        }
     }
 
     fn generateFunction(self: *X64MachineCodeGen, func: *const ir.Function) !void {
