@@ -10,4 +10,5 @@ pub const ast = @import("parser/ast.zig");
 pub const assembler = @import("assembler.zig");
 pub const elf_object = @import("codegen/elf_object.zig");
 pub const coff_object = @import("codegen/coff_object.zig");
+pub const pe_writer = @import("codegen/pe_writer.zig");
 pub const linker = @import("linker/linker.zig");
