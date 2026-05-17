@@ -57,24 +57,111 @@ const timestamp = @as(u32, @intCast(std.time.timestamp()));
 - `src/codegen/pe_writer.zig`
 - `src/codegen/coff_object.zig`
 
-## Case Sensitivity
+## Case Sensitivity and I/O APIs
 
-**Issue:**
-`std.Io` is case-sensitive in Zig 0.16.
+### std.Io vs std.io
+In Zig 0.16, `std.Io` (capital I) is the actual I/O subsystem used for file operations.
 
-**Correct:**
+**File operations:**
 ```zig
-const std = @import("std");
-// Use std.io NOT std.Io
-const writer = std.io.getStdOut().writer();
+const cwd = std.Io.Dir.cwd();
+const file = try cwd.createFile(io, path, .{});
+defer file.close(io);
+
+var write_buffer: [8192]u8 = undefined;
+var buffered_writer = file.writer(io, &write_buffer);
+defer buffered_writer.flush() catch {};
+var writer = buffered_writer.interface;
+```
+
+**Key points:**
+- `std.Io.Dir.cwd()` to get current directory
+- `createFile(io, path, .{})` requires io handle
+- `file.close(io)` requires io handle
+- `file.writer(io, &buffer)` creates buffered writer
+- Writer must be `var` not `const` for writeStruct
+- `buffered_writer.interface` is the actual writer
+- `flush()` is automatic with defer
+
+### Writer API Changes
+
+**writeStruct now requires endianness:**
+```zig
+// Zig 0.13
+try writer.writeStruct(header);
+
+// Zig 0.16
+try writer.writeStruct(header, .little);
+```
+
+**Writer must be mutable:**
+```zig
+// Wrong
+const writer = buffered_writer.interface;
+
+// Correct
+var writer = buffered_writer.interface;
+```
+
+### File Position Tracking and Buffered Writing
+
+`std.Io.File` does NOT have `getPos()` or `seekTo()` in Zig 0.16.
+
+**Critical**: Don't extract buffered_writer.interface to a variable!
+```zig
+// WRONG - produces 0-byte files!
+var writer = buffered_writer.interface;
+try writer.writeAll(data);  // FAILS SILENTLY
+
+// CORRECT - writes data successfully
+try buffered_writer.interface.writeAll(data);
+try buffered_writer.interface.writeStruct(header, .little);
+```
+
+**Position tracking - do it manually:**
+```zig
+var current_pos: u32 = 0;
+
+try buffered_writer.interface.writeStruct(header, .little);
+current_pos += @sizeOf(@TypeOf(header));
+
+try buffered_writer.interface.writeAll(data);
+current_pos += @intCast(data.len);
+
+// Padding
+while (current_pos < target_offset) {
+    try buffered_writer.interface.writeByte(0);
+    current_pos += 1;
+}
 ```
 
 **Files affected:**
-- Various writer modules
+- `src/codegen/macho_object.zig`
 
 ## ArrayList vs. fromOwnedSlice Usage Patterns
 
-### Pattern 1: Simple dynamic growth (preferred for most cases)
+### ArrayList Struct Literal Initialization (Zig 0.16)
+
+**Correct pattern:**
+```zig
+// NO .allocator field in struct literal!
+var list = std.ArrayList(T){ .items = &.{}, .capacity = 0 };
+
+// Methods still need allocator
+try list.append(allocator, item);
+list.deinit(allocator);
+```
+
+**Wrong pattern (causes error):**
+```zig
+// ERROR: no field named 'allocator'
+var list = std.ArrayList(T){ .allocator = allocator, .items = &.{}, .capacity = 0 };
+```
+
+**Key points:**
+- ArrayList struct does NOT have an `allocator` field in Zig 0.16
+- Use only `.items` and `.capacity` in struct literal
+- Pass allocator to methods that need it (append, deinit, etc.)
 ```zig
 // Would use init() in newer Zig, but 0.16 doesn't have it
 // Use fromOwnedSlice with empty allocation instead:

@@ -12,6 +12,7 @@ const templeos_bin = @import("templeos_bin.zig");
 const elf_writer = @import("elf_writer.zig");
 const elf_object = @import("elf_object.zig");
 const coff_object = @import("coff_object.zig");
+const macho_object = @import("macho_object.zig");
 const pe_writer = @import("pe_writer.zig");
 const x64_machine_code = @import("x64_machine_code.zig");
 
@@ -118,8 +119,23 @@ pub const Compiler = struct {
                 try obj.writeToFile(io, output_path);
             },
             .macho => {
-                // TODO: Implement Mach-O object file writer
-                return error.MachoObjectNotYetImplemented;
+                // Initialize Mach-O object file writer (macOS .o)
+                var obj = try macho_object.MachoObjectWriter.init(self.allocator);
+                defer obj.deinit();
+
+                // Initialize machine code generator targeting object file
+                var machine_gen = try x64_machine_code.X64MachineCodeGen.init(
+                    self.allocator,
+                    .{ .macho_object = &obj },
+                    calling_conv
+                );
+                defer machine_gen.deinit();
+
+                // Generate machine code from IR
+                try machine_gen.generateFromIR(&mod);
+
+                // Write Mach-O object file
+                try obj.writeToFile(io, output_path);
             },
             .bin => {
                 return error.ObjectFileNotSupportedForTarget;  // TempleOS doesn't use object files

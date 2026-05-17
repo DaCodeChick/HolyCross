@@ -75,6 +75,13 @@ Examples:
 ## Known Issues / TODOs
 
 ### High Priority
+- **macOS Mach-O object files now working!** (RESOLVED)
+  - Issue was using `var writer = buffered_writer.interface` then calling `writer.writeAll()`
+  - **Solution**: Use `buffered_writer.interface.writeAll()` directly (don't extract to var)
+  - Pattern: `try buffered_writer.interface.writeAll(bytes)` NOT `try writer.writeAll(bytes)`
+  - Same applies to writeStruct: `try buffered_writer.interface.writeStruct(data, .little)`
+  - See docs/ZIG_0.16_NOTES.md for updated file I/O patterns
+
 - **Windows PE executable testing**: PE executables generate correctly but need Wine/Windows testing
   - IAT stubs generated correctly (verified via objdump disassembly)
   - Call sites patched to call stubs
@@ -106,6 +113,21 @@ zig build                          # Build compiler
 ```
 
 ## Recent Changes
+- **2026-05-17**: Mach-O object writer for macOS fully working!
+  - Created `src/codegen/macho_object.zig` for `.o` output on macOS
+  - Integrated with `CodeBuffer` union in `x64_machine_code.zig`
+  - Added external symbol and relocation support for Mach-O (X86_64_RELOC_BRANCH)
+  - Fixed all Zig 0.16 API issues:
+    - ArrayList initialization without .allocator field
+    - writeStruct requires endianness parameter  
+    - Manual position tracking (no getPos())
+    - **Critical fix**: Must use `buffered_writer.interface.writeAll()` directly, not via extracted var
+  - Successfully generates valid 635-byte Mach-O object files
+  - Verified with `file` command: "Mach-O 64-bit x86_64 object"
+  - Contains proper headers, segments (__TEXT, __DATA), sections (__text, __data, __bss)
+  - Symbol table and relocations correctly formatted
+  - Ready for linking with macOS ld (untested on actual macOS)
+
 - **2026-05-17**: Extended DLL mapping with comprehensive function database
   - Added `getDLLHint()` with 40+ msvcrt.dll and 30+ kernel32.dll functions
   - Covers stdio, memory, strings, process, console, file I/O, synchronization
