@@ -6,7 +6,6 @@ const x64 = @import("x64.zig");
 const ast = @import("../parser/ast.zig");
 const type_checker_module = @import("../semantic/type_checker.zig");
 const type_layout_module = @import("../semantic/type_layout.zig");
-const old_target = @import("target.zig");  // Old target system (to be phased out)
 const Target = @import("../target.zig").Target;
 const CallingConvention = @import("../target.zig").CallingConvention;
 const templeos_bin = @import("templeos_bin.zig");
@@ -31,16 +30,6 @@ pub const Compiler = struct {
         };
     }
 
-    /// Convert new Target to old TargetConfig (temporary compatibility shim)
-    fn legacyTargetConfig(self: *const Compiler) old_target.TargetConfig {
-        const legacy_target = switch (self.target.os) {
-            .linux => old_target.Target.native_x64_linux,
-            .templeos => old_target.Target.templeos,
-            .windows => old_target.Target.native_x64_linux,  // Treat as native for now
-        };
-        return old_target.TargetConfig.init(legacy_target);
-    }
-
     /// Compile AST to x64 assembly string
     pub fn compileToAssembly(
         self: *Compiler,
@@ -49,8 +38,7 @@ pub const Compiler = struct {
         type_layouts: ?*const std.StringHashMap(TypeLayout),
     ) ![]const u8 {
         // Build IR from AST
-        const target_config = self.legacyTargetConfig();
-        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -78,8 +66,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        const target_config = self.legacyTargetConfig();
-        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -130,6 +117,10 @@ pub const Compiler = struct {
                 // Write COFF object file
                 try obj.writeToFile(io, output_path);
             },
+            .macho => {
+                // TODO: Implement Mach-O object file writer
+                return error.MachoObjectNotYetImplemented;
+            },
             .bin => {
                 return error.ObjectFileNotSupportedForTarget;  // TempleOS doesn't use object files
             },
@@ -150,6 +141,7 @@ pub const Compiler = struct {
         switch (exec_format) {
             .elf => try self.compileToELFExecutable(program, output_path, type_checker, type_layouts, io),
             .pe => try self.compileToPEExecutable(program, output_path, type_checker, type_layouts, io),
+            .macho => return error.MachoExecutableNotYetImplemented,
             .bin => try self.compileToTempleOSBin(program, output_path, type_checker, type_layouts, io),
         }
     }
@@ -164,8 +156,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        const target_config = self.legacyTargetConfig();
-        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -223,8 +214,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        const target_config = self.legacyTargetConfig();
-        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);
@@ -261,8 +251,7 @@ pub const Compiler = struct {
         io: std.Io,
     ) !void {
         // Build IR from AST
-        const target_config = self.legacyTargetConfig();
-        var builder = try ir_builder.IRBuilder.init(self.allocator, target_config, type_checker, type_layouts);
+        var builder = try ir_builder.IRBuilder.init(self.allocator, type_checker, type_layouts);
         defer builder.deinit();
 
         try builder.buildFromAST(program);

@@ -9,12 +9,14 @@ pub const Target = struct {
     pub const OS = enum {
         linux,
         windows,
+        macos,
         templeos,
         
         pub fn toString(self: OS) []const u8 {
             return switch (self) {
                 .linux => "linux",
                 .windows => "windows",
+                .macos => "macos",
                 .templeos => "templeos",
             };
         }
@@ -61,12 +63,14 @@ pub const Target = struct {
             .os = switch (builtin.os.tag) {
                 .linux => .linux,
                 .windows => .windows,
+                .macos => .macos,
                 else => .linux, // Default to Linux for unknown
             },
             .arch = .x64,
             .abi = switch (builtin.os.tag) {
                 .linux => .gnu,
                 .windows => .msvc,
+                .macos => .none,
                 else => .gnu,
             },
         };
@@ -87,6 +91,8 @@ pub const Target = struct {
                 os = .linux;
             } else if (std.mem.eql(u8, part, "windows") or std.mem.eql(u8, part, "win64") or std.mem.eql(u8, part, "mingw64") or std.mem.eql(u8, part, "w64")) {
                 os = .windows;
+            } else if (std.mem.eql(u8, part, "macos") or std.mem.eql(u8, part, "darwin") or std.mem.eql(u8, part, "osx")) {
+                os = .macos;
             } else if (std.mem.eql(u8, part, "templeos")) {
                 os = .templeos;
             } else if (std.mem.eql(u8, part, "gnu") or std.mem.eql(u8, part, "mingw")) {
@@ -104,6 +110,7 @@ pub const Target = struct {
         const final_abi = if (abi) |a| a else switch (final_os) {
             OS.linux => ABI.gnu,
             OS.windows => ABI.msvc,
+            OS.macos => ABI.none,
             OS.templeos => ABI.none,
         };
         
@@ -128,6 +135,7 @@ pub const Target = struct {
         return switch (self.os) {
             .linux => .sysv,
             .windows => .win64,
+            .macos => .sysv,  // macOS uses System V AMD64 ABI
             .templeos => .sysv, // TempleOS uses System V-like convention
         };
     }
@@ -137,6 +145,7 @@ pub const Target = struct {
         return switch (self.os) {
             .linux => .elf,
             .windows => .coff,
+            .macos => .macho,
             .templeos => .bin,
         };
     }
@@ -146,6 +155,7 @@ pub const Target = struct {
         return switch (self.os) {
             .linux => .elf,
             .windows => .pe,
+            .macos => .macho,
             .templeos => .bin,
         };
     }
@@ -155,6 +165,7 @@ pub const Target = struct {
         return switch (self.os) {
             .linux => "",
             .windows => ".exe",
+            .macos => "",
             .templeos => ".BIN",
         };
     }
@@ -164,6 +175,7 @@ pub const Target = struct {
         return switch (self.os) {
             .linux => ".o",
             .windows => ".obj",
+            .macos => ".o",
             .templeos => ".OBJ",
         };
     }
@@ -182,6 +194,9 @@ pub const Target = struct {
     pub fn defaultCRuntime(self: Target) []const u8 {
         if (self.os == .windows) {
             return if (self.abi == .gnu) "msvcrt.dll" else "ucrt.dll";  // MinGW uses msvcrt, MSVC uses UCRT
+        }
+        if (self.os == .macos) {
+            return "libSystem.dylib";
         }
         return "libc.so.6";
     }
@@ -222,28 +237,32 @@ pub const CallingConvention = enum {
 };
 
 pub const ObjectFormat = enum {
-    elf,   // ELF object file (.o)
-    coff,  // COFF object file (.obj)
-    bin,   // Raw binary (TempleOS .OBJ)
+    elf,    // ELF object file (.o)
+    coff,   // COFF object file (.obj)
+    macho,  // Mach-O object file (.o)
+    bin,    // Raw binary (TempleOS .OBJ)
     
     pub fn toString(self: ObjectFormat) []const u8 {
         return switch (self) {
             .elf => "ELF",
             .coff => "COFF",
+            .macho => "Mach-O",
             .bin => "BIN",
         };
     }
 };
 
 pub const ExecutableFormat = enum {
-    elf,   // ELF executable
-    pe,    // PE32+ executable (.exe)
-    bin,   // TempleOS binary (.BIN)
+    elf,    // ELF executable
+    pe,     // PE32+ executable (.exe)
+    macho,  // Mach-O executable
+    bin,    // TempleOS binary (.BIN)
     
     pub fn toString(self: ExecutableFormat) []const u8 {
         return switch (self) {
             .elf => "ELF",
             .pe => "PE32+",
+            .macho => "Mach-O",
             .bin => "BIN",
         };
     }

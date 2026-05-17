@@ -3,14 +3,13 @@ const ir = @import("../ir.zig");
 const ir_builder = @import("../ir_builder.zig");
 const x64 = @import("../x64.zig");
 const ast = @import("../../parser/ast.zig");
-const target_module = @import("../target.zig");
 const testing = std.testing;
 
 test "IRBuilder: simple function" {
     const allocator = testing.allocator;
 
     // Create a simple AST: U0 Main() { }
-    var builder = try ir_builder.IRBuilder.init(allocator, target_module.TargetConfig.init(.native_x64_linux), null, null);
+    var builder = try ir_builder.IRBuilder.init(allocator, null, null);
     defer builder.deinit();
 
     const func = @as(ast.Decl, .{ .function = .{
@@ -36,7 +35,7 @@ test "IRBuilder: simple function" {
 test "IRBuilder: function with string expression" {
     const allocator = testing.allocator;
 
-    var builder = try ir_builder.IRBuilder.init(allocator, target_module.TargetConfig.init(.native_x64_linux), null, null);
+    var builder = try ir_builder.IRBuilder.init(allocator, null, null);
     defer builder.deinit();
 
     // Create AST for: U0 Main() { "Hello, World!\n"; }
