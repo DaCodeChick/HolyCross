@@ -94,8 +94,7 @@ Examples:
   - Executables and object files work fine
   - Shared libraries need PLT/GOT (Linux) generation
   - See docs/PLT_GOT_DESIGN.md for implementation plan (future)
-- **Test suite failures**: Unrelated to external symbols (missing `is_variadic` fields in old test data)
-- **Limited relocation types**: Only R_X86_64_PLT32 (ELF) and REL32 (COFF) supported
+- **Limited relocation types**: Only R_X86_64_PLT32 (ELF), REL32 (COFF), and X86_64_RELOC_BRANCH (Mach-O) supported
   - Sufficient for current object file/executable workflow
   - Shared libraries will need R_X86_64_GLOB_DAT, R_X86_64_JUMP_SLOT
 
@@ -110,9 +109,17 @@ Examples:
 zig build                          # Build compiler
 ./zig-out/bin/hcc tests/test_hello.hc -o /tmp/test_hello
 /tmp/test_hello                    # Should print "Hello from HolyC!"
+
+zig build test                     # Run test suite (216/217 passing)
 ```
 
 ## Recent Changes
+- **2026-05-17**: Fixed test suite (216/217 tests passing)
+  - Added missing `is_variadic` parameter to all function test fixtures
+  - Updated `defineFunction()` calls in symbol table tests
+  - Fixed outdated string expression test
+  - All tests now compile and run successfully
+
 - **2026-05-17**: Mach-O object writer for macOS fully working!
   - Created `src/codegen/macho_object.zig` for `.o` output on macOS
   - Integrated with `CodeBuffer` union in `x64_machine_code.zig`
